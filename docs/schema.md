@@ -129,6 +129,10 @@ erDiagram
     years ||--|{ boards : ""
     years ||--o| family_goals : ""
     years ||--o{ votes : ""
+    years ||--o| wrapped : "at Freeze"
+    wrapped ||--|{ wrapped_member_cards : ""
+    wrapped ||--|{ wrapped_awards : ""
+    members ||--o{ wrapped_awards : "receives >= 1"
     boards ||--|{ tiles : "exactly 25"
     boards ||--o{ revisions : ""
     tiles ||--o| goals : ""
@@ -209,9 +213,31 @@ erDiagram
         uuid id PK
         text text
         int target "">= 1""
-        text unit
+        text unit "Member's wording"
+        text unit_canonical "singular lowercase"
+        text category "inferred"
         text pace_hint "display only"
         timestamptz created_at
+    }
+    wrapped {
+        uuid id PK
+        uuid year_id FK "unique"
+        jsonb family_cards
+        timestamptz generated_at
+    }
+    wrapped_member_cards {
+        uuid id PK
+        uuid wrapped_id FK
+        uuid member_id FK
+        jsonb stats
+    }
+    wrapped_awards {
+        uuid id PK
+        uuid wrapped_id FK
+        uuid member_id FK
+        text axis
+        text label
+        jsonb detail
     }
     increments {
         uuid id PK "client-generated"
@@ -333,7 +359,25 @@ ALTER TABLE years ADD CONSTRAINT one_year_per_family
 -- A Line index refers to one of the 12 enumerated Lines.
 ALTER TABLE milestones ADD CONSTRAINT line_index_range
   CHECK (line_index IS NULL OR line_index BETWEEN 0 AND 11);
+
+-- Category is a closed set. Null is legal: a Goal that skipped Sharpening.
+ALTER TABLE goals ADD CONSTRAINT category_known
+  CHECK (category IS NULL OR category IN
+    ('fitness','family','learning','money','health','creative','other'));
+
+-- One Wrapped per Year, generated once at Freeze.
+ALTER TABLE wrapped ADD CONSTRAINT one_wrapped_per_year
+  UNIQUE (year_id);
+
+-- A Member wins a given axis at most once.
+ALTER TABLE wrapped_awards ADD CONSTRAINT one_award_per_axis_per_member
+  UNIQUE (wrapped_id, member_id, axis);
 ```
+
+> **"Every Member gets at least one Award" is not expressible as a constraint** — it is a
+> property of the generation algorithm, across rows that do not yet exist at insert time.
+> It must be enforced by the generator and verified by a test (PRD §20.7). A family of six
+> with one low-activity Member is the case that breaks a naive implementation.
 
 ### 3.1 What is deliberately *not* stored
 
@@ -344,10 +388,17 @@ ALTER TABLE milestones ADD CONSTRAINT line_index_range
 | Completed Lines | Pure function of completed positions | Testable in isolation, no sync risk |
 | Bingo / Blackout state | Presence of a Milestone row | The Milestone is the event; state is its consequence |
 
-**Note on `boards.swaps_used`:** this *is* denormalized — it duplicates
-`COUNT(revisions)`. It is stored because it is a **budget being enforced**, and a
-`CHECK` constraint cannot reference another table. Keep it correct with a trigger on
-`revisions` insert.
+**Two deliberate exceptions.**
+
+`boards.swaps_used` duplicates `COUNT(revisions)`. It is stored because it is a **budget
+being enforced**, and a `CHECK` constraint cannot reference another table. Keep it
+correct with a trigger on `revisions` insert.
+
+The `wrapped*` tables **materialize** statistics that could be computed from the log.
+That is deliberate and safe here for a reason that does not apply anywhere else: the
+underlying Year is **frozen**, so the inputs can never change again. Wrapped is written
+once at Freeze and read many times, and it must render instantly. Everywhere the source
+data is still mutable, derive it.
 
 ---
 

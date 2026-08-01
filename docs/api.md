@@ -82,6 +82,7 @@ other Family. Everything else is plumbing.
 | `seal_year(year_id)` | Sets `sealed_at`, Year → `active` | `pg_cron`, idempotent |
 | `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1` | Sealed Board, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
+| `generate_wrapped(year_id)` | Materializes cards + Awards, one per Year | `pg_cron` after freeze, idempotent |
 
 ### 2.2 Edge Functions
 
@@ -115,7 +116,8 @@ sequenceDiagram
     Note right of Fn: model claude-opus-5<br/>effort low — user is waiting<br/>output_config.format → JSON schema<br/>system prompt cached (512-token min)
 
     alt normal
-        C-->>Fn: { suggestions: [{text,target,unit,pace_hint}] }
+        C-->>Fn: { suggestions: [{text,target,unit,<br/>unit_canonical,category,pace_hint}] }
+        Note right of Fn: unit_canonical + category are inferred<br/>in the SAME call — no extra cost,<br/>no user-facing field. Wrapped needs them<br/>and cannot backfill them later.
         Fn-->>App: 200 suggestions
         App->>M: show 2–3 options + "keep mine"
     else stop_reason == "refusal"
@@ -278,11 +280,14 @@ sequenceDiagram
     Note right of DB: seals whether or not authoring<br/>finished. Empty Tiles cost a Swap later.
     DB->>N: "your board is sealed"
 
-    Note over Cron,DB: — Dec 31 in Family timezone —
+    Note over Cron,DB: — Dec 31, 23:59 in Family timezone —
     Cron->>DB: freeze_year()
     Note right of DB: read-only forever. No backdating.
-    Cron->>DB: build Recaps
-    DB->>N: "your 2027 recap is ready"
+    Cron->>DB: generate_wrapped(year_id)
+    Note right of DB: materialized once — inputs are frozen,<br/>so they can never change again.<br/>Awards assigned across unrelated axes,<br/>every Member guaranteed at least one.
+    DB->>N: push ALL Members simultaneously
+    N->>N: "Your 2027 Wrapped is ready"
+    Note over Cron,DB: final card links into opening Year 2028
 ```
 
 Every job is **idempotent** and safe to re-run — they are time-triggered, and a retry

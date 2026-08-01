@@ -34,7 +34,7 @@ Explicitly out of scope. Do not build these, and do not design for them.
 
 | Not building | Why |
 |---|---|
-| Ranking, leaderboards, or a "winner" | Boards are self-authored — ranking measures who set the easiest goals, not achievement (§4.7) |
+| Ranking, leaderboards, or a "winner" | Boards are self-authored — ranking measures who set the easiest goals, not achievement (§13.5). Wrapped Awards are the one bounded exception, and are deliberately *not* a ladder ([ADR-0006](adr/0006-wrapped-awards.md)) |
 | Streaks or per-period enforcement | A missed month must never make a Tile permanently unachievable (§4.3) |
 | Public/global feeds, discovery, following | Nothing crosses a Family boundary, ever (§5.1) |
 | Direct messaging | The Feed and Increment notes are the only communication surface |
@@ -191,7 +191,8 @@ can seal.*
 
 **Requirements**
 
-- **6.1** A Goal has: `text` (1–200 chars), `target` (integer ≥ 1), `unit` (nullable string, ≤ 30 chars), `pace_hint` (nullable display string, e.g. `"about 1 a month"`).
+- **6.1** A Goal has: `text` (1–200 chars), `target` (integer ≥ 1), `unit` (nullable, ≤ 30 chars — the Member's own wording), `unit_canonical` (nullable, singular lowercase), `category` (nullable enum), `pace_hint` (nullable display string, e.g. `"about 1 a month"`).
+- **6.1a** `unit_canonical` and `category` exist so Wrapped can aggregate across Members (§Slice 20). They are **inferred during Sharpening** (§7.10), never typed by the Member and never shown as a form field. A Goal that skipped Sharpening leaves both `NULL` — that Goal still counts everywhere except aggregate Wrapped cards.
 - **6.2** `target = 1` **is** the one-shot shape. There is no separate type column and no enum. This is deliberate — see [ADR-0002](adr/0002-cumulative-goals-only.md).
 - **6.3** `pace_hint` is **display only**. It is never used in any completion, progress, or eligibility calculation. Nothing in the codebase may branch on it.
 - **6.4** Tiles may be filled in any order and edited freely while the Board is a draft.
@@ -212,7 +213,8 @@ can seal.*
 
 - **7.1** Sharpening runs in a Supabase Edge Function. **The API key never reaches the client.**
 - **7.2** Model: `claude-opus-5`. Set `output_config: { effort: "low" }` — this is an interactive field with a user waiting, and Opus 5 thinks by default.
-- **7.3** Use **structured outputs** (`output_config.format` with a JSON schema) so the response validates to `{ suggestions: [{ text, target, unit, pace_hint }] }`. Do not parse prose.
+- **7.3** Use **structured outputs** (`output_config.format` with a JSON schema) so the response validates to `{ suggestions: [{ text, target, unit, unit_canonical, category, pace_hint }] }`. Do not parse prose.
+- **7.10 — Two fields exist purely for Wrapped.** `unit_canonical` (singular, lowercase — `"book"` for a Member who typed `Books`) and `category` (one of `fitness | family | learning | money | health | creative | other`). Both are inferred by the model in the **same call** — no extra request, no added latency, no user-facing field. This is what makes "together you read 47 books" computable at year end; without it, free-text units never group and the card is impossible to build retroactively.
 - **7.4** Apply `cache_control: { type: "ephemeral" }` to the system prompt. Opus 5's cacheable minimum is **512 tokens** — write the system prompt to clear it.
 - **7.5 — The most important requirement in this document.** Sharpening **never blocks**. There is no validity check, no rejection, no "your goal isn't specific enough." If the Member keeps their original text, it becomes a one-shot Tile and the app says nothing further.
 - **7.6** The system prompt must handle emotionally-loaded goals with care. The canonical hard case is **"Be a better father."** Good output offers something like *"One-on-one outing with each kid, 12 times"* — concrete, warm, not clinical. Bad output is preachy, generic, or implies the original goal was inadequate.
@@ -319,6 +321,7 @@ can seal.*
 - **13.3** All 25 Tiles complete emits a `blackout` Milestone.
 - **13.4** **Play continues after Bingo** to the end of the Year. Bingo is a rung on a ladder, not an ending.
 - **13.5 — Do not build ranking.** No leaderboard, no ordering of Members by progress, no "first to bingo." Boards are self-authored; ranking them measures goal difficulty, not achievement. See [ADR-0001](adr/0001-personal-boards.md).
+- **13.5a — The one exception, and its exact shape.** Wrapped (§Slice 20) hands out **Awards** at year end. This is permitted because a *live* ladder shapes behavior all year while a *retrospective* superlative only describes what happened. The permission is narrow: Awards must sit on **unrelated axes** and there must be **at least as many Awards as Members**, so nobody places above anyone. A single ordered "most tiles completed, 1 through N" list is still forbidden. See [ADR-0006](adr/0006-wrapped-awards.md).
 - **13.6** Line detection is **pure domain logic** — a function from a set of completed positions to a set of Line indices. Unit-test it exhaustively before it touches the database.
 
 ### Slice 14 — The Feed
@@ -436,21 +439,49 @@ lives — not optional, just not needed on day one.*
 - **19.2** Content: Family activity count, notable Milestones, Members near a Line.
 - **19.3** Skip entirely if the week had no activity. Never send an empty digest.
 
-### Slice 20 — Freeze and Recap
+### Slice 20 — Freeze and Wrapped
+
+> **Wrapped absorbs what was previously specced as a separate "Recap."** They were ~80%
+> the same queries and the same UI. One feature.
 
 **Acceptance test**
-> **Given** an active Year
+> **Given** an active Year with activity from 4 Members
 > **When** the clock passes December 31, 23:59:59 in the Family's timezone
-> **Then** the Year is frozen, further Increments are rejected, and a Recap is available
-> per Member and for the Family
+> **Then** the Year is frozen, further Increments are rejected, Wrapped is generated,
+> every Member receives a push, and each sees swipeable cards covering their own stats,
+> the Family's aggregates, the Awards, the Family Goal outcome, and a button into next
+> year's board
+>
+> **And** every Member has received **at least one** Award
+
+**Why this slice matters more than its position suggests.** Wrapped is not a closing
+ceremony — it lands in the gap between one Year freezing and the next Setup Window
+opening, while families are still together over the holidays and need a reason to write
+24 more goals. For an annual app, being forgotten before year two is the default
+outcome, and this screen is the main defense against it.
 
 **Requirements**
 
 - **20.1** `pg_cron` freezes at year end. Frozen Years are permanently read-only — no backdating.
-- **20.2** Recap per Member: Tiles completed, Lines, Blackout, total Increments, notable notes and photos, Swaps taken.
-- **20.3** Recap per Family: aggregate activity, the Family Goal outcome, a timeline of Milestones.
-- **20.4** Frozen Years stay browsable forever as family history.
-- **20.5** Opening the next Year carries **nothing** over — fresh Goals, fresh vote, clean slate.
+- **20.2** Wrapped is **generated once at Freeze and materialized**, not computed per view. It is read many times, changes never, and must render instantly.
+- **20.3** Every Member receives a push **simultaneously** so the Family experiences it together, rather than trickling through it alone across a week.
+- **20.4** **Personal cards** — Tiles completed of 25, Lines, Blackout, total Increments, best month, longest-running Goal, notes written, photos added, Swaps taken, target vs. actual on the Goal they most exceeded.
+- **20.5** **Family cards** — aggregate Increments; **unit aggregation** grouped on `unit_canonical` ("together you read 47 books and walked 2,100 times"); the category breakdown ("your year was 40% fitness"); the Family Goal outcome; a timeline of Milestones; the month the Family was most active.
+- **20.6** **Awards** — see §20.7. **Final card is not a stat**: "Ready for 2028?", linking straight into opening the next Year.
+- **20.7 — Award rules, and they are load-bearing:**
+  - Awards sit on **unrelated axes**. Suggested set: Most Increments · Biggest Single Month · Most Consistent (smallest median gap) · Longest-Running Goal (first-to-last Increment span) · Best Comeback (worst month → best month) · Most Photos · Most Notes Written · First Bingo · Most Exceeded Target · Quietest Achiever (fewest Increments, still completed a Line).
+  - **Every Member must receive at least one Award.** If the natural winners leave someone out, assign from the remaining unclaimed axes. Test this explicitly — a family of 6 where one person gets nothing is the failure mode.
+  - **No single ordered list of Members.** Not "most tiles completed, ranked 1–N." An Award names one person on one axis; it never implies a standing (§13.5a).
+  - Ties: award both.
+- **20.8** Goals with `unit_canonical IS NULL` (skipped Sharpening, §6.1a) are excluded from **aggregate** cards only. They still count in every personal stat, Award, and Line.
+- **20.9 — Export.** The full Family Wrapped is **in-app only**. The Share button exports **only the Member's own card, stats only** — no photos, no other Members named, no Managed Member data. Rationale: a screenshot is always possible and that's the user's call, but a one-tap button that publishes a child's name and face is the *app's* design decision. See [ADR-0005](adr/0005-photo-attachments.md).
+- **20.10** Frozen Years and their Wrapped stay browsable forever as family history.
+- **20.11** Opening the next Year carries **nothing** over — fresh Goals, fresh vote, clean slate.
+
+> **Feedback loop to be aware of.** Wrapped runs days before goal-setting for the next
+> Year, so whatever it celebrates is what the Family will optimize for in January. This
+> is precisely why §20.7 forbids a single ladder: an app that crowns "most tiles
+> completed" has taught everyone to write easier goals next year.
 
 ### Slice 21 — Late joiners
 
@@ -534,3 +565,4 @@ The five that were hard to reverse, surprising, and genuinely contested got ADRs
 | [0003](adr/0003-managed-child-profiles.md) | Children are Managed Members with no login |
 | [0004](adr/0004-supabase-rls-boundary.md) | Supabase, with RLS as the Family privacy boundary |
 | [0005](adr/0005-photo-attachments.md) | Photo Attachments are allowed, with the compliance cost accepted |
+| [0006](adr/0006-wrapped-awards.md) | Wrapped may hand out Awards on unrelated axes — a bounded exception to the no-ranking rule |

@@ -137,10 +137,17 @@ What happens to a Year at the end of December. Progress can no longer be recorde
 backdated, and the Boards become permanent family history.
 _Avoid_: Close, archive, lock, end
 
-**Recap**:
-The story of a finished Year, made for each Member and for the Family as a whole once
-it Freezes — what was completed, what was not, and the Increments worth remembering.
-_Avoid_: Summary, report, wrap-up, year in review
+**Wrapped**:
+The story of a finished Year, revealed to the whole Family the moment it Freezes — what
+everyone completed, what the numbers added up to, and the Awards. Deliberately timed to
+sit between one Year ending and the next being written.
+_Avoid_: Recap, summary, report, year in review
+
+**Award**:
+A superlative handed to a Member in Wrapped — most consistent, biggest month, best
+comeback. There are always at least as many Awards as there are Members, and they
+measure unrelated things, so that receiving one never means placing above anyone.
+_Avoid_: Prize, trophy, rank, badge, achievement
 
 **Swap**:
 A Member's one permitted change to a Sealed Board — replacing a Goal or lowering its
@@ -183,8 +190,16 @@ refusing someone's goal is worse than failing to measure it.
 _Avoid_: Validation, refinement, SMART-ifying
 
 **Unit**:
-What a Goal's Increments are counted in — walks, books, dollars, days.
+What a Goal's Increments are counted in — walks, books, dollars, days. Carries a
+canonical form alongside the Member's own wording, so that one person's "Books" and
+another's "book" can be added together at the end of the Year.
 _Avoid_: Measure, metric
+
+**Category**:
+The kind of life a Goal belongs to — fitness, family, learning, money, health,
+creative. Inferred during Sharpening rather than chosen, so that nobody has to file
+their ambitions before pursuing them.
+_Avoid_: Tag, label, type, area
 
 **Pace**:
 The rhythm a Goal is meant to be done at ("about 12 a month"), shown to a Member so
