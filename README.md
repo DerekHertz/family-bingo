@@ -11,8 +11,21 @@ complete Tiles → hit Bingo → chase Blackout.
 votes on the shared Center Tile, sees every increment in a common feed, gets notified on
 milestones, and sees every mid-year swap.
 
-> Status: **specified, not yet implemented.** The documents below are the complete
-> specification; `app/` and `supabase/` are next.
+> Status: **domain layer and database built; no client yet.** `src/domain/` holds the
+> pure game logic and `supabase/` the schema, RLS policies and pgTAP tests. Still to
+> come: the RPCs, the Edge Functions (`sharpen`, `notify`, `digest`), the `pg_cron`
+> jobs, and the Expo app.
+
+## Running it
+
+```sh
+npm install
+npm run typecheck      # tsc
+npm test               # vitest — the pure domain layer
+npm run db:start       # local Supabase (needs Docker)
+npm run db:reset       # apply migrations from scratch
+npm run db:test        # pgTAP — RLS, constraints, storage
+```
 
 ## Documents
 
