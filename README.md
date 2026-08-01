@@ -35,7 +35,7 @@ npm run db:test        # pgTAP — RLS, constraints, storage
 | [`docs/prd.md`](docs/prd.md) | Requirements, as 21 thin vertical slices with acceptance tests |
 | [`docs/schema.md`](docs/schema.md) | Data model, constraints, RLS policies, the twelve Lines |
 | [`docs/api.md`](docs/api.md) | Architecture, API surface, sequence diagrams |
-| [`docs/adr/`](docs/adr/) | The five decisions that were hard to reverse and genuinely contested |
+| [`docs/adr/`](docs/adr/) | The seven decisions that were hard to reverse and genuinely contested |
 
 ## Stack
 

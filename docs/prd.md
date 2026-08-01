@@ -566,3 +566,4 @@ The five that were hard to reverse, surprising, and genuinely contested got ADRs
 | [0004](adr/0004-supabase-rls-boundary.md) | Supabase, with RLS as the Family privacy boundary |
 | [0005](adr/0005-photo-attachments.md) | Photo Attachments are allowed, with the compliance cost accepted |
 | [0006](adr/0006-wrapped-awards.md) | Wrapped may hand out Awards on unrelated axes — a bounded exception to the no-ranking rule |
+| [0007](adr/0007-tied-family-goal-vote.md) | A tied Family Goal vote goes to the Organizer, then to the earliest Proposal — §9.2 and FRONTEND_DESIGN §4.3 disagreed |
