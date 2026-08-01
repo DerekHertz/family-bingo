@@ -1,0 +1,40 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.mobileprovision
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.npm/
+
+# Expo
+.expo/
+dist/
+web-build/
+*.jks
+*.keystore
+ios/
+android/
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+
+# Build / test output
+coverage/
+.maestro/tests-output/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
