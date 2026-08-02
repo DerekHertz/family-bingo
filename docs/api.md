@@ -67,6 +67,30 @@ other Family. Everything else is plumbing.
 > The one deliberate exception is `visible_family_ids()` (schema.md §4.1), which must be
 > `SECURITY DEFINER` to read `members` while evaluating a policy *on* `members`.
 
+### 2.0 The `feed` view
+
+The Feed is a `security_invoker` view, not an endpoint and not an RPC. It has **no policy
+of its own**: every row is filtered by the read policy of the table it came from, so the
+Family boundary is stated once (ADR-0004) rather than restated on the one surface that
+reads from every table at once.
+
+Clients page it through PostgREST: `?family_id=eq.…&year_id=eq.…&order=created_at.desc&limit=…`.
+
+| `kind` | Source | Columns that mean something |
+|---|---|---|
+| `increment` | `increments` | `note`, `attachment_path`, `tile_id`, `position`, `goal_text` |
+| `milestone` | `milestones` | `milestone_type`, `line_index`, `tile_id`, `position`, `goal_text` |
+| `swap` | `revisions` | `before_text`, `before_target`, `after_text`, `after_target` |
+| `vote_resolved` | `votes` | `vote_kind`, `vote_outcome`, `goal_text` (the winning Proposal) |
+| `member_joined` | `members` | `member_id` |
+
+Every row carries `id`, `kind`, `created_at`, `family_id`, `year_id`, `member_id`.
+`member_id` is null for `vote_resolved` — a Vote is the Family's, not a Member's.
+
+A Member joins a Family rather than a Year, so `member_joined` is attributed to the Year
+that was open when they joined; a founder, who joined before `open_year()` could be
+called, lands in the Family's first Year.
+
 ### 2.1 RPCs
 
 | Function | Does | Guard |
