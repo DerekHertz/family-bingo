@@ -23,6 +23,16 @@ export interface BoardTile {
   readonly count: number;
   /** `null` for an unfilled Tile on a sealed Board (PRD §10.2). */
   readonly target: number | null;
+  /**
+   * The shared Center Tile, completed by being marked rather than counted up.
+   *
+   * A Family Goal has no Target — any Member marks it done and it completes for every
+   * Member at once (PRD §12.3), which is why `family_goals` carries `completed_at` and
+   * no counter. Counting cannot decide this Tile, so the database states it outright.
+   * Without it, position 12 could never join `done`, and the four Lines through the
+   * centre and Blackout would be unreachable for every shared-mode Family.
+   */
+  readonly markedComplete?: boolean;
 }
 
 /** What the `milestones` table already holds for this Member and Year. */
@@ -48,6 +58,12 @@ export const nothingRecorded = (): RecordedMilestones => ({
 export const completedPositions = (tiles: readonly BoardTile[]): Set<number> => {
   const done = new Set<number>();
   for (const tile of tiles) {
+    // Marked, not counted (§12.3). Checked first because a Family Goal has no Target to
+    // fall back on, and reaching the count test would rule it out on that alone.
+    if (tile.markedComplete === true) {
+      done.add(tile.position);
+      continue;
+    }
     if (tile.target !== null && isTileComplete(tile.count, tile.target)) {
       done.add(tile.position);
     }
