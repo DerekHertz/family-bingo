@@ -49,6 +49,21 @@ insert into tiles (board_id, position)
 insert into tiles (board_id, position)
   select '00000000-0000-4000-8000-0000000000b2', p from generate_series(0, 24) p;
 
+-- Every Tile an Increment lands on below needs a Goal: an Increment is progress toward
+-- one, and tile_is_loggable() refuses a Tile that holds none (§12.1). Position 1 of
+-- alice's Board is authored too, so the cross-Board test below fails on ownership
+-- rather than on an empty Tile.
+insert into goals (id, text, target) values
+  ('00000000-0000-4000-8000-0000000000ba', 'Walk every day', 144),
+  ('00000000-0000-4000-8000-0000000000bb', 'Read more books', 12),
+  ('00000000-0000-4000-8000-0000000000bc', 'Learn to swim', 10);
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000ba'
+ where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 0;
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000bb'
+ where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 1;
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000bc'
+ where board_id = '00000000-0000-4000-8000-0000000000b2' and position = 0;
+
 insert into increments (id, tile_id, member_id) values
   ('00000000-0000-4000-8000-0000000000c1',
    (select id from tiles where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 0),

@@ -49,13 +49,26 @@ insert into boards (id, member_id, year_id, sealed_at) values
    '00000000-0000-4000-8000-0000000000d1', '2027-01-01T05:00:00Z');
 insert into tiles (board_id, position)
   select '00000000-0000-4000-8000-0000000000b1', p from generate_series(0, 24) p;
+-- Position 0 of every Board that takes an Increment here is authored. tile_is_loggable()
+-- refuses a Tile holding no Goal (§12.1), and an empty Tile would let the §11.5 timing
+-- tests below pass for the wrong reason entirely.
+insert into goals (id, text, target) values
+  ('00000000-0000-4000-8000-0000000000ba', 'Walk every day', 144);
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000ba'
+ where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 0;
 insert into increments (id, tile_id, member_id) values
   ('00000000-0000-4000-8000-0000000000c1',
    (select id from tiles where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 0),
    '00000000-0000-4000-8000-0000000000e1');
+-- Both Votes. The Proposal policies below have to be tested against the GOAL Vote:
+-- Proposals belong to it, and enforce_proposal_rules() is a BEFORE trigger, so on the
+-- mode Vote it would raise 22023 before RLS ever evaluated its WITH CHECK — masking the
+-- very boundary these tests exist to prove.
 insert into votes (id, year_id, kind, closes_at) values
   ('00000000-0000-4000-8000-0000000000ca', '00000000-0000-4000-8000-0000000000d1',
-   'mode', '2027-01-01T05:00:00Z');
+   'mode', '2027-01-01T05:00:00Z'),
+  ('00000000-0000-4000-8000-0000000000cb', '00000000-0000-4000-8000-0000000000d1',
+   'goal', '2027-01-01T05:00:00Z');
 
 -- Dave's own Boards, for the §11.5 timing tests: one still in its Setup Window, and one
 -- in a Year that has already frozen.
@@ -64,6 +77,10 @@ insert into boards (id, member_id, year_id) values
    '00000000-0000-4000-8000-0000000000d1');
 insert into tiles (board_id, position)
   select '00000000-0000-4000-8000-0000000000b5', p from generate_series(0, 24) p;
+insert into goals (id, text, target) values
+  ('00000000-0000-4000-8000-0000000000bb', 'Swim a mile', 20);
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000bb'
+ where board_id = '00000000-0000-4000-8000-0000000000b5' and position = 0;
 
 insert into years (id, family_id, calendar_year, status, setup_deadline, sealed_at, frozen_at) values
   ('00000000-0000-4000-8000-0000000000d2', '00000000-0000-4000-8000-0000000000f1',
@@ -73,6 +90,10 @@ insert into boards (id, member_id, year_id, sealed_at) values
    '00000000-0000-4000-8000-0000000000d2', '2026-01-01T05:00:00Z');
 insert into tiles (board_id, position)
   select '00000000-0000-4000-8000-0000000000b6', p from generate_series(0, 24) p;
+insert into goals (id, text, target) values
+  ('00000000-0000-4000-8000-0000000000bc', 'Cycle to work', 100);
+update tiles set goal_id = '00000000-0000-4000-8000-0000000000bc'
+ where board_id = '00000000-0000-4000-8000-0000000000b6' and position = 0;
 insert into increments (id, tile_id, member_id) values
   ('00000000-0000-4000-8000-0000000000c7',
    (select id from tiles where board_id = '00000000-0000-4000-8000-0000000000b6' and position = 0),
@@ -170,7 +191,7 @@ $$, '42501', null, 'SELF-ONLY: dave cannot cast a Ballot as alice');
 
 select throws_ok($$
   insert into proposals (vote_id, member_id, text)
-  values ('00000000-0000-4000-8000-0000000000ca',
+  values ('00000000-0000-4000-8000-0000000000cb',
           '00000000-0000-4000-8000-0000000000e1', 'Dave''s idea, alice''s name')
 $$, '42501', null, 'SELF-ONLY: dave cannot submit a Proposal as alice');
 
@@ -244,7 +265,7 @@ $$, '42501', null,
 
 select throws_ok($$
   insert into proposals (vote_id, member_id, text)
-  values ('00000000-0000-4000-8000-0000000000ca',
+  values ('00000000-0000-4000-8000-0000000000cb',
           '00000000-0000-4000-8000-0000000000e3', 'A stranger''s idea')
 $$, '42501', null,
   'CROSS-FAMILY: bob cannot put a Proposal into another Family''s Vote');

@@ -458,6 +458,27 @@ WITH CHECK (
 **Reads are Family-wide; writes are self-only.** You can see everything your Family
 does and change only what is yours (or your Managed Members').
 
+The real `increments` insert policy carries two more conditions the sketch above leaves
+out. The Tile must belong to the Board of the Member being credited — without that, a
+Guardian could log against someone else's Tile while attributing it to their own child.
+And `tile_is_loggable()` must hold: the Board is sealed, the Year is not frozen, and the
+Tile holds a personal Goal. That last clause rules out both the empty Tile and the
+shared Center Tile, which have no Target between them — see PRD §12.1 and §12.3.
+
+**Increment timestamps are not the client's to choose.** `created_at` is overwritten
+with the server clock on insert, because the Feed is ordered by it. `occurred_at` stays
+client-settable — the offline queue replays taps days after they happened (PRD §17.3),
+which is why the column exists at all — but it is bounded to `[sealed_at, now()]`, and
+the two ends are not treated alike:
+
+| Claim | Response | Why |
+|---|---|---|
+| `occurred_at` in the future | Pulled back to `now()`, tap kept | A device clock running fast. Benign, and nothing the Member could act on if told — while refusing it loses a real tap the offline queue will retry forever (§17.2) |
+| `occurred_at` before the seal | Refused, `PT403` | No queue can hold a tap from before the Board existed, so this is a client bug or the backdating §11.5 names. Wrapped aggregates by month and hands out "biggest month" and "most consistent" (§20.4) — an unbounded `occurred_at` writes those Awards |
+
+The lower bound is `least(sealed_at, now())` rather than `sealed_at` outright, so that a
+Board somehow stamped ahead of the clock cannot refuse every possible tap.
+
 ### 4.3 Storage
 
 Attachments live in a **private** bucket with the Family id as the first path segment:
