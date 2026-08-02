@@ -17,10 +17,7 @@ insert into auth.users (id, email) values
   ('00000000-0000-4000-8000-0000000000a3', 'carol@example.test'),
   ('00000000-0000-4000-8000-0000000000a2', 'bob@example.test');
 
-insert into accounts (id, email) values
-  ('00000000-0000-4000-8000-0000000000a1', 'alice@example.test'),
-  ('00000000-0000-4000-8000-0000000000a3', 'carol@example.test'),
-  ('00000000-0000-4000-8000-0000000000a2', 'bob@example.test');
+-- accounts rows are provisioned by the on_auth_user_created trigger (slice 1).
 
 insert into families (id, name, timezone) values
   ('00000000-0000-4000-8000-0000000000f1', 'Hertzell Family', 'America/New_York'),
