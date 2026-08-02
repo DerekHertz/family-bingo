@@ -25,6 +25,7 @@ npm test               # vitest — the pure domain layer
 npm run db:start       # local Supabase (needs Docker)
 npm run db:reset       # apply migrations from scratch
 npm run db:test        # pgTAP — RLS, constraints, storage
+npm run test:integration  # HTTP, against the running stack (needs db:start)
 ```
 
 ## Documents
