@@ -13,7 +13,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(49);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -50,8 +50,15 @@ $$;
 -- other Family's id through the caller's own RLS gets NULL, and `family_id = NULL` is
 -- never true — so the test would pass against a Feed that leaked everything. The id has
 -- to come from outside the boundary for the assertion to be about the boundary.
+-- Once a Family has two Years, year_of() is ambiguous. This one names which.
+create or replace function year_num(family text, cal int) returns uuid
+language sql stable security definer set search_path = public as $$
+  select y.id from years y join families f on f.id = y.family_id
+   where f.name = family and y.calendar_year = cal
+$$;
+
 create or replace function family_named(name text) returns uuid
-language sql stable security definer as $$
+language sql stable security definer set search_path = public as $$
   select f.id from families f where f.name = family_named.name
 $$;
 
@@ -65,11 +72,24 @@ $$;
 create or replace function feed_total() returns int
 language sql stable as $$ select count(*)::int from feed $$;
 
+-- One page of the Feed as the client would ask for it, reduced to its kinds. Ordering is
+-- the thing under test, so the page is numbered before it is cut and the array is built
+-- from those numbers — an ORDER BY inside a subquery is not a promise array_agg has to
+-- keep.
+create or replace function feed_kinds(lim int, skip int) returns text[]
+language sql stable as $$
+  select array_agg(p.kind order by p.rn)
+    from (select f.kind, row_number() over (order by f.created_at desc, f.id) as rn
+            from feed f) p
+   where p.rn > skip and p.rn <= skip + lim
+$$;
+
 insert into auth.users (id, email, raw_user_meta_data) values
   ('00000000-0000-4000-8000-0000000000a1', 'alice@example.test', '{"full_name":"Alice"}'::jsonb),
   ('00000000-0000-4000-8000-0000000000a2', 'bob@example.test',   '{"full_name":"Bob"}'::jsonb),
   ('00000000-0000-4000-8000-0000000000a3', 'carol@example.test', '{"full_name":"Carol"}'::jsonb),
-  ('00000000-0000-4000-8000-0000000000a4', 'dave@example.test',  '{"full_name":"Dave"}'::jsonb);
+  ('00000000-0000-4000-8000-0000000000a4', 'dave@example.test',  '{"full_name":"Dave"}'::jsonb),
+  ('00000000-0000-4000-8000-0000000000a5', 'erin@example.test',  '{"full_name":"Erin"}'::jsonb);
 
 -- ---------------------------------------------------------------------------------
 -- A Family with recent activity
@@ -152,12 +172,17 @@ select is(
   (select f.goal_text from feed f where f.kind = 'milestone'),
   'Walk the dog', 'naming the Goal that closed');
 
--- Vote outcomes, both of them. Nobody cast a Ballot, so the mode fell back to personal
--- (§8.3) and the goal Vote resolved with no winner.
-select is(feed_count('vote_resolved'), 2, 'both Center Vote outcomes are in the Feed');
+-- Vote outcomes. Nobody cast a Ballot, so the mode fell back to personal (§8.3) and the
+-- goal Vote resolved with no winner — which is not an outcome, and does not appear.
+select is(feed_count('vote_resolved'), 1,
+  'the mode Vote''s outcome is in the Feed');
 select is(
   (select f.vote_outcome from feed f where f.kind = 'vote_resolved' and f.vote_kind = 'mode'),
   'personal', 'the mode Vote records what was voted (§9.3)');
+select is(
+  (select count(*)::int from feed f
+    where f.kind = 'vote_resolved' and f.vote_kind = 'goal'), 0,
+  'a goal Vote that produced no Family Goal has no outcome to report');
 
 -- Members joining. Alice, Bob — and not Dave, who is still pending.
 select is(feed_count('member_joined'), 2,
@@ -200,23 +225,39 @@ select is(
   (select count(*)::int from feed f where f.created_at is null), 0,
   'every row is stamped, so newest-first is total');
 
--- Reverse-chronological. Asserted as a property rather than a fixed list, because the
--- rows here are written inside one transaction and share a now().
-select is(
-  (select count(*)::int from (
-     select f.created_at,
-            lag(f.created_at) over (order by f.created_at desc) as prev
-       from feed f
-   ) ordered where ordered.prev is not null and ordered.prev < ordered.created_at),
-  0, 'ordering by created_at descending is newest-first (§14.1)');
+select is(feed_total(), 8,
+  'eight events so far: 3 Increments, 1 Milestone, 1 outcome, 2 joins, 1 Swap');
+
+-- Reverse-chronological (§14.1), against a known sequence. Everything above was written
+-- inside one transaction and shares a now(), so the timestamps are spread here first —
+-- ordering asserted against rows that all tie is an assertion about nothing.
+select set_config('role', 'postgres', true);
+update members    set joined_at   = now() - interval '10 days' where display_name = 'Alice';
+update members    set joined_at   = now() - interval '9 days'  where display_name = 'Bob';
+update votes      set resolved_at = now() - interval '5 days'  where resolved_at is not null;
+update increments set created_at  = now() - interval '3 days'
+ where id = '00000000-0000-4000-8000-0000000000c1';
+update increments set created_at  = now() - interval '2 days'
+ where id = '00000000-0000-4000-8000-0000000000c2';
+update increments set created_at  = now() - interval '1 day'
+ where id = '00000000-0000-4000-8000-0000000000c3';
+update milestones set created_at  = now() - interval '23 hours';
+update revisions  set created_at  = now() - interval '1 hour';
+
+select act_as('00000000-0000-4000-8000-0000000000a1');
+
+select is(feed_kinds(100, 0),
+  array['swap', 'milestone', 'increment', 'increment', 'increment',
+        'vote_resolved', 'member_joined', 'member_joined'],
+  'newest first, across every kind at once (§14.1)');
 
 -- Paginated (§14.1). PostgREST turns limit/offset into exactly this.
-select is(
-  (select count(*)::int from (select * from feed order by created_at desc limit 3) page),
-  3, 'the Feed pages');
-
-select is(feed_total(), 9,
-  'nine events so far: 3 Increments, 1 Milestone, 2 outcomes, 2 joins, 1 Swap');
+select is(feed_kinds(3, 0), array['swap', 'milestone', 'increment'],
+  'the first page is the newest three');
+select is(feed_kinds(3, 3), array['increment', 'increment', 'vote_resolved'],
+  'and the second continues where it stopped, repeating nothing');
+select is(feed_kinds(3, 6), array['member_joined', 'member_joined'],
+  'the last page is short rather than padded');
 
 -- ---------------------------------------------------------------------------------
 -- A second Family, living its own life
@@ -224,8 +265,18 @@ select is(feed_total(), 9,
 
 select act_as('00000000-0000-4000-8000-0000000000a3');
 select create_family('Okonkwo Family', 'Europe/London');
+
+-- Chidi is a Managed Member: a child with no login, played through Carol's Account
+-- (ADR-0003). §4.2 is explicit that what Carol does on his behalf is attributed to him.
+select set_config('role', 'postgres', true);
+insert into members (family_id, guardian_account_id, display_name, role, status)
+  values (family_named('Okonkwo Family'),
+          '00000000-0000-4000-8000-0000000000a3', 'Chidi', 'member', 'active');
+
+select act_as('00000000-0000-4000-8000-0000000000a3');
 select open_year((select id from families where name = 'Okonkwo Family'), 2027);
 select write_goal(tile_of('Carol', 5), 'Swim the Serpentine', 4, 'swims');
+select write_goal(tile_of('Chidi', 3), 'Learn ten chords', 10, 'chords');
 
 select set_config('role', 'postgres', true);
 update years set setup_deadline = now() - interval '1 minute'
@@ -234,12 +285,41 @@ update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Okonkwo Family');
 
 select act_as_cron();
-select is(seal_due_boards(), 1, 'the second Family seals too');
+select is(seal_due_boards(), 2, 'the second Family seals too');
 
 select act_as('00000000-0000-4000-8000-0000000000a3');
 insert into increments (id, tile_id, member_id, note)
   values ('00000000-0000-4000-8000-0000000000c9', tile_of('Carol', 5), member_of('Carol'),
           'freezing');
+
+-- ---------------------------------------------------------------------------------
+-- §4.2 — a Guardian acts, and the Managed Member is credited
+-- ---------------------------------------------------------------------------------
+--
+-- Carol taps for Chidi from her own Account. The Feed must name Chidi: the Board is his,
+-- the Goal is his, and the Account is not the player (ADR-0003). This is the one
+-- attribution rule the PRD states about the Feed by name.
+
+insert into increments (id, tile_id, member_id, note)
+  values ('00000000-0000-4000-8000-0000000000ca', tile_of('Chidi', 3), member_of('Chidi'),
+          'G, C and D');
+
+select is(
+  (select f.member_id from feed f where f.id = '00000000-0000-4000-8000-0000000000ca'),
+  member_of('Chidi'),
+  'attributed to the Managed Member, not the Guardian who tapped (§4.2)');
+
+select is(
+  (select count(*)::int from feed f where f.member_id = member_of('Carol')
+     and f.kind = 'increment'), 1,
+  'and Carol is credited only with her own');
+
+select is(
+  (select f.member_id from feed f
+    where f.kind = 'member_joined' and f.goal_text is null
+      and f.member_id = member_of('Chidi')),
+  member_of('Chidi'),
+  'his arrival is his own too — the Feed never names an Account');
 
 -- ---------------------------------------------------------------------------------
 -- §14.3 — the boundary, as zero rows and never an error
@@ -249,8 +329,8 @@ insert into increments (id, tile_id, member_id, note)
 -- tells an outsider nothing (api.md §9, ADR-0004). §14.3 requires this half to be a
 -- database test, and requires it to assert emptiness rather than a raised exception.
 
-select is(feed_count('increment'), 1,
-  'Carol sees her own Family''s single Increment');
+select is(feed_count('increment'), 2,
+  'Carol sees her own Family''s two Increments — hers and Chidi''s');
 
 select is(
   (select count(*)::int from feed f where f.note = 'round the reservoir'), 0,
@@ -270,6 +350,54 @@ select is(
 
 select is(feed_count('increment'), 3,
   'and Alice still sees exactly her own Family''s three');
+
+-- ---------------------------------------------------------------------------------
+-- §14.1 — a second Year, and the Freeze between them
+-- ---------------------------------------------------------------------------------
+--
+-- Everything above ran against a Family with one Year, where "scoped to one Year" is
+-- true by accident. A Member who arrives between a Freeze and the next opening is the
+-- case that decides it: attributing them backwards would drop a new event into permanent
+-- family history (§20.1, CONTEXT.md Freeze) and leave them missing from the Year they
+-- actually play (§21.4).
+
+select set_config('role', 'postgres', true);
+update years set frozen_at = now(), status = 'frozen' where id = year_num('Hertzell Family', 2027);
+
+-- Erin is approved in the gap: the old Year is history, the new one does not exist yet.
+insert into members (family_id, account_id, display_name, role, status) values
+  (family_named('Hertzell Family'), '00000000-0000-4000-8000-0000000000a5',
+   'Erin', 'member', 'active');
+
+select act_as('00000000-0000-4000-8000-0000000000a1');
+select lives_ok($$select open_year(family_named('Hertzell Family'), 2028)$$,
+  'the Family opens its next Year');
+
+select is(
+  (select f.year_id from feed f
+    where f.kind = 'member_joined' and f.member_id = member_of('Erin')),
+  year_num('Hertzell Family', 2028),
+  'a Member who arrived between Years belongs to the one they will play');
+
+select isnt(
+  (select f.year_id from feed f
+    where f.kind = 'member_joined' and f.member_id = member_of('Erin')),
+  year_num('Hertzell Family', 2027),
+  'and not to the frozen Year, which is closed history (§20.1)');
+
+select is(
+  (select count(*)::int from feed f where f.year_id = year_num('Hertzell Family', 2027)),
+  8, 'last Year keeps its eight events');
+
+select is(
+  (select count(*)::int from feed f where f.year_id = year_num('Hertzell Family', 2028)),
+  1, 'and the new Year has only Erin arriving');
+
+select is(
+  (select count(*)::int from feed f where f.year_id is null), 0,
+  'no row belongs to no Year, so a Year filter loses nothing (§14.1)');
+
+select is(feed_total(), 9, 'the Feed spans both Years until the client filters one');
 
 -- A pending Member has asked, not arrived. They read nothing at all — not the Feed, not
 -- Boards, not other Members' names (§3.2). visible_family_ids() requires 'active'.

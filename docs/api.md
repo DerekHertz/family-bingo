@@ -81,15 +81,31 @@ Clients page it through PostgREST: `?family_id=eq.…&year_id=eq.…&order=creat
 | `increment` | `increments` | `note`, `attachment_path`, `tile_id`, `position`, `goal_text` |
 | `milestone` | `milestones` | `milestone_type`, `line_index`, `tile_id`, `position`, `goal_text` |
 | `swap` | `revisions` | `before_text`, `before_target`, `after_text`, `after_target` |
-| `vote_resolved` | `votes` | `vote_kind`, `vote_outcome`, `goal_text` (the winning Proposal) |
+| `vote_resolved` | `votes` | `vote_kind`, `vote_outcome` |
 | `member_joined` | `members` | `member_id` |
 
+`vote_outcome` is the decision in words for both kinds — `shared`/`personal` for the mode
+Vote, and the Family Goal's own text for the goal Vote. `votes.outcome` holds the winning
+Proposal's *id* for a goal Vote, and a raw uuid is not something a Feed row can render. A
+goal Vote appears only if it produced a Family Goal: the column is stamped with a winner
+even when the mode resolved to personal, and announcing a Family Goal that is on nobody's
+Board would be worse than saying nothing.
+
 Every row carries `id`, `kind`, `created_at`, `family_id`, `year_id`, `member_id`.
-`member_id` is null for `vote_resolved` — a Vote is the Family's, not a Member's.
+`member_id` is null for `vote_resolved` — a Vote is the Family's, not a Member's. `id` is
+the source row's id and is unique only together with `kind`.
+
+`created_at` is when the Family learned of the event. For three kinds that is the column
+of that name; a Vote contributes `resolved_at` and a joining contributes `joined_at`. All
+three are server clocks stamped when the thing happened. It is deliberately never
+`increments.occurred_at` — a Member may say a walk happened yesterday, but the Feed is the
+order the Family found out.
 
 A Member joins a Family rather than a Year, so `member_joined` is attributed to the Year
-that was open when they joined; a founder, who joined before `open_year()` could be
-called, lands in the Family's first Year.
+under way when they joined. Someone who arrives between a Freeze and the next opening —
+or a founder, who joined before `open_year()` could be called — is attributed to the Year
+they will play, never backwards into frozen history. `year_id` is null only for a Family
+with no Year at all, so filtering by Year loses nothing.
 
 ### 2.1 RPCs
 

@@ -48,8 +48,8 @@ _Avoid_: Admin, owner, host, parent
 
 **Feed**:
 The Family's running record of everything that has happened this Year — every
-Increment, Milestone, Swap and vote. Read when a Member opens the app; it never
-interrupts anyone.
+Increment, Milestone, Swap, vote outcome and Member arriving. Read when a Member opens
+the app; it never interrupts anyone.
 _Avoid_: Timeline, activity log, stream, wall
 
 **Milestone**:
