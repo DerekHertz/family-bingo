@@ -134,7 +134,7 @@ with no Year at all, so filtering by Year loses nothing.
 | Function | Trigger | Notes |
 |---|---|---|
 | `sharpen` | Client invoke | Claude call. Rate-limited 100/Member/Year |
-| `notify` | DB webhook on `milestones` insert | Never notifies the causing Member |
+| `notify` | DB webhook on `notifications` insert | Drains the outbox. Decides nothing about who — see below |
 | `digest` | `pg_cron` weekly | Opt-in only; skipped if the week was empty |
 
 ---
@@ -301,6 +301,36 @@ flowchart LR
 
 Notification permission is a **one-way door**: once someone disables it at the OS level,
 the app cannot win them back. Do not spend it on `+1 walk`.
+
+`line_completed` is **not** on the push list. §13.2 made it the quiet Milestone
+deliberately; a Member closing their eighth Line is Feed news.
+
+### 6.1 The outbox
+
+Fan-out is a **database trigger writing one row per recipient into `notifications`**, not
+a filter inside the Edge Function. That is what makes §15.5 — never notify the Member who
+caused it — a property pgTAP can assert. The function only drains, renders and sends; it
+decides nothing about who.
+
+The recipient is an **Account**, not a Member, because a device token hangs off an
+Account and one Account may be a Member of several Families. Resolving "the Member who
+caused it" to an Account is the subtle part: a Guardian tapping for their Managed Member
+produces a Milestone attributed to the child (§4.2), so excluding `members.account_id`
+alone would push the Guardian a notification about their own thumb. The excluded Account
+is whichever of `account_id` / `guardian_account_id` is set.
+
+| Kind | Recipients |
+|---|---|
+| `tile_completed`, `bingo`, `blackout` | Every active Member's Account in the Family, except the causer's |
+| `join_requested` | The Organizer alone — nobody else can act on it |
+| `join_approved` | The Member who was waiting |
+| `setup_closing` | Everyone active, once per Year, 24h before Boards seal |
+
+> **§15.1 lists "invite received" and it cannot be sent.** An Invitation stores only
+> `token_hash` — "the token itself lives in the link and nowhere else" (§3.1) — so there
+> is no identity in the database to address. That privacy property is worth more than the
+> notification. `join_requested` covers the half of that moment the schema *can* address:
+> someone is waiting on the Organizer.
 
 ---
 
