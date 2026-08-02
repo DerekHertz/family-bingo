@@ -13,7 +13,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(54);
+select plan(59);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -165,21 +165,34 @@ select act_as_cron();
 select is((select count(*)::int from board_lines()), 12,
   'twelve Lines: five rows, five columns, two diagonals (§13.1)');
 
+-- All twelve, individually, so that a failure names the Line that moved. Cardinality and
+-- coverage checks are not enough on their own: swapping two Lines of the same shape
+-- leaves both intact and would go unnoticed, and a swap is exactly how two hand-kept
+-- copies drift.
 select is((select positions from board_lines() where line_index = 0),
-  array[0,1,2,3,4], 'Lines 0-4 are the rows');
+  array[0,1,2,3,4], 'Line 0 is row 0');
+select is((select positions from board_lines() where line_index = 1),
+  array[5,6,7,8,9], 'Line 1 is row 1');
+select is((select positions from board_lines() where line_index = 2),
+  array[10,11,12,13,14], 'Line 2 is row 2, through the centre');
+select is((select positions from board_lines() where line_index = 3),
+  array[15,16,17,18,19], 'Line 3 is row 3');
 select is((select positions from board_lines() where line_index = 4),
-  array[20,21,22,23,24], 'the last row is 20-24');
+  array[20,21,22,23,24], 'Line 4 is row 4');
 select is((select positions from board_lines() where line_index = 5),
-  array[0,5,10,15,20], 'Lines 5-9 are the columns');
+  array[0,5,10,15,20], 'Line 5 is column 0');
+select is((select positions from board_lines() where line_index = 6),
+  array[1,6,11,16,21], 'Line 6 is column 1');
+select is((select positions from board_lines() where line_index = 7),
+  array[2,7,12,17,22], 'Line 7 is column 2, through the centre');
+select is((select positions from board_lines() where line_index = 8),
+  array[3,8,13,18,23], 'Line 8 is column 3');
 select is((select positions from board_lines() where line_index = 9),
-  array[4,9,14,19,24], 'the last column is 4,9,14,19,24');
+  array[4,9,14,19,24], 'Line 9 is column 4');
 select is((select positions from board_lines() where line_index = 10),
   array[0,6,12,18,24], 'Line 10 is the down-right diagonal');
 select is((select positions from board_lines() where line_index = 11),
   array[4,8,12,16,20], 'Line 11 is the down-left diagonal');
-
-select is((select count(*)::int from board_lines() where cardinality(positions) <> 5), 0,
-  'every Line is five Tiles long');
 
 select is(
   (select count(*)::int from board_lines() l where 12 = any(l.positions)), 4,

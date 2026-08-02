@@ -115,6 +115,7 @@ declare
   board_year   uuid;
   bingo_earned boolean;
   ln           record;
+  recorded     int;
 begin
   select b.member_id, b.year_id into board_owner, board_year
     from boards b where b.id = target_board_id;
@@ -159,9 +160,27 @@ begin
             ln.line_index)
         on conflict do nothing;
 
-    -- Set unconditionally. If the insert lost a race, the row exists anyway and the
-    -- Bingo is spent either way — one_bingo_per_year is the backstop, and a second
-    -- attempt at it here would be rejected rather than duplicated.
+    get diagnostics recorded = row_count;
+
+    -- A Bingo that lost a race is still a Line, and must not vanish.
+    --
+    -- `bingo_earned` was read once, at the top. Two transactions closing two different
+    -- Lines for the same Member at the same moment — a live tap while the offline queue
+    -- replays (§17.4) — both read false and both aim for 'bingo'. The loser is rejected
+    -- by one_bingo_per_year, and DO NOTHING would swallow it: that Line ends up with no
+    -- Milestone of either kind, and the Board reads n-1 of 12. It self-heals on the next
+    -- completion, because this whole function is a diff — but if it was the Year's last
+    -- completion there is no next one, and the Line is lost for good.
+    --
+    -- So a rejected Bingo is retried as the thing it actually is. The retry can conflict
+    -- in turn, on one_milestone_per_line, if the racing transaction was closing this same
+    -- Line rather than another; that one is a genuine duplicate and DO NOTHING is right.
+    if recorded = 0 and not bingo_earned then
+      insert into milestones (member_id, year_id, type, line_index)
+      values (board_owner, board_year, 'line_completed', ln.line_index)
+          on conflict do nothing;
+    end if;
+
     bingo_earned := true;
   end loop;
 
@@ -209,15 +228,20 @@ create trigger milestones_emit_lines
 -- The crossing that records no Milestone
 -- ---------------------------------------------------------------------------------
 --
--- Slice 12's trigger, with one line added. Unchanged: the Board's owner rather than
+-- Slice 12's trigger, with one branch added. Unchanged: the Board's owner rather than
 -- new.member_id, the NULL-Target guard, the count taken fresh, AFTER INSERT only.
 --
--- What is new is the second `perform`. record_tile_completion() is deliberately a no-op
--- when the Tile already has its Milestone, and a Tile can be complete, lose an Increment
--- to §11.3, and complete again — at which point nothing is inserted and the trigger
--- above never fires. Without this call a Member who corrects a mistake on Tile 0 while
--- Tiles 1–4 close would never be told about row 0. It overlaps with the trigger in the
--- ordinary case, which costs one scan of 25 Tiles and records nothing twice.
+-- What is new is the tail. record_tile_completion() is deliberately a no-op when the Tile
+-- already has its Milestone, and a Tile can be complete, lose an Increment to §11.3, and
+-- complete again — at which point nothing is inserted and the trigger above never fires.
+-- Without this a Member who corrects a mistake on Tile 0 while Tiles 1–4 close would
+-- never be told about row 0.
+--
+-- Gated on whether the Milestone was already there, so the two paths partition rather
+-- than overlap: a first crossing is news, and the trigger on `milestones` handles it;
+-- anything else lands here. The gate matters because "anything else" includes every tap
+-- past a Target, and a Board scan is 25 correlated counts — a Goal of 150 walks would
+-- otherwise pay for one on each of the 149 taps after the hundred-and-first.
 create or replace function emit_tile_completion()
 returns trigger
 language plpgsql
@@ -225,10 +249,11 @@ security definer
 set search_path = public
 as $$
 declare
-  target_count int;
-  board_year   uuid;
-  board_owner  uuid;
-  owning_board uuid;
+  target_count     int;
+  board_year       uuid;
+  board_owner      uuid;
+  owning_board     uuid;
+  already_recorded boolean;
 begin
   -- The Board's owner, not `new.member_id`. RLS forces the two equal for any client —
   -- increments_own_insert requires the Tile to belong to the Board of the Member being
@@ -260,10 +285,20 @@ begin
   -- is celebrated once, in Wrapped (§20.4), never as another interruption. Nor does
   -- re-crossing after an Increment was deleted: the recorded row is what stops the
   -- second notification, exactly as milestonesToEmit() treats it.
+  -- Read before the write, because after it the row exists either way.
+  already_recorded := exists (
+    select 1 from milestones m
+     where m.member_id = board_owner
+       and m.tile_id   = new.tile_id
+       and m.type      = 'tile_completed'
+  );
+
   perform record_tile_completion(board_owner, board_year, new.tile_id);
 
-  -- §13. The Tile is complete as of this Increment, whether or not that was news.
-  perform record_line_milestones(owning_board);
+  -- §13. A completion that recorded nothing still closed whatever it closed.
+  if already_recorded then
+    perform record_line_milestones(owning_board);
+  end if;
 
   return null;
 end;
