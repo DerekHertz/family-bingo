@@ -66,12 +66,16 @@ update tiles set goal_id = '00000000-0000-4000-8000-0000000000bb'
 update tiles set family_goal_id = '00000000-0000-4000-8000-0000000000ba'
   where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 12;
 
+-- Both Votes: the Ballot below is a mode Ballot, but a Proposal only belongs to the
+-- goal Vote (enforce_proposal_rules).
 insert into votes (id, year_id, kind, closes_at) values
   ('00000000-0000-4000-8000-0000000000ca', '00000000-0000-4000-8000-0000000000d1',
-   'mode', '2027-01-01T05:00:00Z');
+   'mode', '2027-01-01T05:00:00Z'),
+  ('00000000-0000-4000-8000-0000000000cc', '00000000-0000-4000-8000-0000000000d1',
+   'goal', '2027-01-01T05:00:00Z');
 
 insert into proposals (id, vote_id, member_id, text) values
-  ('00000000-0000-4000-8000-0000000000cb', '00000000-0000-4000-8000-0000000000ca',
+  ('00000000-0000-4000-8000-0000000000cb', '00000000-0000-4000-8000-0000000000cc',
    '00000000-0000-4000-8000-0000000000e1', 'Camping trip');
 
 insert into ballots (vote_id, member_id, choice_mode) values
@@ -142,7 +146,7 @@ select is((select count(*) from increments)::int, 1, 'alice sees her Increment')
 select is((select count(*) from attachments)::int, 1, 'alice sees her Attachment');
 select is((select count(*) from milestones)::int, 1, 'alice sees her Milestone');
 select is((select count(*) from revisions)::int, 1, 'alice sees the Swap Revision');
-select is((select count(*) from votes)::int, 1, 'alice sees the Center Vote');
+select is((select count(*) from votes)::int, 2, 'alice sees both halves of the Center Vote');
 select is((select count(*) from proposals)::int, 1, 'alice sees the Proposal');
 select is((select count(*) from ballots)::int, 1, 'alice sees the Ballot');
 select is((select count(*) from wrapped)::int, 1, 'alice sees Wrapped');

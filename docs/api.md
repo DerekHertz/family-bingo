@@ -77,9 +77,13 @@ other Family. Everything else is plumbing.
 | `approve_member(member_id)` | `pending → active` | Organizer only |
 | `create_managed_member(family_id, name)` | Member with `guardian_account_id` | Active adult Member |
 | `open_year(family_id, calendar_year)` | Year + Boards + 25 Tiles each + both Votes | Organizer, no Year exists |
-| `cast_ballot(vote_id, choice)` | Upsert Ballot | Active Member, vote open |
-| `resolve_vote(vote_id)` | Applies §3.4 rules | `pg_cron` or Organizer tiebreak |
-| `seal_year(year_id)` | Sets `sealed_at`, Year → `active` | `pg_cron`, idempotent |
+| `write_goal(tile_id, text, target, …)` | Authors or edits a Tile's Goal | Own Board, draft — plus the one §9.5 write |
+| `clear_goal(tile_id)` | Empties a Tile | Own Board, draft |
+| `cast_ballot(vote_id, member_id, choice_mode, proposal_id)` | Upsert Ballot | Controlled Member, Vote open |
+| `set_organizer_tiebreak(vote_id, proposal_id)` | Names the Organizer's pick among tied leaders (ADR-0007) | Organizer only |
+| `resolve_center_vote(year_id)` | Resolves both Votes, applies §8.3 / §9.3 fallbacks | `pg_cron` or Organizer, Setup Window closed |
+| `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent |
+| `seal_due_boards()` | The sweep: every Year past its deadline, then §21.1 stragglers | `pg_cron` |
 | `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1` | Sealed Board, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
 | `generate_wrapped(year_id)` | Materializes cards + Awards, one per Year | `pg_cron` after freeze, idempotent |
@@ -269,15 +273,16 @@ sequenceDiagram
     participant N as notify
 
     Note over Cron,DB: — Setup Window closes —
-    Cron->>DB: resolve_vote(mode)
-    Note right of DB: majority of ballots CAST.<br/>tie or zero → personal.<br/>Silence never blocks.
+    Cron->>DB: seal_due_boards()
+    DB->>DB: seal_year(year), per Year past its deadline
+    DB->>DB: resolve_center_vote(year)
+    Note right of DB: mode: majority of Ballots CAST.<br/>tie or zero → personal.<br/>Silence never blocks.
     alt shared won
-        Cron->>DB: resolve_vote(goal)
-        Note right of DB: plurality; tie → Organizer.<br/>zero proposals → personal.
+        Note right of DB: goal: plurality; tie → Organizer.<br/>zero Proposals → personal.
         DB->>DB: family_goal_id → every Tile 12
     end
-    Cron->>DB: seal_year()
-    Note right of DB: seals whether or not authoring<br/>finished. Empty Tiles cost a Swap later.
+    DB->>DB: sealed_at → every Board, Year → active
+    Note right of DB: seals whether or not authoring<br/>finished. Empty Tiles cost a Swap later —<br/>except a personal Tile 12, free for 7 days (§9.5).
     DB->>N: "your board is sealed"
 
     Note over Cron,DB: — Dec 31, 23:59 in Family timezone —
