@@ -13,7 +13,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(38);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -38,6 +38,24 @@ create or replace function year_2027() returns uuid
 language sql stable as $$
   select id from years where calendar_year = 2027
      and family_id = (select id from families where name = 'Hertzell Family')
+$$;
+
+-- The Setup Window closes, and only THEN does the Vote resolve — that ordering is the
+-- whole sequence in api.md §7, and resolve_center_vote() now enforces it. A test that
+-- resolves mid-window is testing a path production never takes.
+--
+-- SECURITY DEFINER so it works whoever the test is currently acting as; it is created
+-- inside the test transaction and rolled back with it.
+create or replace function close_window(family text) returns void
+language plpgsql security definer as $$
+begin
+  update years y set setup_deadline = now() - interval '1 minute'
+   where y.family_id = (select f.id from families f where f.name = close_window.family);
+  update votes v set closes_at = now() - interval '1 minute'
+   where v.year_id in (select y.id from years y
+                        where y.family_id = (select f.id from families f
+                                              where f.name = close_window.family));
+end;
 $$;
 
 -- A Family of four: Alice (Organizer), Theo (Managed), Bob, Carol.
@@ -123,6 +141,21 @@ select lives_ok($$
   values (vote_of('goal'), member_of('Bob'), 'Beach')
 $$, 'but the limit is per Member, not per Family');
 
+-- A Proposal is a candidate Family Goal. The mode Vote has nothing to put forward.
+select throws_ok($$
+  insert into proposals (vote_id, member_id, text)
+  values (vote_of('mode'), member_of('Bob'), 'Wrong ballot paper')
+$$, '22023', null, 'a Proposal cannot be filed against the mode Vote (§9.1)');
+
+-- Withdrawing your own is fine while it stands alone...
+select lives_ok($$
+  insert into proposals (id, vote_id, member_id, text)
+  values ('00000000-0000-4000-8000-0000000000d1', vote_of('goal'), member_of('Bob'), 'Second thoughts')
+$$, 'a Member may put one forward...');
+select lives_ok($$
+  delete from proposals where id = '00000000-0000-4000-8000-0000000000d1'
+$$, '...and withdraw it again while nobody has voted for it');
+
 -- "Camping trip" wins with 2 votes.
 select act_as('00000000-0000-4000-8000-0000000000a1');
 select lives_ok($$
@@ -143,11 +176,27 @@ select throws_ok($$
     (select id from proposals where text = 'Marathon'))
 $$, '22023', null, 'nor a mode Ballot as a Proposal');
 
+-- ...but not once it would take somebody else's Ballot with it. Bob voted for Alice's
+-- "Marathon"; ballots.proposal_id cascades, so allowing the withdrawal would delete his
+-- vote outright, with the Vote still open and no notice to him.
+select act_as('00000000-0000-4000-8000-0000000000a1');
+select throws_ok($$
+  delete from proposals where text = 'Marathon'
+$$, 'PT409', null,
+  'a Proposal others have voted for can no longer be withdrawn');
+
 -- ---------------------------------------------------------------------------------
 -- Resolution — both acceptance tests
 -- ---------------------------------------------------------------------------------
 
 select act_as('00000000-0000-4000-8000-0000000000a1');
+
+-- §8.1: Ballots are changeable until the deadline. An Organizer who could resolve on
+-- day one would end everyone else's say, silently and irreversibly.
+select throws_ok($$select resolve_center_vote(year_2027())$$, 'PT403', null,
+  'not even the Organizer may resolve while the Setup Window is open (§8.1)');
+
+select close_window('Hertzell Family');
 select lives_ok($$select resolve_center_vote(year_2027())$$, 'the Center Vote resolves');
 
 select is((select center_mode from years where id = year_2027()), 'shared',
@@ -181,6 +230,12 @@ select throws_ok($$
   select cast_ballot(vote_of('mode'), member_of('Alice'), 'personal')
 $$, 'PT403', null, 'Ballots are refused once the Vote has resolved (§8.1)');
 
+select throws_ok($$
+  insert into proposals (vote_id, member_id, text)
+  values (vote_of('goal'), member_of('Alice'), 'Too late to propose')
+$$, 'PT403', null,
+  'and so are Proposals — a candidate for a decision already taken (§9.1)');
+
 -- ---------------------------------------------------------------------------------
 -- §8.3 / §9.3 — the fallbacks that make silence safe
 -- ---------------------------------------------------------------------------------
@@ -193,6 +248,7 @@ insert into members (family_id, account_id, display_name, role, status)
   values ((select id from families where name = 'Silent Family'),
           '00000000-0000-4000-8000-0000000000a3', 'Quiet', 'member', 'active');
 select open_year((select id from families where name = 'Silent Family'), 2027);
+select close_window('Silent Family');
 select resolve_center_vote(
   (select id from years where family_id = (select id from families where name = 'Silent Family')));
 select is(
@@ -218,6 +274,7 @@ insert into ballots (vote_id, member_id, choice_mode)
            where y.family_id = (select id from families where name = 'Split Family')
              and v.kind = 'mode'),
          member_of('Twin 2'), 'personal';
+select close_window('Split Family');
 select resolve_center_vote(
   (select id from years where family_id = (select id from families where name = 'Split Family')));
 select is(
@@ -236,6 +293,7 @@ insert into ballots (vote_id, member_id, choice_mode)
            where y.family_id = (select id from families where name = 'Unproposed Family')
              and v.kind = 'mode'),
          member_of('Lone'), 'shared';
+select close_window('Unproposed Family');
 select resolve_center_vote(
   (select id from years where family_id = (select id from families where name = 'Unproposed Family')));
 select is(
@@ -248,6 +306,23 @@ select is(
   (select count(*) from family_goals fg join years y on y.id = fg.year_id
     where y.family_id = (select id from families where name = 'Unproposed Family'))::int,
   0, 'and no empty Family Goal is created');
+
+-- The fallback moves the Center Tile, not the record of what the Family chose. The
+-- Feed has to be able to say "you voted for a Family Goal but nobody proposed one";
+-- writing 'personal' here would have it claim they voted the other way.
+select is(
+  (select v.outcome from votes v join years y on y.id = v.year_id
+    where y.family_id = (select id from families where name = 'Unproposed Family')
+      and v.kind = 'mode'),
+  'shared',
+  'the mode Vote still records SHARED — the fallback changed the centre, not the vote');
+
+select is(
+  (select v.outcome from votes v join years y on y.id = v.year_id
+    where y.family_id = (select id from families where name = 'Unproposed Family')
+      and v.kind = 'goal'),
+  null,
+  'and the goal Vote records no winner as NULL, not a sentinel — status says it is over');
 
 -- ---------------------------------------------------------------------------------
 -- Ties on the Family Goal (ADR-0007): Organizer first, then earliest Proposal
@@ -286,6 +361,7 @@ insert into ballots (vote_id, member_id, proposal_id) values
 update votes set organizer_tiebreak_proposal_id = '00000000-0000-4000-8000-0000000000e8'
  where id = (select goal_vote from tied);
 
+select close_window('Tied Family');
 select resolve_center_vote((select yr from tied));
 select is(
   (select fg.text from family_goals fg where fg.year_id = (select yr from tied)),
@@ -319,6 +395,7 @@ insert into ballots (vote_id, member_id, proposal_id) values
   ((select goal_vote from untied), member_of('Pick A'), '00000000-0000-4000-8000-0000000000f7'),
   ((select goal_vote from untied), member_of('Pick B'), '00000000-0000-4000-8000-0000000000f8');
 
+select close_window('Untied Family');
 select resolve_center_vote((select yr from untied));
 select is(
   (select fg.text from family_goals fg where fg.year_id = (select yr from untied)),

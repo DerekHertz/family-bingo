@@ -280,6 +280,7 @@ erDiagram
         text kind "mode|goal"
         text status "open|resolved"
         text outcome
+        uuid organizer_tiebreak_proposal_id FK "ADR-0007"
         timestamptz closes_at
         timestamptz resolved_at
     }

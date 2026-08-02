@@ -38,10 +38,7 @@ begin
     raise exception 'no such Year' using errcode = '42501';
   end if;
 
-  -- auth.uid() is NULL when pg_cron calls this; a signed-in caller must be the Organizer.
-  if auth.uid() is not null and not is_organizer_of(yr.family_id) then
-    raise exception 'only the Organizer may seal a Year' using errcode = '42501';
-  end if;
+  perform assert_cron_or_organizer(yr.family_id, 'seal a Year');
 
   -- §10.4. Checked before the deadline guard below, so re-running is always harmless
   -- while sealing early never is.
@@ -61,16 +58,13 @@ begin
   -- §10.2: whether or not authoring finished. An empty Tile is a Tile whose Goal has
   -- not been written yet, and slice 18 is how it gets written.
   --
-  -- coalesce() is for the late joiner (§21.1): a Member approved in July gets a
-  -- personal seven-day window, and the Year's own deadline is not theirs. Nobody has
-  -- one at this point in the Year's life — the column exists and is always NULL until
-  -- slice 21 — but the sweep below seals those Boards on their own clock, and this is
-  -- the half of that pair which must not seal them early.
+  -- Every Board in the Year, with no exception for `personal_setup_deadline` (§21.1): a
+  -- late joiner is approved into a Year that is already active, and this only ever runs
+  -- on a Year still in 'setup'. The sweep below is what seals those Boards.
   update boards b
      set sealed_at = now()
    where b.year_id = yr.id
-     and b.sealed_at is null
-     and coalesce(b.personal_setup_deadline, yr.setup_deadline) <= now();
+     and b.sealed_at is null;
 
   update years
      set status = 'active', sealed_at = now()
@@ -97,9 +91,10 @@ security definer
 set search_path = public
 as $$
 declare
-  due    years;
-  sealed int := 0;
-  n      int;
+  due         years;
+  sealed      int := 0;
+  this_year   int;
+  stragglers  int;
 begin
   for due in
     select * from years
@@ -110,9 +105,9 @@ begin
       perform seal_year(due.id);
       -- The loop only ever sees a Year in 'setup', which has never been sealed, so
       -- every sealed Board it now has was sealed by the call above.
-      select count(*) into n from boards b
+      select count(*) into this_year from boards b
        where b.year_id = due.id and b.sealed_at is not null;
-      sealed := sealed + n;
+      sealed := sealed + this_year;
     exception when others then
       raise warning 'seal_year(%) failed: %', due.id, sqlerrm;
     end;
@@ -128,8 +123,8 @@ begin
      and b.personal_setup_deadline is not null
      and now() >= b.personal_setup_deadline;
 
-  get diagnostics n = row_count;
-  return sealed + n;
+  get diagnostics stragglers = row_count;
+  return sealed + stragglers;
 end;
 $$;
 

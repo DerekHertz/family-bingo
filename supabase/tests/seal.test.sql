@@ -8,7 +8,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(33);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -96,9 +96,14 @@ select is((select count(*) from boards where sealed_at is not null)::int, 0,
 -- The Setup Window closes
 -- ---------------------------------------------------------------------------------
 
+-- Both clocks, because open_year() sets them from the same instant and resolution
+-- refuses while either Vote is still open (§8.1). Moving only the Year's deadline would
+-- leave seal_year() failing inside the sweep's exception handler, silently.
 select set_config('role', 'postgres', true);
 update years set setup_deadline = now() - interval '1 minute'
  where id = year_of('Hertzell Family');
+update votes set closes_at = now() - interval '1 minute'
+ where year_id = year_of('Hertzell Family');
 
 select act_as('00000000-0000-4000-8000-0000000000b9');
 select throws_ok(
@@ -168,6 +173,47 @@ select throws_ok(
   'and a direct UPDATE never reaches RLS — authenticated has no write grant on goals');
 
 -- ---------------------------------------------------------------------------------
+-- §9.5 — the one Tile whose Setup Window is empty by construction
+-- ---------------------------------------------------------------------------------
+
+-- Nobody in this Family voted, so the centre fell back to personal (§8.3) — and the
+-- Member only learned that at the instant their Board sealed.
+select set_config('role', 'postgres', true);
+select is((select center_mode from years where id = year_of('Hertzell Family')), 'personal',
+  'zero Ballots resolved the centre to personal (§8.3)');
+
+select act_as('00000000-0000-4000-8000-0000000000b1');
+select lives_ok(
+  $$select write_goal(tile_of('Alice', 12), 'Learn to sail', 4, 'trips')$$,
+  'the personal Center Tile is authored after sealing — the vote deciding it did not '
+  'resolve until then (§9.5)');
+
+select is(
+  (select g.text from goals g join tiles t on t.goal_id = g.id
+    where t.id = tile_of('Alice', 12)),
+  'Learn to sail',
+  'and the centre holds it, like any other Tile (§9.5)');
+
+select is((select swaps_used from boards where member_id = member_of('Alice')), 0,
+  'and it costs no Swap: the Member was never given a chance to write it earlier');
+
+select throws_ok(
+  $$select write_goal(tile_of('Alice', 12), 'Actually, learn to ski', 4)$$,
+  'PT403', null,
+  'but only once — after that it is a sealed Tile like any other');
+
+select throws_ok(
+  $$select clear_goal(tile_of('Alice', 12))$$,
+  'PT403', null,
+  'and emptying it again costs a Swap too');
+
+-- The exception is exactly one Tile wide. It must not have unsealed the Board.
+select throws_ok(
+  $$select write_goal(tile_of('Alice', 2), 'Sneaking one in', 5)$$,
+  'PT403', null,
+  'no other Tile became writable alongside it');
+
+-- ---------------------------------------------------------------------------------
 -- §10.4 — idempotent and safe to re-run
 -- ---------------------------------------------------------------------------------
 
@@ -182,6 +228,116 @@ select set_config('role', 'postgres', true);
 select is((select count(distinct sealed_at) from boards
             where year_id = year_of('Hertzell Family'))::int,
   1, 'the original sealed_at stamps are not moved by the re-run');
+
+-- ---------------------------------------------------------------------------------
+-- §9.5 with §18.5 — the free write of a personal centre is a window, not an open door
+-- ---------------------------------------------------------------------------------
+--
+-- Bob let his seven days run out. Tile 12 sits on row 2, column 2 and both diagonals,
+-- so an unbounded free write would let him wait until November, see which Lines he was
+-- one Tile short of, and close one with a target-1 Goal — the manufactured Bingo the
+-- Swap budget exists to prevent. Past the deadline his centre is simply an empty Tile
+-- on a sealed Board, which §18.5 prices at a Swap like any other.
+--
+-- Aged after §10.4 above, which asserts every Board still carries the same stamp.
+select set_config('role', 'postgres', true);
+update boards set sealed_at = now() - interval '8 days'
+ where member_id = member_of('Bob');
+
+select act_as('00000000-0000-4000-8000-0000000000b2');
+select throws_ok(
+  $$select write_goal(tile_of('Bob', 12), 'Too late for the centre', 3)$$,
+  'PT403', null,
+  'the free write of a personal Center Tile closes seven days after the seal (§9.5, §18.5)');
+
+-- ---------------------------------------------------------------------------------
+-- api.md §7 — resolution happens BEFORE the seal, not after
+-- ---------------------------------------------------------------------------------
+--
+-- The Hertzell Family above never voted, so it fell back to personal and could not tell
+-- the two orderings apart. This Family votes shared and proposes, so Tile 12 has to
+-- carry a Family Goal by the time the Board's sealed_at is stamped. Seal first and every
+-- Board in the Family seals with an empty centre.
+
+select set_config('role', 'postgres', true);
+select create_family('Okonkwo Family 2028', 'Europe/London');
+insert into members (family_id, guardian_account_id, display_name, role, status)
+  values ((select id from families where name = 'Okonkwo Family 2028'),
+          '00000000-0000-4000-8000-0000000000b9', 'Chidi', 'member', 'active');
+select open_year((select id from families where name = 'Okonkwo Family 2028'), 2028);
+
+insert into proposals (id, vote_id, member_id, text)
+  select '00000000-0000-4000-8000-0000000000c1',
+         v.id, member_of('Chidi'), 'Walk the Ridgeway together'
+    from votes v join years y on y.id = v.year_id
+   where y.family_id = (select id from families where name = 'Okonkwo Family 2028')
+     and v.kind = 'goal';
+insert into ballots (vote_id, member_id, choice_mode)
+  select v.id, member_of('Chidi'), 'shared'
+    from votes v join years y on y.id = v.year_id
+   where y.family_id = (select id from families where name = 'Okonkwo Family 2028')
+     and v.kind = 'mode';
+insert into ballots (vote_id, member_id, proposal_id)
+  select v.id, member_of('Chidi'), '00000000-0000-4000-8000-0000000000c1'
+    from votes v join years y on y.id = v.year_id
+   where y.family_id = (select id from families where name = 'Okonkwo Family 2028')
+     and v.kind = 'goal';
+
+update years set setup_deadline = now() - interval '1 minute'
+ where family_id = (select id from families where name = 'Okonkwo Family 2028');
+update votes set closes_at = now() - interval '1 minute'
+ where year_id in (select id from years
+                    where family_id = (select id from families where name = 'Okonkwo Family 2028'));
+
+select act_as_cron();
+select is(seal_due_boards(), 2, 'the sweep seals the shared-mode Family too');
+
+select is(
+  (select fg.text from family_goals fg join years y on y.id = fg.year_id
+    where y.family_id = (select id from families where name = 'Okonkwo Family 2028')),
+  'Walk the Ridgeway together', 'the Family Goal was created');
+
+select is(
+  (select count(*) from tiles t
+     join boards b on b.id = t.board_id
+     join years y on y.id = b.year_id
+    where y.family_id = (select id from families where name = 'Okonkwo Family 2028')
+      and t.position = 12 and t.family_goal_id is not null
+      and b.sealed_at is not null)::int,
+  2,
+  'and every sealed Board carries it on Tile 12 — resolution ran BEFORE the seal, not '
+  'after it (api.md §7)');
+
+-- ---------------------------------------------------------------------------------
+-- §21.1 — the Board that comes due on a clock of its own
+-- ---------------------------------------------------------------------------------
+--
+-- Nothing writes personal_setup_deadline until slice 21. This is the sweep's second
+-- pass, which is the only thing that would ever seal a late joiner's Board, so it is
+-- tested here rather than left to be discovered in July.
+
+select set_config('role', 'postgres', true);
+insert into members (id, family_id, guardian_account_id, display_name, role, status)
+  values ('00000000-0000-4000-8000-0000000000cf',
+          (select id from families where name = 'Hertzell Family'),
+          '00000000-0000-4000-8000-0000000000b1', 'Nia', 'member', 'active');
+select ensure_board('00000000-0000-4000-8000-0000000000cf', year_of('Hertzell Family'));
+update boards set personal_setup_deadline = now() + interval '7 days'
+ where member_id = '00000000-0000-4000-8000-0000000000cf';
+
+select act_as_cron();
+select is(seal_due_boards(), 0,
+  'a late joiner inside their own seven days is not swept up by the Year (§21.1)');
+
+select set_config('role', 'postgres', true);
+update boards set personal_setup_deadline = now() - interval '1 minute'
+ where member_id = '00000000-0000-4000-8000-0000000000cf';
+
+select act_as_cron();
+select is(seal_due_boards(), 1, 'and seals on their own clock once it runs out');
+select isnt((select sealed_at from boards
+              where member_id = '00000000-0000-4000-8000-0000000000cf'), null,
+  'so no Board is left playable-but-unsealed inside an active Year');
 
 select * from finish();
 rollback;

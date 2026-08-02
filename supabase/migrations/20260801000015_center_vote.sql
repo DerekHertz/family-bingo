@@ -14,27 +14,87 @@
 alter table votes add column organizer_tiebreak_proposal_id uuid
   references proposals (id) on delete set null;
 
--- §9.1: max 3 Proposals each. A CHECK cannot count sibling rows, so this is a trigger —
--- and it is a trigger rather than an RPC guard because `proposals` is one of the two
--- tables the client writes directly (schema.md §4.2).
-create or replace function enforce_proposal_limit()
-returns trigger
+-- The guard shared by every deadline-driven function: resolving the Center Vote,
+-- sealing, and — from slice 20 — freezing.
+--
+-- `pg_cron` has no JWT, and that absence IS the scheduler: these functions run
+-- unattended at a fixed time with no client involved (api.md §2). Anyone actually
+-- signed in must be the Organizer, who administers the Family (CONTEXT.md, Organizer).
+-- The `action` is spelled into the message because "only the Organizer may" is useless
+-- to a client that cannot tell which call it came from.
+create or replace function assert_cron_or_organizer(family_id uuid, action text)
+returns void
 language plpgsql
 security definer
 set search_path = public
 as $$
 begin
+  if auth.uid() is not null
+     and not is_organizer_of(assert_cron_or_organizer.family_id) then
+    raise exception 'only the Organizer may %', action using errcode = '42501';
+  end if;
+end;
+$$;
+
+-- Every rule about Proposals (§9.1). These are triggers rather than RPC guards because
+-- `proposals` is one of the two tables the client writes directly (schema.md §4.2) —
+-- a guard in a function nobody is obliged to call guards nothing. And the count rule
+-- cannot be a CHECK, because a CHECK cannot see sibling rows.
+create or replace function enforce_proposal_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v votes;
+begin
+  select * into v from votes where id = coalesce(new.vote_id, old.vote_id);
+
+  -- The Vote is already gone, so this is a cascade from deleting a Year or a Family,
+  -- not a person withdrawing anything. Nothing below applies to housekeeping.
+  if v.id is null then
+    return coalesce(old, new);
+  end if;
+
+  -- A Proposal is a candidate Family Goal (CONTEXT.md). The mode Vote decides whether
+  -- there is to be a Family Goal at all, and has nothing to put forward.
+  if v.kind <> 'goal' then
+    raise exception 'Proposals belong to the goal Vote, not the mode Vote'
+      using errcode = '22023';
+  end if;
+
+  -- The same window as a Ballot (§8.1, §9.1). A Proposal arriving after resolution is a
+  -- candidate for a decision already taken.
+  if v.status = 'resolved' or now() >= v.closes_at then
+    raise exception 'the Setup Window has closed' using errcode = 'PT403';
+  end if;
+
+  if tg_op = 'DELETE' then
+    -- Withdrawing your own Proposal is fine until it would take someone else's Ballot
+    -- with it. `ballots.proposal_id` cascades, so the other Member would simply lose
+    -- their vote — no error, no notice, and the Vote still open. Nobody gets to delete
+    -- another person's say (§8.4 is about silence not blocking; this is its mirror).
+    if exists (select 1 from ballots b
+                where b.proposal_id = old.id and b.member_id <> old.member_id) then
+      raise exception 'others have voted for this Proposal — it can no longer be withdrawn'
+        using errcode = 'PT409';
+    end if;
+    return old;
+  end if;
+
   if (select count(*) from proposals p
        where p.vote_id = new.vote_id and p.member_id = new.member_id) >= 3 then
     raise exception 'a Member may put forward at most 3 Proposals' using errcode = 'PT409';
   end if;
+
   return new;
 end;
 $$;
 
-create trigger proposals_enforce_limit
-  before insert on proposals
-  for each row execute function enforce_proposal_limit();
+create trigger proposals_enforce_rules
+  before insert or delete on proposals
+  for each row execute function enforce_proposal_rules();
 
 -- Cast or change a Ballot (§8.1).
 --
@@ -55,7 +115,7 @@ set search_path = public
 as $$
 declare
   v      votes;
-  cast_by ballots;
+  recorded ballots;
 begin
   select * into v from votes where id = cast_ballot.vote_id;
   if v.id is null or family_of_vote(v.id) is distinct from family_of_member(cast_ballot.member_id) then
@@ -102,9 +162,9 @@ begin
     set choice_mode = excluded.choice_mode,
         proposal_id = excluded.proposal_id,
         updated_at  = now()
-  returning * into cast_by;
+  returning * into recorded;
 
-  return cast_by;
+  return recorded;
 end;
 $$;
 
@@ -146,24 +206,26 @@ security definer
 set search_path = public
 as $$
 declare
-  yr             years;
-  mode_vote      votes;
-  goal_vote      votes;
-  shared_votes   int;
-  personal_votes int;
-  resolved_mode  text;
-  winner         proposals;
-  created_goal   family_goals;
+  yr               years;
+  mode_vote        votes;
+  goal_vote        votes;
+  shared_ballots   int;
+  personal_ballots int;
+  -- Two different facts, and conflating them is how the audit row starts lying.
+  -- `voted_mode` is what the Family chose; `resolved_mode` is what the Center Tile
+  -- actually became after §9.3's fallback. They differ when a Family votes shared and
+  -- then nobody proposes anything.
+  voted_mode       text;
+  resolved_mode    text;
+  winner           proposals;
+  created_goal     family_goals;
 begin
   select * into yr from years where id = resolve_center_vote.year_id;
   if yr.id is null then
     raise exception 'no such Year' using errcode = '42501';
   end if;
 
-  -- auth.uid() is NULL when pg_cron calls this; a signed-in caller must be the Organizer.
-  if auth.uid() is not null and not is_organizer_of(yr.family_id) then
-    raise exception 'only the Organizer may resolve the Center Vote' using errcode = '42501';
-  end if;
+  perform assert_cron_or_organizer(yr.family_id, 'resolve the Center Vote');
 
   -- Already decided. Re-running must not re-open a Family's centre.
   if yr.center_mode <> 'undecided' then
@@ -173,15 +235,27 @@ begin
   select * into mode_vote from votes where votes.year_id = yr.id and kind = 'mode';
   select * into goal_vote from votes where votes.year_id = yr.id and kind = 'goal';
 
+  -- §8.1: "Ballots are changeable until the deadline." Resolving early takes that back
+  -- and cannot be undone — cast_ballot() refuses a resolved Vote, and the early return
+  -- above means a second call will not reopen it. So an Organizer who tapped this on
+  -- day one would end the Family's vote for everyone, silently and permanently.
+  --
+  -- seal_year() refuses to act early for the same reason. The Organizer administers the
+  -- Family; they do not get to decide when everyone else stops having a say.
+  if now() < greatest(mode_vote.closes_at, goal_vote.closes_at) then
+    raise exception 'the Setup Window is still open' using errcode = 'PT403';
+  end if;
+
   -- §8.2: a majority of the Ballots CAST. Non-voters are abstentions, not blockers.
   -- §8.3: a tie, or zero Ballots, resolves to personal — the outcome that needs no
   -- further coordination.
   select count(*) filter (where choice_mode = 'shared'),
          count(*) filter (where choice_mode = 'personal')
-    into shared_votes, personal_votes
+    into shared_ballots, personal_ballots
     from ballots where ballots.vote_id = mode_vote.id;
 
-  resolved_mode := case when shared_votes > personal_votes then 'shared' else 'personal' end;
+  voted_mode := case when shared_ballots > personal_ballots then 'shared' else 'personal' end;
+  resolved_mode := voted_mode;
 
   if resolved_mode = 'shared' then
     -- §9.2: a plurality of the Ballots cast. Among tied leaders the Organizer's
@@ -192,7 +266,7 @@ begin
     -- counted against anyone.
     with tally as (
       select p.id, p.created_at,
-             count(b.id) as votes
+             count(b.id) as ballot_count
         from proposals p
         left join ballots b
           on b.proposal_id = p.id and b.vote_id = goal_vote.id
@@ -201,7 +275,7 @@ begin
     )
     select p.* into winner
       from tally t join proposals p on p.id = t.id
-     where t.votes = (select max(votes) from tally)
+     where t.ballot_count = (select max(ballot_count) from tally)
      order by (t.id = goal_vote.organizer_tiebreak_proposal_id) desc,
               t.created_at asc,
               t.id asc
@@ -209,6 +283,10 @@ begin
 
     -- §9.3: zero Proposals falls back to personal. Never leave the Center Tile empty
     -- or the Board unsealed.
+    --
+    -- Only `resolved_mode` moves. `voted_mode` still says shared, because that is what
+    -- the Family voted, and the Feed has to be able to say "you chose a Family Goal but
+    -- nobody proposed one" rather than pretending the vote went the other way.
     if winner.id is null then
       resolved_mode := 'personal';
     end if;
@@ -229,21 +307,26 @@ begin
 
   update years set center_mode = resolved_mode where id = yr.id returning * into yr;
 
+  -- The mode Vote records what was VOTED, not what the centre became — see §9.3 above.
+  -- The goal Vote's outcome is the winning Proposal's id, or NULL when no Proposal won.
+  -- NULL rather than a sentinel: the column is nullable, `status = 'resolved'` already
+  -- says the Vote is over, and anything reading this column expects a uuid.
   update votes
      set status = 'resolved',
          resolved_at = now(),
-         outcome = case when votes.kind = 'mode' then resolved_mode
-                        else coalesce(winner.id::text, 'none') end
+         outcome = case when votes.kind = 'mode' then voted_mode
+                        else winner.id::text end
    where votes.year_id = yr.id;
 
   return yr;
 end;
 $$;
 
+revoke execute on function assert_cron_or_organizer(uuid, text) from public, anon, authenticated;
 revoke execute on function cast_ballot(uuid, uuid, text, uuid) from public, anon;
 revoke execute on function set_organizer_tiebreak(uuid, uuid) from public, anon;
 revoke execute on function resolve_center_vote(uuid) from public, anon;
-revoke execute on function enforce_proposal_limit() from public, anon, authenticated;
+revoke execute on function enforce_proposal_rules() from public, anon, authenticated;
 
 grant execute on function cast_ballot(uuid, uuid, text, uuid) to authenticated;
 grant execute on function set_organizer_tiebreak(uuid, uuid) to authenticated;
