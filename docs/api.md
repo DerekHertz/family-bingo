@@ -275,6 +275,37 @@ needs no merge semantics at all — the UUID upsert *is* the whole conflict stor
 and votes do not have that property, which is why they stay online-only. Do not extend
 the queue to them without solving merges first.
 
+That narrowness is a property of the schema, not a convention: `increments.id` has **no
+server default** (the client must mint it) and `increments` has **no UPDATE grant**. Every
+other table is the other way round.
+
+### 5.1 The header the queue must send
+
+```
+POST /rest/v1/increments
+Prefer: resolution=ignore-duplicates
+```
+
+**Not the default.** PostgREST resolves an upsert with `merge-duplicates` unless told
+otherwise, and that is an `UPDATE` — which returns **403** here, because §11.3 makes the
+log append-only and there is no UPDATE grant to fall back on. A queue built on the default
+would work against any table someone had granted UPDATE on and fail the first time it
+retried against this one.
+
+**Two failures the queue must tell apart**, because §17.2 retries on reconnect forever and
+one of these never succeeds:
+
+| Response | Meaning | What the queue does |
+|---|---|---|
+| Network error, 5xx | Not delivered | Retry on reconnect |
+| `403` on a **frozen** Year | The Year closed while the queue was offline | **Drop the tap.** A Year does not unfreeze |
+
+The second is worth stating because it is not obvious: RLS is checked on the proposed row
+*before* `ON CONFLICT` discards it, so once a Year freezes a drain fails on **every** row —
+including taps that landed months ago and would have changed nothing. Nothing is written
+either way; the difference is that the client is told, and a queue that treats it as
+retryable will retry until the app is deleted.
+
 ---
 
 ## 6. Notification tiering
