@@ -127,7 +127,8 @@ with no Year at all, so filtering by Year loses nothing.
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
 | `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
-| `generate_wrapped(year_id)` | Materializes cards + Awards, one per Year | `pg_cron` after freeze, idempotent |
+| `generate_wrapped(target_year_id)` | Materializes the Family and Member cards, one per Year | `pg_cron` after freeze, Year frozen, idempotent |
+| `finalize_wrapped(year_id, awards)` | Writes the Awards from `assignAwards()` and pushes every Member at once (§20.3) | `wrap` Edge Function; refuses a Wrapped that leaves a Member out (§20.7) |
 
 ### 2.2 Edge Functions
 
@@ -136,6 +137,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `sharpen` | Client invoke | Claude call. Rate-limited 100/Member/Year |
 | `notify` | DB webhook on `notifications` insert | Drains the outbox. Decides nothing about who — see below |
 | `reap-attachments` | `pg_cron` | Removes Storage objects Postgres is forbidden to delete (§16.6) |
+| `wrap` | `pg_cron` after the freeze sweep | Runs `assignAwards()` and calls `finalize_wrapped()`. The Awards algorithm is never transcribed into SQL |
 
 There is **no separate `digest` function**. `pg_cron` builds the week's `digests` row and
 puts one `notifications` row per opted-in Member beside it (§19.1); `notify` sends it like
