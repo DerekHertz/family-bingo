@@ -31,7 +31,16 @@ interface PendingRow {
   account_id: string;
   kind: string;
   attempts: number;
+  year_id: string | null;
   subject: { display_name: string } | null;
+}
+
+/** The week a `digest` row is about (§19.2). Built once per Family, read once per Member. */
+interface Digest {
+  increment_count: number;
+  milestone_count: number;
+  notable: { member: string; type: string; goal: string | null }[];
+  near_line: { member: string; line_index: number; position: number }[];
 }
 
 interface ExpoTicket {
@@ -46,7 +55,11 @@ interface ExpoTicket {
  * Every line names the Member rather than the Account, because the Account is not the
  * player (ADR-0003) and a Guardian's own name on their child's Bingo would be wrong.
  */
-const render = (kind: string, who: string): { title: string; body: string } => {
+const render = (
+  kind: string,
+  who: string,
+  digest?: Digest,
+): { title: string; body: string } => {
   switch (kind) {
     case 'tile_completed':
       return { title: 'A square just fell', body: `${who} completed a Tile.` };
@@ -60,9 +73,39 @@ const render = (kind: string, who: string): { title: string; body: string } => {
       return { title: "You're in", body: 'Your Family approved you. Time to write your Goals.' };
     case 'setup_closing':
       return { title: 'Boards seal tomorrow', body: 'Last chance to finish your 24 Goals.' };
+    case 'digest':
+      return { title: 'Your week', body: summarise(digest) };
     default:
       return { title: 'Family Bingo', body: 'Something happened.' };
   }
+};
+
+/**
+ * The Digest's one sentence.
+ *
+ * A Digest is the only push that is a summary rather than an event, so it is the only one
+ * whose copy depends on data. Leads with somebody's name where there is one — "Bob got a
+ * Bingo" is a reason to open the app and "41 increments" is a statistic.
+ */
+const summarise = (digest?: Digest): string => {
+  if (digest === undefined) return 'Here is what your Family got up to.';
+
+  const parts: string[] = [];
+  if (digest.notable.length > 0) {
+    const first = digest.notable[0];
+    parts.push(first.type === 'tile_completed'
+      ? `${first.member} finished ${first.goal ?? 'a Goal'}`
+      : `${first.member} got a ${first.type === 'bingo' ? 'Bingo' : first.type.replace('_', ' ')}`);
+  }
+  if (digest.increment_count > 0) {
+    parts.push(`${digest.increment_count} in all`);
+  }
+  // The one line worth a nudge: four of five, where nothing else in the app says anything.
+  if (digest.near_line.length > 0) {
+    const who = digest.near_line[0].member;
+    parts.push(`${who} is one Tile from a Line`);
+  }
+  return parts.length > 0 ? `${parts.join(' · ')}.` : 'Here is what your Family got up to.';
 };
 
 Deno.serve(async (req) => {
@@ -79,7 +122,7 @@ Deno.serve(async (req) => {
 
   const { data: pending, error } = await db
     .from('notifications')
-    .select('id, account_id, kind, attempts, subject:subject_member_id (display_name)')
+    .select('id, account_id, kind, attempts, year_id, subject:subject_member_id (display_name)')
     .is('sent_at', null)
     .is('failed_at', null)
     .lt('attempts', MAX_ATTEMPTS)
@@ -93,6 +136,23 @@ Deno.serve(async (req) => {
   const rows = (pending ?? []) as unknown as PendingRow[];
   if (rows.length === 0) {
     return Response.json({ drained: 0, sent: 0, pruned: 0 });
+  }
+
+  // Digests carry content, unlike every other kind. Fetched per Year rather than per row,
+  // because a Family's week is one Digest read by however many Members opted in (§19.1).
+  const digestYears = [...new Set(
+    rows.filter((r) => r.kind === 'digest' && r.year_id !== null).map((r) => r.year_id!),
+  )];
+  const digestFor = new Map<string, Digest>();
+  if (digestYears.length > 0) {
+    const { data: digestRows } = await db
+      .from('digests')
+      .select('year_id, increment_count, milestone_count, notable, near_line')
+      .in('year_id', digestYears)
+      .order('week_start', { ascending: false });
+    for (const row of digestRows ?? []) {
+      if (!digestFor.has(row.year_id)) digestFor.set(row.year_id, row as unknown as Digest);
+    }
   }
 
   const { data: tokenRows } = await db
@@ -118,7 +178,11 @@ Deno.serve(async (req) => {
       noDevice.push(row.id);
       continue;
     }
-    const { title, body } = render(row.kind, row.subject?.display_name ?? 'Someone');
+    const { title, body } = render(
+      row.kind,
+      row.subject?.display_name ?? 'Someone',
+      row.year_id === null ? undefined : digestFor.get(row.year_id),
+    );
     for (const to of tokens) messages.push({ to, title, body, rowId: row.id });
   }
 
