@@ -40,6 +40,28 @@ describe('completedPositions', () => {
   it('completes a one-shot Goal on its single Increment', () => {
     expect([...completedPositions([{ position: 7, count: 1, target: 1 }])]).toEqual([7]);
   });
+
+  it('completes a marked shared Center Tile, which has no Target to count (§12.3)', () => {
+    // A Family Goal is marked done by any Member and completes for everyone at once.
+    // Judged on the mark alone: a Target it does not have must not rule it out.
+    const centre: BoardTile = { position: 12, count: 0, target: null, markedComplete: true };
+    expect([...completedPositions([centre])]).toEqual([12]);
+  });
+
+  it('leaves an unmarked shared Center Tile incomplete', () => {
+    const centre: BoardTile = { position: 12, count: 0, target: null, markedComplete: false };
+    expect([...completedPositions([centre])]).toEqual([]);
+  });
+
+  it('lets a marked centre close the Lines that run through it', () => {
+    // Row 2, column 2 and both diagonals all pass through position 12. If the centre
+    // could never complete, none of the four could ever close in a shared-mode Family.
+    const tiles: BoardTile[] = boardWith([10, 11, 13, 14]).map((tile) =>
+      tile.position === 12 ? { ...tile, target: null, markedComplete: true } : tile,
+    );
+    expect(completedPositions(tiles).has(12)).toBe(true);
+    expect(milestonesToEmit(tiles, recorded()).some((m) => m.type === 'bingo')).toBe(true);
+  });
 });
 
 describe('milestonesToEmit — Tiles (§12.2)', () => {
