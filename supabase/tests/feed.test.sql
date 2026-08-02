@@ -131,10 +131,11 @@ insert into increments (id, tile_id, member_id, note) values
   ('00000000-0000-4000-8000-0000000000c3', tile_of('Alice', 0), member_of('Alice'),
    'the third one, which completes it');
 
+-- {family_id}/{increment_id}, the layout the bucket was created with and the only shape
+-- enforce_attachment_path() accepts (§16.2).
 insert into attachments (increment_id, storage_path)
   values ('00000000-0000-4000-8000-0000000000c1',
-          'attachments/' || (select id from families where name = 'Hertzell Family')
-            || '/00000000-0000-4000-8000-0000000000c1');
+          family_named('Hertzell Family') || '/00000000-0000-4000-8000-0000000000c1.jpg');
 
 -- ---------------------------------------------------------------------------------
 -- §14.2 — what the Feed contains
