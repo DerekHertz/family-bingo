@@ -537,6 +537,13 @@ export const completedLines = (done: ReadonlySet<number>): number[] =>
   LINES.flatMap((line, i) => line.every(p => done.has(p)) ? [i] : []);
 ```
 
+**There are two copies of this table and there have to be.** The client renders the
+12-segment pip row from `LINES` in `src/domain/lines.ts`; the database records against
+`board_lines()`, because a Bingo is a social claim and the only writer of `milestones`
+is Postgres reacting to a log it can verify. `milestones.line_index` refers to the order
+above, so the two must agree — `supabase/tests/lines.test.sql` asserts the SQL copy
+position by position, and that is the only thing holding them together.
+
 ---
 
 ## 6. Lifecycles
