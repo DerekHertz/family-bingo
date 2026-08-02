@@ -15,9 +15,7 @@ select plan(9);
 insert into auth.users (id) values
   ('00000000-0000-4000-8000-0000000000a1'),
   ('00000000-0000-4000-8000-0000000000a2');
-insert into accounts (id) values
-  ('00000000-0000-4000-8000-0000000000a1'),
-  ('00000000-0000-4000-8000-0000000000a2');
+-- accounts rows are provisioned by the on_auth_user_created trigger (slice 1).
 
 insert into families (id, name) values
   ('00000000-0000-4000-8000-0000000000f1', 'Hertzell Family'),

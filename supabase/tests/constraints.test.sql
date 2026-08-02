@@ -9,7 +9,7 @@ create extension if not exists pgtap with schema extensions;
 select plan(22);
 
 insert into auth.users (id) values ('00000000-0000-4000-8000-0000000000a1');
-insert into accounts (id) values ('00000000-0000-4000-8000-0000000000a1');
+-- accounts rows are provisioned by the on_auth_user_created trigger (slice 1).
 insert into families (id, name) values
   ('00000000-0000-4000-8000-0000000000f1', 'Hertzell Family');
 insert into members (id, family_id, account_id, display_name, role, status) values
