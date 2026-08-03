@@ -10,7 +10,7 @@
  */
 
 import { Redirect, useRouter } from 'expo-router';
-import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
@@ -55,30 +55,32 @@ export default function Home() {
         </Text>
       ) : (
         <View style={{ marginTop: space.lg, gap: size.stack }}>
-          {/* Not yet pressable: the Board is slice 5, and a card that navigates nowhere
-              is worse than one that plainly does not. §2.2's switcher arrives with it. */}
+          {/* Opens the roster. The Board is still slice 5; the roster is what a Family has
+              to show for itself until then. */}
           {list.map((family) => (
-            <View
+            <Pressable
               key={family.id}
-              accessible
+              accessibilityRole="button"
               accessibilityLabel={`${family.name}, as ${family.member.display_name}${
                 family.member.role === 'organizer' ? ', organizer' : ''
               }`}
-              style={{
+              onPress={() => router.push({ pathname: '/family/[id]', params: { id: family.id } })}
+              style={({ pressed }) => ({
                 minHeight: size.minTouch,
                 padding: space.md,
                 backgroundColor: color.paperRaised,
                 borderRadius: radius.card,
                 borderWidth: 1,
                 borderColor: color.hairline,
-              }}
+                opacity: pressed ? 0.7 : 1,
+              })}
             >
               <Text style={{ ...styles.cardHead, color: color.ink }}>{family.name}</Text>
               <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
                 {family.member.display_name}
                 {family.member.role === 'organizer' ? ' · organizer' : ''}
               </Text>
-            </View>
+            </Pressable>
           ))}
         </View>
       )}
@@ -89,9 +91,7 @@ export default function Home() {
           variant="filled"
           onPress={() => router.push('/family/new')}
         />
-        {/* "Join a Family" belongs here per §4, and lands in slice 3 with invitations —
-            there is nothing to join until a Family can issue a link. A button that opens
-            an empty screen would be worse than its absence. */}
+        <Button label="Join a Family" onPress={() => router.push('/family/join')} />
       </View>
 
       <Button
