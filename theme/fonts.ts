@@ -10,6 +10,7 @@ import { type } from './tokens';
 
 export const loaded = {
   display: 'ShipporiMincho_500Medium',
+  mono: 'DMMono_500Medium',
   ui400: 'ZenKakuGothicNew_400Regular',
   ui500: 'ZenKakuGothicNew_500Medium',
   ui700: 'ZenKakuGothicNew_700Bold',
@@ -18,6 +19,7 @@ export const loaded = {
 /** Resolve a token's family + weight to the concrete loaded face. */
 export const face = (family: string, weight?: string): string => {
   if (family === 'ShipporiMincho') return loaded.display;
+  if (family === 'DMMono') return loaded.mono;
   if (weight === '700') return loaded.ui700;
   if (weight === '500') return loaded.ui500;
   return loaded.ui400;
@@ -52,6 +54,7 @@ export const styles = {
   cardHead: text(type.cardHead),
   heading: text(type.heading),
   body: text(type.body),
+  code: text(type.code),
   label: text(type.label),
   meta: text(type.meta),
 } as const;

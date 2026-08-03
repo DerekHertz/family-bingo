@@ -5,6 +5,7 @@
  * bespoke animations all live on the board, not between screens.
  */
 
+import { DMMono_500Medium } from '@expo-google-fonts/dm-mono';
 import { ShipporiMincho_500Medium } from '@expo-google-fonts/shippori-mincho';
 import {
   ZenKakuGothicNew_400Regular,
@@ -27,6 +28,7 @@ export default function RootLayout() {
   // Bundled, never fetched (§8) — @expo-google-fonts ships the files and the OFL licence
   // in the package rather than pulling them at runtime.
   const [fontsLoaded, fontError] = useFonts({
+    DMMono_500Medium,
     ShipporiMincho_500Medium,
     ZenKakuGothicNew_400Regular,
     ZenKakuGothicNew_500Medium,

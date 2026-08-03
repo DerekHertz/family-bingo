@@ -10,10 +10,11 @@
  */
 
 import { Redirect, useRouter } from 'expo-router';
-import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
+import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
@@ -22,11 +23,13 @@ export default function Home() {
   const session = useSession();
   const router = useRouter();
   const families = useFamilies(session?.user.id);
+  const pending = usePendingMemberships(session?.user.id);
 
   if (session === undefined) return <View style={{ flex: 1, backgroundColor: color.paper }} />;
   if (session === null) return <Redirect href="/" />;
 
   const list = families.data ?? [];
+  const waiting = pending.data ?? [];
 
   return (
     <ScrollView
@@ -34,7 +37,7 @@ export default function Home() {
       contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop }}
     >
       <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
-        {list.length === 0 ? 'Welcome' : 'Your families'}
+        {list.length === 0 && waiting.length === 0 ? 'Welcome' : 'Your families'}
       </Text>
 
       {families.isPending ? (
@@ -48,35 +51,64 @@ export default function Home() {
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           Couldn’t reach your families just now. Pull down in a moment.
         </Text>
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && waiting.length === 0 ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           A Family is the group who’ll see your board. Start one, or join the one you were
           invited to.
         </Text>
       ) : (
         <View style={{ marginTop: space.lg, gap: size.stack }}>
-          {/* Not yet pressable: the Board is slice 5, and a card that navigates nowhere
-              is worse than one that plainly does not. §2.2's switcher arrives with it. */}
+          {/* Opens the roster. The Board is still slice 5; the roster is what a Family has
+              to show for itself until then. */}
           {list.map((family) => (
-            <View
+            <Pressable
               key={family.id}
-              accessible
+              accessibilityRole="button"
               accessibilityLabel={`${family.name}, as ${family.member.display_name}${
                 family.member.role === 'organizer' ? ', organizer' : ''
               }`}
-              style={{
+              onPress={() => router.push({ pathname: '/family/[id]', params: { id: family.id } })}
+              style={({ pressed }) => ({
                 minHeight: size.minTouch,
                 padding: space.md,
                 backgroundColor: color.paperRaised,
                 borderRadius: radius.card,
                 borderWidth: 1,
                 borderColor: color.hairline,
-              }}
+                opacity: pressed ? 0.7 : 1,
+              })}
             >
               <Text style={{ ...styles.cardHead, color: color.ink }}>{family.name}</Text>
               <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
                 {family.member.display_name}
                 {family.member.role === 'organizer' ? ' · organizer' : ''}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* §3.2 lets them know they asked, and nothing else about the Family. Without this
+          a waiting Member sees first-run copy and has no way to learn they are in a queue
+          — re-entering the code just says it has been used. */}
+      {waiting.length === 0 ? null : (
+        <View style={{ marginTop: space.lg, gap: size.stack }}>
+          {waiting.map((request) => (
+            <View
+              key={request.member_id}
+              accessible
+              accessibilityLabel={`${request.family_name}, waiting to be let in`}
+              style={{
+                minHeight: size.minTouch,
+                padding: space.md,
+                borderRadius: radius.card,
+                borderWidth: 1,
+                borderColor: color.hairline,
+              }}
+            >
+              <Text style={{ ...styles.cardHead, color: color.ink2 }}>{request.family_name}</Text>
+              <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xs }}>
+                waiting to be let in
               </Text>
             </View>
           ))}
@@ -89,9 +121,7 @@ export default function Home() {
           variant="filled"
           onPress={() => router.push('/family/new')}
         />
-        {/* "Join a Family" belongs here per §4, and lands in slice 3 with invitations —
-            there is nothing to join until a Family can issue a link. A button that opens
-            an empty screen would be worse than its absence. */}
+        <Button label="Join a Family" onPress={() => router.push('/family/join')} />
       </View>
 
       <Button
