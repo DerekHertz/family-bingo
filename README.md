@@ -55,6 +55,17 @@ supabase db push                    # applies every migration in supabase/migrat
 supabase functions deploy           # notify · reap-attachments · sharpen · wrap
 ```
 
+With no function named, `deploy` deploys **everything** in `supabase/functions/` — which
+now includes `dev-login`, a back door that stays inert until a secret is set. It is
+harmless deployed and unconfigured, and that is the design, but see "Testing with two
+accounts" below before setting that secret. To leave it off a project entirely, add this
+to `supabase/config.toml` and it is skipped by both `deploy` and `serve`:
+
+```toml
+[functions.dev-login]
+enabled = false
+```
+
 **1. The Claude API key** is an *Edge Function secret*, not a shell variable — a local
 `export` is invisible to a deployed function:
 
@@ -107,6 +118,47 @@ the wrong key. `last request` should report **HTTP 2xx** — a 401 is almost alw
 ```sql
 select jobname, schedule from cron.job;  -- 5 jobs: seal, digest, freeze, reap, drain
 ```
+
+### Testing with two accounts
+
+Supabase's default SMTP sends **two emails an hour**. Anything that takes two people — an
+Invitation, an approval, a Centre vote — spends that in the first minute, and then the
+project is unusable until the hour turns.
+
+`dev-login` is the way round it. It exchanges an email address for a session against an
+Account **that already exists**: no email, no rate limit, and the client finishes with the
+same `verifyOtp` call a real magic link makes, so nothing downstream can tell them apart.
+
+```sh
+supabase secrets set DEV_LOGIN_SECRET=$(openssl rand -hex 32)   # note the value
+supabase functions deploy dev-login
+echo 'EXPO_PUBLIC_DEV_LOGIN_SECRET=<that same value>' >> .env   # then restart Expo
+```
+
+Tap "Email me a link instead", and a "Sign in without the email (dev)" row sits under the
+email field. Type either address, tap it, and you are that Account.
+
+`EXPO_PUBLIC_SUPABASE_ANON_KEY` has to be the **`eyJ...` anon JWT**, not a
+`sb_publishable_...` key. Edge Functions run with `verify_jwt` on, so the gateway checks
+the bearer token before the function is reached and a publishable key comes back 401 —
+the same trap as the Vault key above, one layer out.
+
+**This is a back door, and that secret is the only thing standing in it.**
+
+- Do not set `DEV_LOGIN_SECRET` on a project holding anyone's real data.
+- Do not distribute a build with `EXPO_PUBLIC_DEV_LOGIN_SECRET` set. It is inlined into
+  the bundle, and `expo start --web` serves that bundle on every interface — anyone on the
+  same network can read it.
+
+To close it, delete the secret. The function goes inert and answers 404 to everyone, with
+nothing to redeploy:
+
+```sh
+supabase secrets unset DEV_LOGIN_SECRET
+```
+
+The first Account for each address still has to be made the ordinary way, once: the
+function looks an address up and never creates one.
 
 ## Working on this
 

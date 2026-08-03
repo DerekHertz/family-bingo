@@ -25,10 +25,14 @@ import {
 import { Button } from '../components/Button';
 import { BoardMark } from '../components/BoardMark';
 import {
+  DevLoginUnavailable,
+  NoSuchAccount,
   ProviderNotEnabled,
   SignInCancelled,
+  devLoginSecret,
   signInWithEmail,
   signInWithProvider,
+  signInWithoutEmail,
   type Provider,
 } from '../lib/auth';
 import { useSession } from '../lib/session';
@@ -39,7 +43,7 @@ export default function SignIn() {
   const session = useSession();
   const [email, setEmail] = useState('');
   const [showEmail, setShowEmail] = useState(false);
-  const [busy, setBusy] = useState<Provider | 'email' | null>(null);
+  const [busy, setBusy] = useState<Provider | 'email' | 'dev' | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
   // Never `red`, never the word "error" (§1.1, §0.3). Plain words in ink2.
   const [trouble, setTrouble] = useState<string | null>(null);
@@ -59,7 +63,7 @@ export default function SignIn() {
   }
   if (session !== null) return <Redirect href="/home" />;
 
-  const attempt = async (who: Provider | 'email', run: () => Promise<void>) => {
+  const attempt = async (who: Provider | 'email' | 'dev', run: () => Promise<void>) => {
     setBusy(who);
     setTrouble(null);
     try {
@@ -74,9 +78,13 @@ export default function SignIn() {
           ? // Retrying cannot fix this, so the copy must not suggest it. Points at the one
             // route that needs no provider configuration at all.
             `${e.provider === 'apple' ? 'Apple' : 'Google'} isn’t set up for this project yet — use the email link instead.`
-          : e instanceof Error && e.message.startsWith('that does not look')
-            ? 'That doesn’t look like an email address.'
-            : 'That didn’t go through. Have another go in a moment.';
+          : e instanceof NoSuchAccount
+            ? 'No account here with that address yet. Send yourself a link to make one.'
+            : e instanceof DevLoginUnavailable
+              ? 'Dev sign-in isn’t switched on for this project.'
+              : e instanceof Error && e.message.startsWith('that does not look')
+                ? 'That doesn’t look like an email address.'
+                : 'That didn’t go through. Have another go in a moment.';
       setTrouble(message);
       // accessibilityLiveRegion is Android-only; iOS needs to be told outright, or the
       // one piece of feedback on this screen is silent for a VoiceOver user (§6 A6).
@@ -180,6 +188,19 @@ export default function SignIn() {
                   })
                 }
               />
+              {/* The development route (lib/auth.ts). Absent entirely unless this build
+                  was configured with EXPO_PUBLIC_DEV_LOGIN_SECRET, so it cannot appear in
+                  a real one — and quiet even then, because it is scaffolding rather than
+                  a fourth way to sign in. */}
+              {devLoginSecret === undefined ? null : (
+                <Button
+                  label={busy === 'dev' ? 'Signing in…' : 'Sign in without the email (dev)'}
+                  variant="text"
+                  disabled={busy !== null || email.trim().length === 0}
+                  onPress={() => void attempt('dev', () => signInWithoutEmail(email))}
+                />
+              )}
+
               {/* Choosing email was one tap; leaving has to be one too. Without this the
                   only way out is to relaunch the app. */}
               <Button

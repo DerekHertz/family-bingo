@@ -113,6 +113,92 @@ export const signInWithEmail = async (email: string): Promise<void> => {
   if (error !== null) throw error;
 };
 
+/**
+ * The development sign-in — an existing Account, by address alone, with no email sent.
+ *
+ * Supabase's default SMTP allows two emails an hour, which is not enough to exercise
+ * anything that takes two people: an Invitation, an approval, a Centre vote. This is the
+ * way round it, and `supabase/functions/dev-login/index.ts` carries the warning about
+ * what it is.
+ *
+ * `devLoginSecret` is undefined in any build that was not deliberately configured for it,
+ * which is what keeps the route out of the sign-in screen and out of anyone's hands.
+ */
+const rawDevLoginSecret = process.env.EXPO_PUBLIC_DEV_LOGIN_SECRET;
+/** `undefined` unless deliberately configured — an empty `.env` line is not a secret. */
+export const devLoginSecret =
+  rawDevLoginSecret === undefined || rawDevLoginSecret === '' ? undefined : rawDevLoginSecret;
+
+/** No such Account here — a different address, or one that was never created. */
+export class NoSuchAccount extends Error {
+  constructor() {
+    super('no account with that address');
+    this.name = 'NoSuchAccount';
+  }
+}
+
+/**
+ * The door is not open here: not deployed, `DEV_LOGIN_SECRET` unset on the project, or
+ * the secret in this build does not match the one on that project.
+ *
+ * All three are one message on purpose. They are the same fix — go and look at the
+ * project's configuration — and the alternative is a screen that tells anyone holding the
+ * anon key which of those three is true.
+ */
+export class DevLoginUnavailable extends Error {
+  constructor() {
+    super('dev sign-in is not switched on for this project');
+    this.name = 'DevLoginUnavailable';
+  }
+}
+
+export const signInWithoutEmail = async (email: string): Promise<void> => {
+  const address = email.trim();
+  if (devLoginSecret === undefined) throw new DevLoginUnavailable();
+
+  const { data, error } = await supabase.functions.invoke<{ token_hash?: string }>(
+    'dev-login',
+    { body: { email: address, secret: devLoginSecret } },
+  );
+
+  // invoke() reports every non-2xx as one FunctionsHttpError, so the answers have to be
+  // read back off the response body rather than off the status.
+  //
+  // Status alone was not enough, and the way it failed mattered: four different things
+  // answer 404 — the function not deployed, `DEV_LOGIN_SECRET` unset, a wrong secret, and
+  // a genuine miss — so mapping 404 to "no such account" told a developer who had
+  // forgotten `supabase functions deploy` to go and burn a magic-link email. That is the
+  // one outcome this whole feature exists to avoid.
+  //
+  // `error.context` is the untouched Response — functions-js throws before reading the
+  // body — so the reason is still there to be read. `no_account` is only ever returned to
+  // a caller who already passed the secret check, so distinguishing it here tells an
+  // outsider nothing they could not already infer.
+  if (error !== null) {
+    const response = (error as { context?: unknown }).context;
+    const reason =
+      response instanceof Response
+        ? await response
+            .json()
+            .then((b: { reason?: unknown }) => b.reason)
+            .catch(() => null)
+        : null;
+    if (reason === 'no_account') throw new NoSuchAccount();
+    throw new DevLoginUnavailable();
+  }
+
+  const tokenHash = data?.token_hash;
+  if (typeof tokenHash !== 'string') throw new DevLoginUnavailable();
+
+  // The same call the real magic link makes when it lands. Nothing downstream can tell
+  // the two apart, which is the point: this tests the app, not a special path through it.
+  const { error: verifyError } = await supabase.auth.verifyOtp({
+    token_hash: tokenHash,
+    type: 'email',
+  });
+  if (verifyError !== null) throw verifyError;
+};
+
 export const signOut = async (): Promise<void> => {
   const { error } = await supabase.auth.signOut();
   if (error !== null) throw error;
