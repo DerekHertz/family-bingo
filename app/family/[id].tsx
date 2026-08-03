@@ -31,7 +31,9 @@ import {
   useRosterActions,
 } from '../../lib/queries/invitations';
 import { useRemoveManagedMember } from '../../lib/queries/managed';
+import { useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
+import { openableYear, sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -44,6 +46,8 @@ export default function FamilyRoster() {
   const invite = useCreateInvitation(id ?? '');
   const actions = useRosterActions(id ?? '');
   const removeChild = useRemoveManagedMember(id ?? '');
+  const years = useYears(id);
+  const openYear = useOpenYear(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
 
@@ -65,6 +69,14 @@ export default function FamilyRoster() {
   // though — invitations_organizer_read denies everyone else, so `open` is empty for a
   // plain Member and a pip row built from it would claim free seats the server will refuse.
   const canCount = roster.data?.canSeeInvitations === true;
+
+  // §5.1: one Year per Family per calendar year, and the window always ends on 1 January —
+  // so the only Year anyone could be opening is the next one. A picker would be a choice
+  // between one option and several errors.
+  const timezone = family?.timezone ?? 'UTC';
+  const nextYear = openableYear(new Date(), timezone);
+  const current = years.data?.[0];
+  const alreadyOpen = years.data?.some((y) => y.calendar_year === nextYear) === true;
   const taken = members.length + open.length;
   const full = taken >= SEATS;
 
@@ -143,6 +155,49 @@ export default function FamilyRoster() {
           />
         </View>
       )}
+
+      {/* The Year, if there is one. §4.5's deadline copy is factual and never conditional:
+          a date and a count of days, with nothing that could read as a scold (§0.3). */}
+      {current === undefined ? null : (
+        <View
+          accessible
+          accessibilityLabel={`${current.calendar_year}, ${
+            current.status === 'setup'
+              ? sealCopy(new Date(), new Date(current.setup_deadline))
+              : current.status
+          }`}
+          style={{
+            marginTop: space.lg,
+            padding: space.md,
+            backgroundColor: color.paperRaised,
+            borderRadius: radius.card,
+            borderWidth: 1,
+            borderColor: color.hairline,
+          }}
+        >
+          <Text style={{ ...styles.cardHead, color: color.ink }}>{current.calendar_year}</Text>
+          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
+            {current.status === 'setup'
+              ? sealCopy(new Date(), new Date(current.setup_deadline))
+              : current.status === 'active'
+                ? 'under way'
+                : 'finished'}
+          </Text>
+        </View>
+      )}
+
+      {isOrganizer && !alreadyOpen ? (
+        <Button
+          label={openYear.isPending ? 'Opening…' : `Open ${nextYear}`}
+          disabled={openYear.isPending}
+          style={{ marginTop: space.lg }}
+          onPress={() =>
+            openYear.mutate(nextYear, {
+              onError: () => say('That didn’t open. Have another go in a moment.'),
+            })
+          }
+        />
+      ) : null}
 
       {/* §4: any active adult Member may add a child, not just the Organizer — the
           Guardian is whoever is accountable for them (§4.3), and that is a parent rather
