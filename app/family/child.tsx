@@ -44,11 +44,11 @@ const CONTRACT = [
   },
   {
     title: 'It stays in the Family',
-    body: 'Their name and face never leave it. Year-end exports are numbers only — no photos, nobody named.',
+    body: 'Their name and face never leave it. The Almanac exports numbers only — no photos, nobody named.',
   },
   {
     title: 'It moves with them',
-    body: 'When they get a phone of their own, the whole profile transfers — same board, same year, dot removed.',
+    body: 'When they get a phone of their own, the profile transfers whole — same board, same year, same tiles, dot removed.',
   },
 ] as const;
 
@@ -69,12 +69,21 @@ export default function AddChild() {
     }
     setTrouble(null);
     create.mutate(trimmed, {
-      onSuccess: () => router.back(),
+      onSuccess: () => {
+        // Every failure announced and success did not, which for a screen that navigates
+        // away leaves a VoiceOver user with no confirmation anything happened (§6).
+        AccessibilityInfo.announceForAccessibility(`${trimmed} is in the Family.`);
+        router.back();
+      },
       onError: (e) => {
-        const message = /full/i.test(e instanceof Error ? e.message : '')
+        const raw = e instanceof Error ? e.message : '';
+        const message = /full/i.test(raw)
           ? // A child takes a seat like anyone else (§4.5 of the PRD).
             'This Family is full for now. A child takes a seat like anyone else.'
-          : 'That didn’t save. Have another go in a moment.';
+          : /not a member|only|permission|denied/i.test(raw)
+            ? // A permanent refusal. "Have another go" would be advice that never works.
+              'Only someone already in this Family can add a child.'
+            : 'That didn’t save. Have another go in a moment.';
         setTrouble(message);
         AccessibilityInfo.announceForAccessibility(message);
       },
@@ -97,24 +106,38 @@ export default function AddChild() {
           They play through your account — no email, no password, nothing for them to
           forget.
         </Text>
+        {/* §4.7's closing line. Both are CHECK-enforced in the schema, so saying them here
+            is describing the app rather than promising something it has to remember. */}
+        <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
+          They get no notifications, and they can&rsquo;t be sent an invite.
+        </Text>
 
         <View style={{ marginTop: space.xl, gap: space.lg }}>
           {CONTRACT.map((rule) => (
-            <View key={rule.title} style={{ flexDirection: 'row', gap: space.md }}>
+            <View
+              key={rule.title}
+              // One stop per rule, not two. Ungrouped, each bullet was a title and a body
+              // read as separate items with no relationship between them (§6).
+              accessible
+              accessibilityLabel={`${rule.title}. ${rule.body}`}
+              style={{ flexDirection: 'row', gap: space.md }}
+            >
               {/* Clay means family, and this is the most family thing in the app (§1.1). */}
               <View
                 accessibilityElementsHidden
                 importantForAccessibility="no"
                 style={{
-                  width: 7,
-                  height: 7,
-                  marginTop: 8,
+                  width: size.dot,
+                  height: size.dot,
+                  marginTop: space.sm,
                   borderRadius: radius.pill,
                   backgroundColor: color.clay,
                 }}
               />
               <View style={{ flex: 1 }}>
-                <Text style={{ ...styles.body, color: color.ink, fontWeight: undefined }}>
+                {/* `heading` rather than body with a dead fontWeight: text() strips weight,
+                    so overriding it did nothing and the title rendered as body. */}
+                <Text style={{ ...styles.heading, fontSize: 16, color: color.ink }}>
                   {rule.title}
                 </Text>
                 <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>

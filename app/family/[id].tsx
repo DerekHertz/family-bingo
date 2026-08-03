@@ -30,6 +30,7 @@ import {
   useRoster,
   useRosterActions,
 } from '../../lib/queries/invitations';
+import { useRemoveManagedMember } from '../../lib/queries/managed';
 import { useSession } from '../../lib/session';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
@@ -42,6 +43,7 @@ export default function FamilyRoster() {
   const roster = useRoster(id);
   const invite = useCreateInvitation(id ?? '');
   const actions = useRosterActions(id ?? '');
+  const removeChild = useRemoveManagedMember(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
 
@@ -52,6 +54,10 @@ export default function FamilyRoster() {
 
   const family = families.data?.find((f) => f.id === id);
   const isOrganizer = family?.member.role === 'organizer';
+  // Both write paths on this screen require an active Member (create_managed_member checks
+  // it, create_invitation checks Organizer). Without this the buttons render for a caller
+  // the server will refuse, and the refusal reads as "have another go".
+  const isMember = family !== undefined;
   const members = roster.data?.members ?? [];
   const open = roster.data?.invitations ?? [];
   // An outstanding invitation holds a seat: §4.5 says a code already sent is a promise,
@@ -141,12 +147,16 @@ export default function FamilyRoster() {
       {/* §4: any active adult Member may add a child, not just the Organizer — the
           Guardian is whoever is accountable for them (§4.3), and that is a parent rather
           than an administrator. */}
+      {isMember ? (
       <Button
         label="Add a child"
-        disabled={full}
+        // `full` alone was the wrong gate: `open` is empty for a non-Organizer, so `taken`
+        // undercounts and the button offered a seat the server would refuse.
+        disabled={canCount ? full : false}
         style={{ marginTop: space.lg }}
         onPress={() => router.push({ pathname: '/family/child', params: { id: id ?? '' } })}
       />
+      ) : null}
 
       {isOrganizer && code === null ? (
         <Button
@@ -213,17 +223,32 @@ export default function FamilyRoster() {
             {/* §3.4 — "remove a Member at any time", and the only way a full Family frees
                 a seat. Never the Organizer's own row: remove_member() refuses to leave a
                 Family with no Organizer, and offering it here would be offering an error. */}
-            {isOrganizer && member.status === 'active' && member.id !== family?.member.id ? (
+            {(member.is_managed || isOrganizer) &&
+            member.status === 'active' &&
+            member.id !== family?.member.id ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${member.display_name} from the Family`}
                 onPress={() =>
                   Alert.alert(
                     `Remove ${member.display_name}?`,
-                    'Their board and everything on it goes too. They can be invited again.',
+                    member.is_managed
+                      ? // §4.4: a Managed Member cannot be invited, so "they can be invited
+                        // again" would be an offer the app has no way to keep.
+                        'Their board and everything on it goes too. You can add them again ' +
+                        'whenever you like.'
+                      : 'Their board and everything on it goes too. They can be invited again.',
                     [
                       { text: 'Keep them', style: 'cancel' },
-                      { text: 'Remove', onPress: () => actions.remove.mutate(member.id) },
+                      {
+                        text: 'Remove',
+                        // A child is removed by their Guardian, an adult by the Organizer.
+                        // Two RPCs because they answer to two different people (§4.3).
+                        onPress: () =>
+                          member.is_managed
+                            ? removeChild.mutate(member.id)
+                            : actions.remove.mutate(member.id),
+                      },
                     ],
                   )
                 }
