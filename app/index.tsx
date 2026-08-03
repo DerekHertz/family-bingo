@@ -24,7 +24,13 @@ import {
 } from 'react-native';
 import { Button } from '../components/Button';
 import { BoardMark } from '../components/BoardMark';
-import { SignInCancelled, signInWithEmail, signInWithProvider, type Provider } from '../lib/auth';
+import {
+  ProviderNotEnabled,
+  SignInCancelled,
+  signInWithEmail,
+  signInWithProvider,
+  type Provider,
+} from '../lib/auth';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
@@ -64,9 +70,13 @@ export default function SignIn() {
       // §0.3 rules out.
       if (e instanceof SignInCancelled) return;
       const message =
-        e instanceof Error && e.message.startsWith('that does not look')
-          ? 'That doesn’t look like an email address.'
-          : 'That didn’t go through. Have another go in a moment.';
+        e instanceof ProviderNotEnabled
+          ? // Retrying cannot fix this, so the copy must not suggest it. Points at the one
+            // route that needs no provider configuration at all.
+            `${e.provider === 'apple' ? 'Apple' : 'Google'} isn’t set up for this project yet — use the email link instead.`
+          : e instanceof Error && e.message.startsWith('that does not look')
+            ? 'That doesn’t look like an email address.'
+            : 'That didn’t go through. Have another go in a moment.';
       setTrouble(message);
       // accessibilityLiveRegion is Android-only; iOS needs to be told outright, or the
       // one piece of feedback on this screen is silent for a VoiceOver user (§6 A6).

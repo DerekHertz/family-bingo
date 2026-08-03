@@ -27,6 +27,20 @@ export class SignInCancelled extends Error {
   }
 }
 
+/**
+ * The provider is not switched on for this Supabase project.
+ *
+ * Distinct from a failure because the answer is different: retrying never helps, and the
+ * fix is in the dashboard rather than on the phone. Worth its own type so a half-configured
+ * development project says something true instead of asking the Member to try again.
+ */
+export class ProviderNotEnabled extends Error {
+  constructor(readonly provider: Provider) {
+    super(`${provider} is not enabled for this project`);
+    this.name = 'ProviderNotEnabled';
+  }
+}
+
 /** Where the provider sends the browser back to. Deep link on device, origin on web. */
 export const redirectTo = () => Linking.createURL('/auth/callback');
 
@@ -65,7 +79,10 @@ export const signInWithProvider = async (provider: Provider): Promise<void> => {
     provider,
     options: { redirectTo: redirectTo(), skipBrowserRedirect: true },
   });
-  if (error !== null) throw error;
+  if (error !== null) {
+    if (/provider is not enabled/i.test(error.message)) throw new ProviderNotEnabled(provider);
+    throw error;
+  }
   if (data.url === null) throw new Error('no authorization URL returned');
 
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo());
