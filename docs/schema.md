@@ -591,8 +591,14 @@ CREATE INDEX ON tiles (board_id, position);
 CREATE INDEX ON increments (tile_id);              -- progress counts
 CREATE INDEX ON increments (member_id, created_at DESC);  -- the Feed
 CREATE INDEX ON milestones (year_id, created_at DESC);    -- the Feed
+CREATE INDEX ON revisions (created_at DESC);              -- the Feed
+CREATE INDEX ON members (family_id, joined_at DESC);      -- the Feed
+CREATE INDEX ON votes (year_id, resolved_at DESC) WHERE resolved_at IS NOT NULL;  -- the Feed
 CREATE INDEX ON invitations (token_hash) WHERE used_at IS NULL AND revoked_at IS NULL;
 ```
+
+The Feed reads from five tables, so five of these carry it — one per branch of the view,
+each on the column that branch contributes to `feed.created_at`.
 
 `increments(tile_id)` is the one that matters most — it backs every progress count in
 the app, and progress is deliberately not denormalized (§3.1).
