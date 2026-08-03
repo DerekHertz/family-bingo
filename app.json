@@ -7,9 +7,23 @@
     "scheme": "familybingo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": { "supportsTablet": false, "bundleIdentifier": "com.hertzell.familybingo" },
-    "android": { "package": "com.hertzell.familybingo", "predictiveBackGestureEnabled": false },
-    "plugins": ["expo-router", "expo-secure-store"],
-    "experiments": { "typedRoutes": true }
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.hertzell.familybingo"
+    },
+    "android": {
+      "package": "com.hertzell.familybingo",
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }
