@@ -61,22 +61,26 @@ supabase functions deploy           # notify · reap-attachments · sharpen · w
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-**2. The service role key goes in Vault**, not in a database setting. It bypasses RLS
-entirely, and a setting is readable by anyone who can query `pg_settings`. In the SQL
-editor:
+**2. Two values go in Vault**, in the SQL editor. `alter database ... set` is denied on
+Supabase — the SQL editor's role is not superuser — and a database setting would survive
+neither a project restore nor a branch. Vault survives both.
 
 ```sql
 select vault.create_secret('<service-role-key>', 'service_role_key');
+select vault.create_secret('https://<ref>.supabase.co/functions/v1', 'functions_url');
 ```
 
-**3. The functions URL** is not a secret, so it is an ordinary setting:
+**The key must be the `service_role` JWT** — the long `eyJ...` string — not a
+`sb_secret_...` key. Edge Functions run with `verify_jwt` on, so the bearer token has to
+be a JWT signed by the project; a secret key is not one and the call comes back 401.
+
+To replace a value, delete first — `create_secret` refuses a duplicate name:
 
 ```sql
-alter database postgres
-  set app.settings.functions_url = 'https://<ref>.supabase.co/functions/v1';
+delete from vault.secrets where name = 'service_role_key';
 ```
 
-Until 2 and 3 are set, `invoke_edge_function()` returns quietly and **the cron-driven
+Until both are set, `invoke_edge_function()` returns quietly and **the cron-driven
 functions do nothing** — deliberately, so local development and tests stay green without a
 live project behind them.
 
@@ -86,10 +90,21 @@ create one in the dashboard — you would get two.
 
 ### Checking it works
 
+Every failure in this pipeline is silent: an unset secret returns null, and a rejected
+request fails inside pg_net's background worker where nothing surfaces it. Together that
+is a push system which looks healthy and notifies nobody. One query answers it:
+
 ```sql
-select jobname, schedule from cron.job;      -- 5 jobs: seal, digest, freeze, reap, drain
-select invoke_edge_function('notify');       -- non-null request id once 2 and 3 are set
-select * from net._http_response order by created desc limit 5;
+select invoke_edge_function('notify');   -- fire one request
+select * from edge_wiring_status();      -- then read the verdict
+```
+
+`service_role_key` should report **"looks like a JWT — correct kind"**; anything else means
+the wrong key. `last request` should report **HTTP 2xx** — a 401 is almost always a
+`sb_secret_...` key where the `service_role` JWT belongs.
+
+```sql
+select jobname, schedule from cron.job;  -- 5 jobs: seal, digest, freeze, reap, drain
 ```
 
 ## Working on this
