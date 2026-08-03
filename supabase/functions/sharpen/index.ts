@@ -163,9 +163,20 @@ Deno.serve(async (req) => {
 
   // Spent only on a successful response (FRONTEND_DESIGN §4.2). A failure above returns
   // before reaching this line, so a Member never loses a sharpen to a timeout.
+  //
+  // `target_`-prefixed, because that is what the migration declares. The unprefixed names
+  // were a silent total failure: PostgREST resolves an RPC by argument name, so the call
+  // came back PGRST202 "could not find the function", the branch below swallowed it as
+  // `budget_spent`, and the suggestion this function had just paid for was discarded. Every
+  // successful Sharpen returned nothing, and §7.8's limit never incremented. The pgTAP
+  // suite could not see it — it calls the function in SQL, where the names are right.
+  //
+  // `sharpen_budget_remaining` above is NOT prefixed, and that is correct: only
+  // `consume_sharpen` renamed its parameters, to stop ON CONFLICT binding bare column
+  // names to them.
   const { error: budgetError } = await supabase.rpc('consume_sharpen', {
-    member_id: memberId,
-    year_id: yearId,
+    target_member_id: memberId,
+    target_year_id: yearId,
   });
   if (budgetError !== null) {
     console.warn('sharpen: budget refused after a successful call', budgetError.message);

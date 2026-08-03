@@ -140,6 +140,14 @@ export const size = {
   control: 52,
   /** §4.5's "Create it", and every primary action that commits something. 56pt, moss. */
   controlPrimary: 56,
+  /**
+   * §4.1's "Sharpen it" — 46pt, between a control and a text row.
+   *
+   * The size is the point: asking for a suggestion is optional and must never look like
+   * the way forward. Below the 52pt of a real control, above the 44pt floor a finger
+   * needs (§6 A3).
+   */
+  controlSharpen: 46,
   /** Below the header on a full screen. Clears the status bar without a safe-area hook. */
   screenTop: 72,
   minTouch: 44,

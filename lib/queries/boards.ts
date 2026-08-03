@@ -68,6 +68,8 @@ export const boardHeadKey = (boardId: string, accountId: string) =>
 export interface BoardHead {
   id: string;
   sealedAt: string | null;
+  /** Whose Board this is. Sharpening is attributed and rate-limited per Member (§7.8). */
+  memberId: string;
   memberName: string;
   /** Whether the caller is authoring as themselves or on a child's behalf (§4.2). */
   isSelf: boolean;
@@ -118,7 +120,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         // One string literal, not a concatenation: supabase-js infers the row type by
         // parsing this at the type level, and `'a' + 'b'` widens to `string`, which turns
         // every field access below into an error against GenericStringError.
-        .select('id, sealed_at, joined_late_at, personal_setup_deadline, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, family:family_id (id, name, timezone))')
+        .select('id, sealed_at, joined_late_at, personal_setup_deadline, member_id, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, family:family_id (id, name, timezone))')
         .eq('id', boardId ?? '')
         .maybeSingle();
       if (error !== null) throw error;
@@ -143,6 +145,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
       return {
         id: data.id as string,
         sealedAt: data.sealed_at as string | null,
+        memberId: data.member_id as string,
         memberName: member.display_name,
         isSelf: member.account_id !== null && member.account_id === accountId,
         // The same predicate as `controlled_member_ids()` and as `useMyBoards`. Three

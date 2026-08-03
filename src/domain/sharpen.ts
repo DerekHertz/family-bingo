@@ -245,3 +245,68 @@ export const normalizeSuggestions = (payload: unknown): Suggestion[] => {
 
 const isCategory = (value: string | null): value is GoalCategory =>
   value !== null && (GOAL_CATEGORIES as readonly string[]).includes(value);
+
+/** A Goal as it will be written, whichever of the two cards the Member chose (§4.2). */
+export interface AuthoredGoal {
+  readonly text: string;
+  readonly target: number;
+  readonly unit: string | null;
+  readonly unitCanonical: string | null;
+  readonly category: GoalCategory | null;
+  readonly paceHint: string | null;
+}
+
+/** What the Member typed, before anything was suggested. */
+export interface OwnWords {
+  readonly text: string;
+  readonly target: number;
+  readonly unit: string | null;
+}
+
+/** The sharpened card, taken as offered — or as edited by hand afterwards (§4.2). */
+export const acceptSuggestion = (suggestion: Suggestion): AuthoredGoal => ({
+  text: suggestion.text,
+  target: suggestion.target,
+  unit: suggestion.unit,
+  unitCanonical: suggestion.unitCanonical,
+  category: suggestion.category,
+  paceHint: suggestion.paceHint,
+});
+
+/**
+ * "As you wrote it" — the Member's own words win, and §7.5 is satisfied by this branch
+ * existing at all. Keeping the original always produces a valid Goal.
+ *
+ * Which of the inferred fields survive is the only real decision here, and each is
+ * decided by what the field actually describes (§6.1a, §7.10):
+ *
+ *   - **`category` carries.** It describes what the goal is *about* — reading, fitness,
+ *     family — and rephrasing "read more" as "finish a book" does not change that. This
+ *     is what keeps a kept-your-own-words Goal inside Wrapped's category card (§20.5)
+ *     instead of silently dropping out of it.
+ *   - **`paceHint` does not.** It is a sentence about the *suggested* target ("about six
+ *     a week" for 300 walks) and is simply false beside a different number. §6.3 makes it
+ *     display-only, which means a wrong one is never caught by anything.
+ *   - **`unitCanonical` carries only if the units agree.** It is the singular of the
+ *     suggested unit; attaching "walk" to a Member who kept "runs" would put their Goal in
+ *     the wrong Wrapped bucket, which is worse than leaving it out of every bucket.
+ */
+export const keepOwnWords = (
+  mine: OwnWords,
+  suggestion: Suggestion | null,
+): AuthoredGoal => {
+  const sameUnit =
+    suggestion !== null &&
+    mine.unit !== null &&
+    suggestion.unit !== null &&
+    mine.unit.trim().toLowerCase() === suggestion.unit.trim().toLowerCase();
+
+  return {
+    text: mine.text,
+    target: mine.target,
+    unit: mine.unit,
+    unitCanonical: sameUnit ? (suggestion?.unitCanonical ?? null) : null,
+    category: suggestion?.category ?? null,
+    paceHint: null,
+  };
+};

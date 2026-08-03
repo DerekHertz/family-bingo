@@ -5,7 +5,10 @@ import {
   SHARPEN_MODEL,
   SHARPEN_OUTPUT_SCHEMA,
   SHARPEN_SYSTEM_PROMPT,
+  type Suggestion,
+  acceptSuggestion,
   buildSharpenUserMessage,
+  keepOwnWords,
   normalizeSuggestions,
 } from './sharpen';
 
@@ -238,5 +241,75 @@ describe('normalizeSuggestions — never throws, degrades to empty (§7.9)', () 
         { ...wellFormed.suggestions[0], text: 'Third' },
       ],
     })).toHaveLength(1);
+  });
+});
+
+describe('choosing between the two cards (§4.2, §6.1a, §7.5)', () => {
+  const walk: Suggestion = {
+    text: 'Walk',
+    target: 300,
+    unit: 'walks',
+    unitCanonical: 'walk',
+    category: 'fitness',
+    paceHint: 'about six a week',
+  };
+
+  it('takes the sharpened card whole', () => {
+    expect(acceptSuggestion(walk)).toEqual({
+      text: 'Walk',
+      target: 300,
+      unit: 'walks',
+      unitCanonical: 'walk',
+      category: 'fitness',
+      paceHint: 'about six a week',
+    });
+  });
+
+  it('keeps the Member’s words, target and unit exactly (§7.5)', () => {
+    const kept = keepOwnWords({ text: 'take a walk every day', target: 1, unit: null }, walk);
+    expect(kept.text).toBe('take a walk every day');
+    expect(kept.target).toBe(1);
+    expect(kept.unit).toBeNull();
+  });
+
+  it('produces a valid one-shot Goal when the original is kept (§7 acceptance test)', () => {
+    const kept = keepOwnWords({ text: 'Be a better father', target: 1, unit: null }, null);
+    expect(kept.target).toBe(1);
+    expect(kept.text).toBe('Be a better father');
+  });
+
+  it('carries the category across, so a kept Goal stays in Wrapped’s card (§20.5)', () => {
+    // The category describes what the goal is ABOUT, and rephrasing does not change that.
+    expect(keepOwnWords({ text: 'walk daily', target: 1, unit: null }, walk).category).toBe(
+      'fitness',
+    );
+  });
+
+  it('drops the pace hint, which describes a target the Member did not take (§6.3)', () => {
+    expect(keepOwnWords({ text: 'walk daily', target: 1, unit: null }, walk).paceHint).toBeNull();
+  });
+
+  it('drops unit_canonical when the units disagree', () => {
+    // "walk" attached to a Member who kept "runs" puts their Goal in the wrong Wrapped
+    // bucket, which is worse than leaving it out of every bucket.
+    const kept = keepOwnWords({ text: 'Run', target: 50, unit: 'runs' }, walk);
+    expect(kept.unitCanonical).toBeNull();
+  });
+
+  it('keeps unit_canonical when they agree, whatever the casing', () => {
+    const kept = keepOwnWords({ text: 'Walk about', target: 50, unit: ' Walks ' }, walk);
+    expect(kept.unitCanonical).toBe('walk');
+  });
+
+  it('leaves both inferred fields null when nothing was ever suggested (§6.1a)', () => {
+    const kept = keepOwnWords({ text: 'Read more', target: 1, unit: null }, null);
+    expect(kept.category).toBeNull();
+    expect(kept.unitCanonical).toBeNull();
+    expect(kept.paceHint).toBeNull();
+  });
+
+  it('never invents a target below one, on either branch (§6.2)', () => {
+    expect(acceptSuggestion(walk).target).toBeGreaterThanOrEqual(1);
+    expect(keepOwnWords({ text: 'x', target: 1, unit: null }, walk).target).toBeGreaterThanOrEqual(1);
   });
 });
