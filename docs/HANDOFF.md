@@ -62,9 +62,12 @@ against it.
 ## Environment
 
 - **Node 22 is required** (Expo SDK 57 needs ≥20.19; 21.x lacks `util.parseEnv`). It is
-  Homebrew keg-only, so the user's `~/.zshrc` carries
-  `export PATH="/usr/local/opt/node@22/bin:$PATH"`. A subshell that does not inherit it
-  will fail confusingly.
+  Homebrew keg-only, so `export PATH="/usr/local/opt/node@22/bin:$PATH"` has to be set by
+  hand — and it lives in **`~/.zshenv` and `~/.zprofile`**, not `~/.zshrc`. Both are
+  needed: `.zshrc` is read only by *interactive* shells, so a tool or script running a
+  command through a non-interactive zsh got 21.x; and `.zprofile`'s `brew shellenv`
+  prepends `/usr/local/bin`, where 21.x lives, so in a login shell the export has to come
+  *after* it. Getting this wrong fails confusingly rather than loudly.
 - `babel.config.cjs`, not `.js` — `package.json` declares `"type": "module"` for the
   domain layer.
 - `.env` holds `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`; it is
@@ -127,7 +130,11 @@ back to the system font. `theme/fonts.test.ts` greps for the mistake.
 3. **CI/CD** — discussed, not built. First move is a GitHub Action running `tsc` + Vitest on
    every PR; pgTAP needs a Supabase service container.
 4. **Apple and Google sign-in are not configured** on the Supabase project, so those buttons
-   return "isn't set up for this project yet". Magic link works.
+   return "isn't set up for this project yet". Magic link works — but the default SMTP
+   sends **two emails an hour**, which is not enough to test anything involving two people.
+   `supabase/functions/dev-login` is the way round it and the README explains it. It is a
+   back door gated on `DEV_LOGIN_SECRET`; unset the secret to close it, and never set it on
+   a project holding real data.
 5. **A magic-link Account's `display_name`** falls back to the email local part. Editing it
    belongs to §4.6's Account screen, which is unbuilt.
 6. **Web sessions use `localStorage`** and the module throws on any non-localhost origin.

@@ -30,13 +30,36 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@^2.45.0';
 
-/** Below this a secret is guessable, and a guessable secret is not a gate. */
+/**
+ * Below this a secret is guessable, and a guessable secret is not a gate.
+ *
+ * A floor on length, not a measure of entropy — `'a'.repeat(32)` clears it. The README's
+ * `openssl rand -hex 32` is the actual advice; this only stops the two-character one.
+ */
 const MIN_SECRET = 32;
+
+/**
+ * The first function in this project a browser calls directly, and therefore the first
+ * that needs these.
+ *
+ * `notify`, `wrap`, `sharpen` and `reap-attachments` are all reached from pg_net or a
+ * database webhook, where there is no origin and no preflight. This one is invoked from
+ * the app — and the only preview on the machine this is developed on is
+ * `expo start --web` at `localhost:8081`, which makes every call cross-origin. Without a
+ * preflight answer the browser blocks the request before the function runs, `invoke()`
+ * throws a FunctionsFetchError with no status on it, and a correctly configured project
+ * reports "dev sign-in isn't switched on".
+ */
+const cors = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'access-control-allow-methods': 'POST, OPTIONS',
+};
 
 const deny = (status: number, reason: string) =>
   new Response(JSON.stringify({ reason }), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { ...cors, 'content-type': 'application/json' },
   });
 
 /**
@@ -62,7 +85,15 @@ interface AdminUser {
   id: string;
   email?: string;
   banned_until?: string | null;
+  /** GoTrue exposes this and it means the auth user itself is gone, not just `accounts`. */
+  deleted_at?: string | null;
 }
+
+/** Distinguishes "GoTrue said no such user" from "GoTrue did not answer". */
+type Lookup =
+  | { found: AdminUser }
+  | { found: null }
+  | { unreachable: true };
 
 /**
  * Find the auth user for an address, or `null`.
@@ -71,23 +102,38 @@ interface AdminUser {
  * project and has no way to ask about one address. The `filter` parameter is a substring
  * match server-side, so the exact comparison still has to happen here.
  */
-const findUser = async (
-  url: string,
-  key: string,
-  email: string,
-): Promise<AdminUser | null> => {
+const findUser = async (url: string, key: string, email: string): Promise<Lookup> => {
+  // 100 is a ceiling, not a page walk. `filter` matches a substring of the email OR of
+  // `full_name`, so a very common fragment could in principle push the wanted row past
+  // the first page — at family scale it cannot, and the failure is to deny rather than to
+  // return the wrong person. Worth knowing about before reusing this against a big
+  // project.
   const query = new URLSearchParams({ filter: email, per_page: '100' });
-  const res = await fetch(`${url}/auth/v1/admin/users?${query}`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` },
-  });
-  if (!res.ok) return null;
+  let res: Response;
+  try {
+    res = await fetch(`${url}/auth/v1/admin/users?${query}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    });
+  } catch {
+    return { unreachable: true };
+  }
+  // A rotated service key, a GoTrue 500 and a transport failure are not "no such
+  // address", and saying they are sends someone off to check their typing for an hour.
+  if (!res.ok) return { unreachable: true };
+
   const body = (await res.json()) as { users?: AdminUser[] };
+  // The exact re-check is load-bearing, not belt and braces: `filter` is a substring
+  // match against email AND display name, so it can return people who are not this
+  // address at all.
   const wanted = email.toLowerCase();
-  return (body.users ?? []).find((u) => (u.email ?? '').toLowerCase() === wanted) ?? null;
+  const hit = (body.users ?? []).find((u) => (u.email ?? '').toLowerCase() === wanted);
+  return hit === undefined ? { found: null } : { found: hit };
 };
 
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') return deny(405, 'method_not_allowed');
+  // Before everything, including the method check — a preflight is an OPTIONS and would
+  // otherwise be answered 405 with no CORS headers, which the browser reads as a refusal.
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
   const expected = Deno.env.get('DEV_LOGIN_SECRET') ?? '';
   const url = Deno.env.get('SUPABASE_URL') ?? '';
@@ -95,40 +141,60 @@ Deno.serve(async (req) => {
 
   // 404, not 403: an unconfigured project should look like it has no such function,
   // because as far as anyone outside is concerned it does not.
+  //
+  // First, and before the method check as well. A 405 on a GET would answer the one
+  // question this endpoint must never answer for free — whether the back door is live on
+  // this project — to anyone holding the anon key, which is everyone.
   if (expected.length < MIN_SECRET || url === '' || serviceKey === '') {
     return deny(404, 'not_found');
   }
 
-  let body: { email?: unknown; secret?: unknown };
+  if (req.method !== 'POST') return deny(405, 'method_not_allowed');
+
+  // A malformed body falls through to the secret check and gets the same 404, rather than
+  // its own 400. The 400 was the same oracle in a different shape: an unconfigured
+  // project answered 404 to junk and a configured one answered 400, which is the whole
+  // question asked and answered without knowing the secret.
+  let body: { email?: unknown; secret?: unknown } = {};
   try {
     body = await req.json();
   } catch {
-    return deny(400, 'unreadable_request');
+    // Deliberately empty — `secret` stays '' and the comparison below denies.
   }
 
   const secret = typeof body.secret === 'string' ? body.secret : '';
   if (!(await sameSecret(secret, expected))) return deny(404, 'not_found');
 
+  // Past this line the caller holds the secret, so the answers can be specific: they are
+  // the developer who set it up, and "no account with that address" is what they need.
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (email === '') return deny(400, 'no_email');
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
 
-  const user = await findUser(url, serviceKey, email);
-  if (user === null) return deny(404, 'no_account');
+  const lookup = await findUser(url, serviceKey, email);
+  if ('unreachable' in lookup) return deny(502, 'lookup_failed');
+  if (lookup.found === null) return deny(404, 'no_account');
+  const user = lookup.found;
 
   if (user.banned_until !== null && user.banned_until !== undefined) {
     if (Date.parse(user.banned_until) > Date.now()) return deny(403, 'banned');
+  }
+  if (user.deleted_at !== null && user.deleted_at !== undefined) {
+    return deny(403, 'no_account');
   }
 
   // §1.5's deletion is a soft delete on `accounts`, so an auth user can outlive the
   // Account it belongs to. Signing that one in would produce a session whose every query
   // returns nothing — a worse outcome than being turned away.
-  const { data: account } = await admin
+  const { data: account, error: accountError } = await admin
     .from('accounts')
     .select('deleted_at')
     .eq('id', user.id)
     .maybeSingle();
+  // A broken query is not a deleted Account, and reporting it as one is a lie that reads
+  // like data loss.
+  if (accountError !== null) return deny(502, 'lookup_failed');
   if (account === null || account.deleted_at !== null) return deny(403, 'no_account');
 
   // Generates the link without sending it — this is the whole trick. The Account is known
@@ -138,6 +204,6 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({ token_hash: data.properties.hashed_token }), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: { ...cors, 'content-type': 'application/json' },
   });
 });
