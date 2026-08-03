@@ -170,8 +170,6 @@ Deno.serve(async (req) => {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (email === '') return deny(400, 'no_email');
 
-  const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
-
   const lookup = await findUser(url, serviceKey, email);
   if ('unreachable' in lookup) return deny(502, 'lookup_failed');
   if (lookup.found === null) return deny(404, 'no_account');
@@ -180,25 +178,30 @@ Deno.serve(async (req) => {
   if (user.banned_until !== null && user.banned_until !== undefined) {
     if (Date.parse(user.banned_until) > Date.now()) return deny(403, 'banned');
   }
+  // GoTrue's own soft delete, which anonymises the row rather than removing it. The
+  // lookup above would normally miss it anyway; this is the belt.
   if (user.deleted_at !== null && user.deleted_at !== undefined) {
     return deny(403, 'no_account');
   }
 
-  // §1.5's deletion is a soft delete on `accounts`, so an auth user can outlive the
-  // Account it belongs to. Signing that one in would produce a session whose every query
-  // returns nothing — a worse outcome than being turned away.
-  const { data: account, error: accountError } = await admin
-    .from('accounts')
-    .select('deleted_at')
-    .eq('id', user.id)
-    .maybeSingle();
-  // A broken query is not a deleted Account, and reporting it as one is a lie that reads
-  // like data loss.
-  if (accountError !== null) return deny(502, 'lookup_failed');
-  if (account === null || account.deleted_at !== null) return deny(403, 'no_account');
+  // There is deliberately no second check against `accounts`.
+  //
+  // The first draft read `accounts.deleted_at`, on the theory that §1.5's deletion was a
+  // soft delete and an auth user could outlive the Account. Both halves were wrong, and
+  // the mistake was worth keeping the note for. `delete_account()` does
+  // `delete from auth.users where id = caller` and `accounts.id` references it
+  // `on delete cascade`, so deletion is a hard delete of both and nothing ever sets that
+  // column — a deleted Account is a lookup miss, one guard earlier.
+  //
+  // It also could not have worked: `service_role` has no SELECT on `accounts`. Migration
+  // 24 grants "the grants the Edge Functions need, and not one more" precisely so this
+  // role cannot read what it has no business reading, and widening it for a development
+  // back door is the wrong direction. The query returned 42501 and this function answered
+  // 502 to every correct request.
 
   // Generates the link without sending it — this is the whole trick. The Account is known
   // to exist by now, so the sign-up path this call would otherwise take is unreachable.
+  const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
   const { data, error } = await admin.auth.admin.generateLink({ type: 'magiclink', email });
   if (error !== null || data.properties === undefined) return deny(502, 'could_not_generate');
 
