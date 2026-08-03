@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { daysUntilSeal, openableYear, sealCopy, setupDeadline } from './year';
+import {
+  daysUntilSeal,
+  hasOpenSetupWindow,
+  openableYear,
+  relevantYear,
+  sealCopy,
+  setupDeadline,
+} from './year';
 
 const at = (iso: string) => new Date(iso);
 
@@ -92,5 +99,69 @@ describe('sealCopy (§4.5 — factual, never conditional)', () => {
       const copy = sealCopy(at(`${now}T00:00:00Z`), at('2028-01-01T00:00:00Z'));
       expect(copy).not.toMatch(/hurry|last chance|don.t miss|!/i);
     }
+  });
+});
+
+describe('relevantYear — the Year it actually is', () => {
+  const y = (calendar_year: number, status = 'setup') => ({ calendar_year, status });
+  // The list arrives newest-first from useYears, which is exactly the ordering that
+  // caused the bug: taking the first match meant taking the latest Year.
+  const newestFirst = [y(2027), y(2026)];
+
+  it('picks the Year the calendar is in, not the newest row', () => {
+    // The reported bug: 2026 and 2027 both in setup, screen said 2027.
+    expect(relevantYear(at('2026-08-03T23:50:00Z'), 'UTC', newestFirst)).toEqual(y(2026));
+  });
+
+  it('is unmoved by the order it is given', () => {
+    expect(relevantYear(at('2026-08-03T23:50:00Z'), 'UTC', [y(2026), y(2027)])).toEqual(y(2026));
+  });
+
+  it('ignores status — a sealed Year that is this Year is still this Year', () => {
+    const years = [y(2027, 'setup'), y(2026, 'active')];
+    expect(relevantYear(at('2026-08-03T12:00:00Z'), 'UTC', years)).toEqual(y(2026, 'active'));
+  });
+
+  it('resolves the year where the Family lives, not where the server is (§8.3 T1)', () => {
+    // 00:30 UTC on 1 January 2027 is still 2026 in New York.
+    const years = [y(2027), y(2026)];
+    expect(relevantYear(at('2027-01-01T00:30:00Z'), 'America/New_York', years))
+      .toEqual(y(2026));
+    expect(relevantYear(at('2027-01-01T00:30:00Z'), 'UTC', years)).toEqual(y(2027));
+  });
+
+  it('falls back to the most recent past Year when this one was never opened', () => {
+    expect(relevantYear(at('2028-02-01T12:00:00Z'), 'UTC', [y(2026), y(2025)]))
+      .toEqual(y(2026));
+  });
+
+  it('falls back to the nearest future Year when nothing has happened yet', () => {
+    expect(relevantYear(at('2026-08-03T12:00:00Z'), 'UTC', [y(2029), y(2027)]))
+      .toEqual(y(2027));
+  });
+
+  it('prefers an exact match over either fallback', () => {
+    const years = [y(2028), y(2026), y(2024)];
+    expect(relevantYear(at('2026-06-01T12:00:00Z'), 'UTC', years)).toEqual(y(2026));
+  });
+
+  it('returns undefined for a Family with no Years at all', () => {
+    expect(relevantYear(at('2026-08-03T12:00:00Z'), 'UTC', [])).toBeUndefined();
+  });
+});
+
+describe('hasOpenSetupWindow (§5.1)', () => {
+  it('is true while any Year is still being authored', () => {
+    expect(hasOpenSetupWindow([{ status: 'setup' }])).toBe(true);
+    expect(hasOpenSetupWindow([{ status: 'active' }, { status: 'setup' }])).toBe(true);
+  });
+
+  it('goes false once the Setup Window seals, which is the December case', () => {
+    // 2026 active, nothing in setup: opening 2027 for authoring is exactly right.
+    expect(hasOpenSetupWindow([{ status: 'active' }, { status: 'frozen' }])).toBe(false);
+  });
+
+  it('is false for a Family with no Years', () => {
+    expect(hasOpenSetupWindow([])).toBe(false);
   });
 });

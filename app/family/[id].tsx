@@ -34,7 +34,12 @@ import {
 import { useRemoveManagedMember } from '../../lib/queries/managed';
 import { useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
-import { openableYear, sealCopy } from '../../src/domain/year';
+import {
+  hasOpenSetupWindow,
+  openableYear,
+  relevantYear,
+  sealCopy,
+} from '../../src/domain/year';
 import { draftProgress } from '../../src/domain/goal';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
@@ -90,12 +95,14 @@ export default function FamilyRoster() {
   const allYears = years.data ?? [];
   const openable = openableYear(new Date(), timezone, allYears.map((y) => y.calendar_year));
 
-  // `[0]` was newest-first by calendar year, which is not relevance: a frozen 2028 beside
-  // an active 2027 showed "2028, finished" and hid the Year actually being played.
-  const current =
-    allYears.find((y) => y.status === 'active') ??
-    allYears.find((y) => y.status === 'setup') ??
-    allYears[0];
+  // The calendar decides which Year this is — not the sort order, and not the status.
+  //
+  // This was `find(active) ?? find(setup) ?? [0]`, which is a guess at relevance rather
+  // than an answer. `useYears` returns newest-first, so a Family with 2026 and 2027 both
+  // in `setup` got 2027: the screen said 2027 in August 2026, having never once asked
+  // what year it was. Status cannot answer this — it says where a Year is in its own
+  // life, not whether it is the one happening.
+  const current = relevantYear(new Date(), timezone, allYears);
   const taken = members.length + open.length;
   const full = taken >= SEATS;
 
@@ -244,8 +251,15 @@ export default function FamilyRoster() {
       ))}
 
       {/* Gated on the Years having loaded, or the button flashes for a Family that already
-          has that Year and races straight into a PT409. */}
-      {isOrganizer && !years.isPending && openable !== null ? (
+          has that Year and races straight into a PT409.
+
+          Also gated on no Setup Window already being open. Opening a second one is legal —
+          §5.1 only forbids two Years with the same calendar year — but it is how a Family
+          ends up with two Boards being authored at once and nothing on screen to say which
+          is which. That is exactly how a 2027 Board appeared in August: 2026 was open, so
+          the button offered the next free year, and it was taken. Once 2026 seals this
+          comes back on its own, which is the December case working as intended. */}
+      {isOrganizer && !years.isPending && openable !== null && !hasOpenSetupWindow(allYears) ? (
         <Button
           label={openYear.isPending ? 'Opening…' : `Open ${openable}`}
           disabled={openYear.isPending}
