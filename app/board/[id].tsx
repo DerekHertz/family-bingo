@@ -5,10 +5,9 @@
  * is not drawn until it seals. The 5×5 arrives with slice 11, when there is progress on it
  * worth looking at.
  *
- * Order is not priority (§4.1): the list stays in the order the Goals were written, and
- * positions are dealt at seal, so nobody can put the easy one in a corner. That is why the
- * rows below are sorted by `created_at` and never by position, even though position is
- * what the Tiles come back in.
+ * Order is not priority (§4.1): nobody picks where a Goal lands. The rows are listed in
+ * position order — see the note above the list for why that is the stable choice and not
+ * a contradiction — and the Member is never offered a position to choose.
  *
  * The pips are `ink3` on `paperSunk` and never `moss`. Writing a goal is not growth —
  * reserve the accent for the ladder or the board stops meaning anything (§4.1).
@@ -43,7 +42,11 @@ export default function DraftingTable() {
     );
   }
 
-  if (head.data === null || head.data === undefined) {
+  // `board.isError` matters as much as `head`'s. Without it a failed Tiles read after
+  // `retry: 2` leaves `tiles = []` and the screen states four confident falsehoods —
+  // "0 of 24", an empty pip strip, "Nothing written yet.", and a disabled button reading
+  // "All twenty-four written" directly above "24 still empty."
+  if (head.data === null || head.data === undefined || board.isError) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
         <Text style={{ ...styles.body, color: color.ink2 }}>
@@ -66,10 +69,28 @@ export default function DraftingTable() {
   const firstEmpty = authorable.find((t) => t.goal === null);
   const sealed = head.data.sealedAt !== null;
 
-  // Everything before Sealing is free editing; everything after costs a Swap, which is
-  // slice 18. A sealed Board is read-only here rather than offering a control that
-  // write_goal() would refuse with PT403.
-  const canWrite = !sealed && head.data.year.status === 'setup';
+  // Exactly the two conditions `write_goal()` gates on, and no third.
+  //
+  // This read `year.status === 'setup'` first, which is a rule the server does not have
+  // and which locked out the case it exists to serve. §21.1's late joiner is approved
+  // into a Year that is already `active`; the trigger in migration 28 deals them an
+  // UNSEALED Board with a `personal_setup_deadline` seven days out. Under the old gate
+  // that Member opened their drafting table, found every row dead and no "Write another",
+  // and could not write one Goal in the whole window — while the server would have
+  // accepted every one of them.
+  //
+  // `controlled` is the other half. `boards_read` is Family-wide, so this route opens on
+  // anyone's Board; without it a sibling's Board renders full write affordances that
+  // `write_goal()` answers with 42501.
+  const canWrite = head.data.controlled && !sealed && head.data.year.status !== 'frozen';
+
+  // A late joiner's window is their own, not the Year's (§21.1). Feeding the Year's
+  // long-past deadline to sealCopy() told them "the board has sealed" while the footer
+  // said "24 still empty" — two lines of the same screen contradicting each other.
+  const deadline =
+    head.data.joinedLateAt !== null && head.data.personalSetupDeadline !== null
+      ? head.data.personalSetupDeadline
+      : head.data.year.setupDeadline;
 
   const title = head.data.isSelf ? 'Your goals' : `${head.data.memberName}’s goals`;
 
@@ -90,13 +111,7 @@ export default function DraftingTable() {
       <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
         {draftProgress(written.length)}
         {' · '}
-        {sealed
-          ? 'the board has sealed'
-          : sealCopy(
-              new Date(),
-              new Date(head.data.year.setupDeadline),
-              head.data.timezone,
-            )}
+        {sealed ? 'the board has sealed' : sealCopy(new Date(), new Date(deadline), head.data.timezone)}
       </Text>
 
       {/* The 24-pip strip. One pip per authorable Tile, ink3 when written and hairline
@@ -146,10 +161,15 @@ export default function DraftingTable() {
         </Text>
       </View>
 
-      {/* The written Goals, in the order they were written. `created_at` is not on the
-          Tile, so position order is the closest stable proxy the read gives — and it is
-          stable, which is what matters: a list that reorders under a Member as they write
-          is a list they cannot find anything in. Positions are still dealt at seal. */}
+      {/* Position order, which in practice IS write order: "Write another" always fills
+          the lowest empty position, so the two agree unless a square is cleared and
+          rewritten. `created_at` lives on the Goal rather than the Tile and would cost a
+          second sort key for that one case.
+
+          What matters is that the order is stable — a list that reshuffles under a Member
+          as they write is a list they cannot find anything in — and that nobody is ever
+          offered a position to choose, which is what §4.1's "order is not priority"
+          protects. */}
       <View style={{ marginTop: space.xl }}>
         {written.map((tile, i) => (
           <Pressable
@@ -161,6 +181,9 @@ export default function DraftingTable() {
               tile.goal?.unit ?? null,
             )}`}
             accessibilityHint={canWrite ? 'Opens this goal to edit it' : undefined}
+            // Without this a sealed Board's goals are still announced as buttons, so a
+            // screen-reader Member is invited to tap something that does nothing (§6 A1).
+            accessibilityState={{ disabled: !canWrite }}
             onPress={() => compose(tile.id)}
             style={({ pressed }) => ({
               flexDirection: 'row',
@@ -218,9 +241,14 @@ export default function DraftingTable() {
       ) : null}
 
       <Text style={{ ...styles.label, color: color.ink3, marginTop: space.md, textAlign: 'center' }}>
+        {/* True as written, and narrower than it looks: §9.5's free write after sealing
+            applies only to an EMPTY personal Centre, and *changing* a Goal costs a Swap
+            even inside that window. Offering the Centre write is slice 9's client half. */}
         {sealed
           ? 'This board has sealed. Changing a goal now costs a swap.'
-          : remainingCopy(written.length)}
+          : !head.data.controlled
+            ? `${head.data.memberName}’s to write.`
+            : remainingCopy(written.length)}
       </Text>
 
       <Button

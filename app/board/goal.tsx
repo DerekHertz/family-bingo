@@ -42,6 +42,13 @@ import {
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
+/**
+ * A ceiling on the typed target. Not a domain rule — `write_goal()` accepts any positive
+ * int — but a field that reads a pasted phone number as a target of nine billion produces
+ * a Tile nobody can ever complete, and no keystroke gets you here by accident.
+ */
+const TARGET_CEILING = 100_000;
+
 /** The stepper's two halves. 44pt each — §6 A3's floor, and an 8-year-old's finger. */
 function Step({ label, hint, onPress, disabled }: {
   label: string;
@@ -210,7 +217,15 @@ export default function ComposeGoal() {
               // Digits only, and an empty field reads as 1 rather than as NaN — a Member
               // clearing the box to type "12" must not see the screen refuse in between.
               const digits = next.replace(/[^0-9]/g, '');
-              setTarget(digits === '' ? 1 : Math.min(100_000, Number(digits)));
+              if (digits === '') {
+                setTarget(1);
+                return;
+              }
+              const wanted = Number(digits);
+              // The one place the screen changes what was typed, so it says so rather
+              // than silently swallowing the extra digits.
+              if (wanted > TARGET_CEILING) say(`Targets stop at ${TARGET_CEILING.toLocaleString()}.`);
+              setTarget(Math.min(TARGET_CEILING, wanted));
             }}
             keyboardType="number-pad"
             inputMode="numeric"
@@ -254,21 +269,20 @@ export default function ComposeGoal() {
           />
         </View>
 
-        {/* §4.1: the resulting increment verb, previewed beside the stepper. */}
-        <Text
-          accessibilityLiveRegion="polite"
-          style={{ ...styles.label, color: color.ink2, marginTop: space.md }}
-        >
+        {/* §4.1: the resulting increment verb, previewed beside the stepper.
+
+            Deliberately NOT a live region. It was one, and on Android that meant the whole
+            sentence was announced on every keystroke in the unit field — "1 b · the button
+            will say Did it", "1 bo · …". The text sits directly under the controls that
+            change it and is read on focus like any other label. */}
+        <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
           {stepperHint(target, unit.trim() === '' ? null : unit)}
         </Text>
 
+        {/* `say()` already calls announceForAccessibility, which is the only one iOS
+            honours. Pairing it with a live region made Android say everything twice. */}
         {trouble === null ? null : (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}
-          >
-            {trouble}
-          </Text>
+          <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>{trouble}</Text>
         )}
 
         <Button

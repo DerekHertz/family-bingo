@@ -56,8 +56,13 @@ export const boardKey = (boardId: string) => ['board', boardId] as const;
  * A prefix of its own rather than `['board', id, 'head']`. Invalidation is a prefix match,
  * so nesting it under `boardKey` would mean every Goal written refetched the Year and the
  * Family too — the exact refetch this query is split out to avoid.
+ *
+ * Carries the Account because two of the fields it caches — `isSelf` and `controlled` —
+ * are answers about the caller, not about the Board. Without it, a Board fetched while
+ * the session was still loading cached "not yours" for a minute of `staleTime`.
  */
-export const boardHeadKey = (boardId: string) => ['board-head', boardId] as const;
+export const boardHeadKey = (boardId: string, accountId: string) =>
+  ['board-head', boardId, accountId] as const;
 
 /** Everything the drafting table's title, meta line and gates are built from. */
 export interface BoardHead {
@@ -66,6 +71,19 @@ export interface BoardHead {
   memberName: string;
   /** Whether the caller is authoring as themselves or on a child's behalf (§4.2). */
   isSelf: boolean;
+  /**
+   * Whether the caller may write here at all — `controlled_member_ids()`, client-side.
+   *
+   * `boards_read` is Family-wide, so this screen opens for any Member's Board. Without
+   * this the drafting table offers a sibling's Board full write affordances and
+   * `write_goal()` answers 42501. `isSelf` cannot stand in for it: a Managed Member's
+   * Board is legitimately controlled and legitimately not the caller's own.
+   */
+  controlled: boolean;
+  /** §21.1 — set on a Board dealt to a Member approved mid-Year. */
+  joinedLateAt: string | null;
+  /** §21.1 — that Member's own 7-day window, which is not the Year's. */
+  personalSetupDeadline: string | null;
   year: {
     id: string;
     calendarYear: number;
@@ -88,15 +106,19 @@ export interface BoardHead {
  */
 export function useBoardHead(boardId: string | undefined, accountId: string | undefined) {
   return useQuery({
-    queryKey: boardHeadKey(boardId ?? 'none'),
-    enabled: boardId !== undefined,
+    queryKey: boardHeadKey(boardId ?? 'none', accountId ?? 'anonymous'),
+    // Waits for the Account as well as the Board. `useSession()` is `undefined` on its
+    // first render, so firing before it resolves cached `controlled: false` against a key
+    // the real Account would then reuse — a read-only drafting table on the Member's own
+    // Board, for a minute of `staleTime`, with no refetch to correct it.
+    enabled: boardId !== undefined && accountId !== undefined,
     queryFn: async (): Promise<BoardHead | null> => {
       const { data, error } = await supabase
         .from('boards')
         // One string literal, not a concatenation: supabase-js infers the row type by
         // parsing this at the type level, and `'a' + 'b'` widens to `string`, which turns
         // every field access below into an error against GenericStringError.
-        .select('id, sealed_at, member:member_id (display_name, account_id), year:year_id (id, calendar_year, status, center_mode, setup_deadline, family:family_id (id, name, timezone))')
+        .select('id, sealed_at, joined_late_at, personal_setup_deadline, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, family:family_id (id, name, timezone))')
         .eq('id', boardId ?? '')
         .maybeSingle();
       if (error !== null) throw error;
@@ -105,6 +127,8 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
       const member = data.member as unknown as {
         display_name: string;
         account_id: string | null;
+        guardian_account_id: string | null;
+        status: string;
       } | null;
       const year = data.year as unknown as {
         id: string;
@@ -121,6 +145,13 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         sealedAt: data.sealed_at as string | null,
         memberName: member.display_name,
         isSelf: member.account_id !== null && member.account_id === accountId,
+        // The same predicate as `controlled_member_ids()` and as `useMyBoards`. Three
+        // copies of one rule is two too many, but the third is SQL and cannot be shared.
+        controlled:
+          member.status === 'active' &&
+          (member.account_id === accountId || member.guardian_account_id === accountId),
+        joinedLateAt: data.joined_late_at as string | null,
+        personalSetupDeadline: data.personal_setup_deadline as string | null,
         year: {
           id: year.id,
           calendarYear: year.calendar_year,
@@ -153,6 +184,10 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
     queryFn: async (): Promise<BoardSummary[]> => {
       const { data, error } = await supabase
         .from('boards')
+        // Unfiltered server-side, so a six-person Family pulls six Boards and 150 Tiles to
+        // render one or two rows. Deliberate: narrowing it would mean first fetching which
+        // Members the caller controls, and a second round trip costs more than the rows.
+        // RLS permits every one of them — nothing here is a leak, only weight.
         .select('id, member_id, sealed_at, created_at, member:member_id (id, display_name, account_id, guardian_account_id, status), tiles (position, goal_id)')
         .eq('year_id', yearId ?? '')
         .order('created_at', { ascending: true });
