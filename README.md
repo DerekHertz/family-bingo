@@ -108,6 +108,36 @@ the wrong key. `last request` should report **HTTP 2xx** — a 401 is almost alw
 select jobname, schedule from cron.job;  -- 5 jobs: seal, digest, freeze, reap, drain
 ```
 
+### Testing with two accounts
+
+Supabase's default SMTP sends **two emails an hour**. Anything that takes two people — an
+Invitation, an approval, a Centre vote — spends that in the first minute, and then the
+project is unusable until the hour turns.
+
+`dev-login` is the way round it. It exchanges an email address for a session against an
+Account **that already exists**: no email, no rate limit, and the client finishes with the
+same `verifyOtp` call a real magic link makes, so nothing downstream can tell them apart.
+
+```sh
+supabase secrets set DEV_LOGIN_SECRET=$(openssl rand -hex 32)   # note the value
+supabase functions deploy dev-login
+echo 'EXPO_PUBLIC_DEV_LOGIN_SECRET=<that same value>' >> .env   # then restart Expo
+```
+
+A "Sign in without the email (dev)" row appears under the email field. Type either
+address, tap it, and you are that Account.
+
+**This is a back door, and that secret is the only thing standing in it.** Do not set
+`DEV_LOGIN_SECRET` on a project holding anyone's real data. To close it, delete the
+secret — the function goes inert and answers 404 to everyone, with nothing to redeploy:
+
+```sh
+supabase secrets unset DEV_LOGIN_SECRET
+```
+
+The first Account for each address still has to be made the ordinary way, once: the
+function looks an address up and never creates one.
+
 ## Working on this
 
 **Test-first, one vertical slice at a time.** Each slice in the PRD cuts through the whole
