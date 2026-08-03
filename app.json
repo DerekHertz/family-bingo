@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Family Bingo",
+    "slug": "family-bingo",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "familybingo",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.hertzell.familybingo"
+    },
+    "android": {
+      "package": "com.hertzell.familybingo",
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
