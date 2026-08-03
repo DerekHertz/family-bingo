@@ -138,6 +138,16 @@ export default function FamilyRoster() {
         </View>
       )}
 
+      {/* §4: any active adult Member may add a child, not just the Organizer — the
+          Guardian is whoever is accountable for them (§4.3), and that is a parent rather
+          than an administrator. */}
+      <Button
+        label="Add a child"
+        disabled={full}
+        style={{ marginTop: space.lg }}
+        onPress={() => router.push({ pathname: '/family/child', params: { id: id ?? '' } })}
+      />
+
       {isOrganizer && code === null ? (
         <Button
           label={invite.isPending ? 'Making one…' : 'Invite someone'}
