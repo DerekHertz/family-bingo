@@ -130,6 +130,8 @@ export const size = {
   screenTop: 72,
   minTouch: 44,
   stack: 10,
+  /** The clay bullet and the Managed-Member dot. One dot size, not three. */
+  dot: 7,
   formWidth: 340,
   proseWidth: 300,
   wordmark: { fontSize: 38, lineHeight: 44 },
