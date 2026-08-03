@@ -54,7 +54,9 @@ export const styles = {
   cardHead: text(type.cardHead),
   heading: text(type.heading),
   body: text(type.body),
+  compose: text(type.compose),
   code: text(type.code),
+  index: text(type.index),
   label: text(type.label),
   meta: text(type.meta),
 } as const;

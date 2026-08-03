@@ -99,9 +99,23 @@ export const type = {
   cardHead: { fontFamily: font.display, fontSize: 19, lineHeight: 26, fontWeight: '500' },
   heading: { fontFamily: font.ui, fontSize: 19, lineHeight: 26, fontWeight: '700' },
   body: { fontFamily: font.ui, fontSize: 16, lineHeight: 24, fontWeight: '400' },
+  /**
+   * The one goal being written (§4.1): 22pt/400 Zen Kaku, never Shippori — Shippori is
+   * never used on a control, and a field a finger lands in is a control.
+   */
+  compose: { fontFamily: font.ui, fontSize: 22, lineHeight: 30, fontWeight: '400' },
   label: { fontFamily: font.ui, fontSize: 14, lineHeight: 20, fontWeight: '500' },
-  /** The Invitation code (§4.5): 30pt, .16em. The one place a monospace appears. */
+  /** The Invitation code (§4.5): 30pt, .16em. */
   code: { fontFamily: font.mono, fontSize: 30, lineHeight: 38, letterSpacing: 4.8 },
+  /**
+   * The drafting table's goal numbers (§4.1, "`DM Mono` index in `ink3`").
+   *
+   * The second and last monospace in the app, and it is the same reason as the first: a
+   * column of numbers read down a list has to align, and a proportional face will not.
+   * Not `code` at a smaller size — 4.8pt of letterSpacing is right for eight characters
+   * read aloud across a room and wrong for a two-digit index.
+   */
+  index: { fontFamily: font.mono, fontSize: 13, lineHeight: 20 },
   meta: {
     fontFamily: font.ui,
     fontSize: 12,
