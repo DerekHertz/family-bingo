@@ -135,7 +135,11 @@ with no Year at all, so filtering by Year loses nothing.
 |---|---|---|
 | `sharpen` | Client invoke | Claude call. Rate-limited 100/Member/Year |
 | `notify` | DB webhook on `notifications` insert | Drains the outbox. Decides nothing about who — see below |
-| `digest` | `pg_cron` weekly | Opt-in only; skipped if the week was empty |
+| `reap-attachments` | `pg_cron` | Removes Storage objects Postgres is forbidden to delete (§16.6) |
+
+There is **no separate `digest` function**. `pg_cron` builds the week's `digests` row and
+puts one `notifications` row per opted-in Member beside it (§19.1); `notify` sends it like
+any other kind. Two senders would have been two places for a push to go missing.
 
 ---
 
