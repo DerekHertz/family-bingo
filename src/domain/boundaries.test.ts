@@ -17,16 +17,30 @@ import { join } from 'node:path';
  */
 const files = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? files(join(dir, e.name))
+      : /\.tsx?$/.test(e.name)
+        ? [join(dir, e.name)]
+        : [],
   );
 
+/**
+ * Every module specifier, however it is written.
+ *
+ * The first version matched `from '...'` and `import '...'` only, which let
+ * `import('react-native')` and `require('react-native')` straight through — both break the
+ * domain suite and the Edge bundle exactly as a static import would, and both are what
+ * someone reaches for precisely when a static import has just been rejected.
+ */
 const importsOf = (file: string): string[] =>
-  [...readFileSync(file, 'utf8').matchAll(/(?:from|import)\s+['"]([^'"]+)['"]/g)].map(
-    (m) => m[1] as string,
-  );
+  [
+    ...readFileSync(file, 'utf8').matchAll(
+      /(?:\bfrom\s*|\bimport\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g,
+    ),
+  ].map((m) => m[1] as string);
 
 describe('src/domain imports nothing but itself', () => {
-  const sources = files('src').filter((f) => !f.endsWith('.test.ts'));
+  const sources = files('src').filter((f) => !/\.test\.tsx?$/.test(f));
 
   it('has files to check', () => {
     expect(sources.length).toBeGreaterThan(5);
@@ -42,5 +56,32 @@ describe('src/domain imports nothing but itself', () => {
         (!spec.startsWith('.') && !spec.startsWith('node:')),
     );
     expect(forbidden).toEqual([]);
+  });
+});
+
+describe('the check itself has teeth', () => {
+  // A rule nobody can see failing is a rule that quietly stops holding. These are the two
+  // shapes that got past the first version of the matcher.
+  const scan = (source: string) =>
+    [
+      ...source.matchAll(
+        /(?:\bfrom\s*|\bimport\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g,
+      ),
+    ].map((m) => m[1]);
+
+  it('catches a static import', () => {
+    expect(scan("import { View } from 'react-native';")).toContain('react-native');
+  });
+
+  it('catches a dynamic import', () => {
+    expect(scan("const m = await import('react-native');")).toContain('react-native');
+  });
+
+  it('catches a require', () => {
+    expect(scan("const m = require('react-native');")).toContain('react-native');
+  });
+
+  it('catches a side-effect import', () => {
+    expect(scan("import 'react-native';")).toContain('react-native');
   });
 });

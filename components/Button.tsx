@@ -15,7 +15,11 @@ import { color, radius, size } from '../theme/tokens';
 interface Props {
   label: string;
   onPress: () => void;
-  variant?: 'filled' | 'outlined' | 'text';
+  /**
+   * `primary` is §4.5's 56pt moss commit button — creating a Family, logging an Increment.
+   * `filled` is `ink`, for signing in, where nothing has grown yet and moss would be a lie.
+   */
+  variant?: 'primary' | 'filled' | 'outlined' | 'text';
   disabled?: boolean;
   accessibilityHint?: string;
   style?: ViewStyle;
@@ -29,7 +33,8 @@ export function Button({
   accessibilityHint,
   style,
 }: Props) {
-  const filled = variant === 'filled';
+  const primary = variant === 'primary';
+  const filled = variant === 'filled' || primary;
   const plain = variant === 'text';
 
   return (
@@ -41,11 +46,17 @@ export function Button({
       {...(accessibilityHint === undefined ? {} : { accessibilityHint })}
       accessibilityState={{ disabled }}
       style={({ pressed }) => ({
-        height: size.control,
+        height: primary ? size.controlPrimary : size.control,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: radius.card,
-        backgroundColor: plain ? 'transparent' : filled ? color.ink : color.paperRaised,
+        backgroundColor: plain
+          ? 'transparent'
+          : primary
+            ? color.moss
+            : filled
+              ? color.ink
+              : color.paperRaised,
         borderWidth: plain || filled ? 0 : 1,
         borderColor: color.hairline,
         // No pressed colour of its own: the palette has no state colours, so press is

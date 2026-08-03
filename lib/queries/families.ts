@@ -20,7 +20,17 @@ export interface Family {
   member: { id: string; display_name: string; role: 'organizer' | 'member' };
 }
 
-export const familiesKey = ['families'] as const;
+/**
+ * Keyed by Account, which is a privacy control rather than a cache nicety.
+ *
+ * A bare ['families'] key plus a QueryClient that outlives sign-out meant signing out of
+ * one Account and into another inside the 5-minute gcTime served the FIRST Account's
+ * Families — and `staleTime` made the entry fresh, so there was not even a refetch to
+ * correct it. One Account reading another's Family names and Members is exactly what §8.1
+ * forbids. The key stops it; `queryClient.clear()` on SIGNED_OUT in app/_layout.tsx stops
+ * it again.
+ */
+export const familiesKey = (accountId: string) => ['families', accountId] as const;
 
 /**
  * Every Family the signed-in Account is an active Member of.
@@ -28,16 +38,28 @@ export const familiesKey = ['families'] as const;
  * §2.2: an Account may belong to several, and every screen past this one is scoped to
  * exactly one. The list is the switcher's data as much as the home screen's.
  */
-export function useFamilies() {
+export function useFamilies(accountId: string | undefined) {
   return useQuery({
-    queryKey: familiesKey,
+    queryKey: familiesKey(accountId ?? 'anonymous'),
+    // Nothing to read without a session, and firing anyway caches a 42501 against the key
+    // a real Account will use a moment later.
+    enabled: accountId !== undefined,
     queryFn: async (): Promise<Family[]> => {
       // Read from `members` rather than `families`: it is the caller's membership that
-      // makes a Family visible, and starting there makes the row set self-evidently the
-      // caller's own.
+      // makes a Family visible at all.
+      //
+      // `account_id` is the filter that matters, and its absence was a bug rather than an
+      // omission. members_read is deliberately Family-WIDE (schema.md §4) — every Member
+      // of every visible Family comes back — so a six-person Family produced six identical
+      // cards, six duplicate React keys, and a stranger's name under each. The caller's own
+      // row is the one their Account backs.
+      //
+      // Managed Members are excluded by the same clause: a Guardian controls them, but they
+      // are not the Guardian, and this list is "Families you are in" (§2.2).
       const { data, error } = await supabase
         .from('members')
-        .select('id, display_name, role, family:family_id (id, name, timezone)')
+        .select('id, display_name, role, joined_at, family:family_id (id, name, timezone)')
+        .eq('account_id', accountId ?? '')
         .eq('status', 'active')
         .order('joined_at', { ascending: true });
       if (error !== null) throw error;
@@ -72,18 +94,30 @@ export function useCreateFamily() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ name, timezone }: { name: string; timezone: string }) => {
-      // The database enforces this too; checking here saves a round trip and lets the
-      // screen say something specific instead of surfacing a constraint violation.
+      // The screen checks this before calling, so reaching it means a caller skipped the
+      // check rather than a Member typing something odd. Kept as the boundary's own guard,
+      // not as a message anybody reads.
       const problem = familyNameProblem(name);
       if (problem !== null) throw new Error(problem);
 
-      const { data, error } = await supabase.rpc('create_family', {
-        name: name.trim(),
-        timezone,
-      });
+      const call = (zone: string) =>
+        supabase.rpc('create_family', { name: name.trim(), timezone: zone });
+
+      let { data, error } = await call(timezone);
+
+      // A handset can report a zone newer than the server's tzdata —
+      // `America/Ciudad_Juarez` is the usual example — and create_family() raises 22023 on
+      // anything absent from pg_timezone_names. Retrying identically never works, so the
+      // Member would simply never be able to create a Family. UTC is wrong by up to a day
+      // for deadlines (§8.3 T1) and is fixable in Account; being unable to start is not.
+      if (error !== null && error.code === '22023' && timezone !== 'UTC') {
+        ({ data, error } = await call('UTC'));
+      }
       if (error !== null) throw error;
       return data as { id: string; name: string };
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: familiesKey }),
+    // Prefix match: invalidates every Account's list, which is one wasted refetch at most
+    // and cannot miss the one that actually changed.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['families'] }),
   });
 }

@@ -17,6 +17,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import { color } from '../theme/tokens';
 
 // A rejection here is not worth crashing over: the splash simply hides on its own.
@@ -53,6 +54,19 @@ export default function RootLayout() {
   useEffect(() => {
     if (ready) SplashScreen.hideAsync().catch(() => undefined);
   }, [ready]);
+
+  // Signing out has to empty the cache, not just the session.
+  //
+  // The QueryClient is created once and outlives every sign-in, so without this the next
+  // Account to use the handset inherits whatever the last one fetched — Family names,
+  // Members' names, eventually a Board. Keys carry the Account id as well; this is the
+  // belt to that pair of braces, and it is the one that catches a key someone forgets.
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') queryClient.clear();
+    });
+    return () => data.subscription.unsubscribe();
+  }, [queryClient]);
 
   // Holding the splash rather than rendering in a fallback face: the wordmark is Shippori
   // at 38pt, and the substitution would be the first thing anyone saw.

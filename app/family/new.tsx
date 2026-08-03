@@ -68,7 +68,7 @@ export default function NewFamily() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={{ padding: space.xl, paddingTop: space.xxl + space.xl }}
+        contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop }}
         keyboardShouldPersistTaps="handled"
       >
         <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
@@ -85,8 +85,10 @@ export default function NewFamily() {
           placeholder="The Smith Family"
           placeholderTextColor={color.ink3}
           maxLength={FAMILY_NAME.max}
-          autoFocus
           returnKeyType="done"
+          // No autoFocus: it yanks VoiceOver past the header, so the one sentence saying
+          // what the screen is for is never read (§6). The field is the only control here
+          // and a sighted Member reaches it in one tap.
           accessibilityLabel="Family name"
           style={{
             ...styles.body,
@@ -113,7 +115,7 @@ export default function NewFamily() {
         <View style={{ marginTop: space.xl, gap: size.stack }}>
           <Button
             label={create.isPending ? 'Creating…' : 'Create it'}
-            variant="filled"
+            variant="primary"
             disabled={create.isPending}
             onPress={submit}
           />

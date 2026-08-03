@@ -120,6 +120,10 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 20, xl: 28, xxl: 44 } as const;
  */
 export const size = {
   control: 52,
+  /** §4.5's "Create it", and every primary action that commits something. 56pt, moss. */
+  controlPrimary: 56,
+  /** Below the header on a full screen. Clears the status bar without a safe-area hook. */
+  screenTop: 72,
   minTouch: 44,
   stack: 10,
   formWidth: 340,

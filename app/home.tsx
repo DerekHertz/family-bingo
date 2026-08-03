@@ -21,7 +21,7 @@ import { color, radius, size, space } from '../theme/tokens';
 export default function Home() {
   const session = useSession();
   const router = useRouter();
-  const families = useFamilies();
+  const families = useFamilies(session?.user.id);
 
   if (session === undefined) return <View style={{ flex: 1, backgroundColor: color.paper }} />;
   if (session === null) return <Redirect href="/" />;
@@ -31,7 +31,7 @@ export default function Home() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: color.paper }}
-      contentContainerStyle={{ padding: space.xl, paddingTop: space.xxl + space.xl }}
+      contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop }}
     >
       <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
         {list.length === 0 ? 'Welcome' : 'Your families'}
