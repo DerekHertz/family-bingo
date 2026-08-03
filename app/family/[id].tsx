@@ -37,6 +37,17 @@ import { openableYear, sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
+/** One phrase, used by both the visible text and the accessibility label. */
+const yearSays = (year: {
+  status: string;
+  setup_deadline: string;
+}): string =>
+  year.status === 'setup'
+    ? sealCopy(new Date(), new Date(year.setup_deadline))
+    : year.status === 'active'
+      ? 'under way'
+      : 'finished';
+
 export default function FamilyRoster() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -74,9 +85,15 @@ export default function FamilyRoster() {
   // so the only Year anyone could be opening is the next one. A picker would be a choice
   // between one option and several errors.
   const timezone = family?.timezone ?? 'UTC';
-  const nextYear = openableYear(new Date(), timezone);
-  const current = years.data?.[0];
-  const alreadyOpen = years.data?.some((y) => y.calendar_year === nextYear) === true;
+  const allYears = years.data ?? [];
+  const openable = openableYear(new Date(), timezone, allYears.map((y) => y.calendar_year));
+
+  // `[0]` was newest-first by calendar year, which is not relevance: a frozen 2028 beside
+  // an active 2027 showed "2028, finished" and hid the Year actually being played.
+  const current =
+    allYears.find((y) => y.status === 'active') ??
+    allYears.find((y) => y.status === 'setup') ??
+    allYears[0];
   const taken = members.length + open.length;
   const full = taken >= SEATS;
 
@@ -176,24 +193,37 @@ export default function FamilyRoster() {
           }}
         >
           <Text style={{ ...styles.cardHead, color: color.ink }}>{current.calendar_year}</Text>
+          {/* The label and the visible text are the same words: a screen reader saying
+              "frozen" where the screen says "finished" is two different apps (§6 A1). */}
           <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
-            {current.status === 'setup'
-              ? sealCopy(new Date(), new Date(current.setup_deadline))
-              : current.status === 'active'
-                ? 'under way'
-                : 'finished'}
+            {yearSays(current)}
           </Text>
         </View>
       )}
 
-      {isOrganizer && !alreadyOpen ? (
+      {/* Gated on the Years having loaded, or the button flashes for a Family that already
+          has that Year and races straight into a PT409. */}
+      {isOrganizer && !years.isPending && openable !== null ? (
         <Button
-          label={openYear.isPending ? 'Opening…' : `Open ${nextYear}`}
+          label={openYear.isPending ? 'Opening…' : `Open ${openable}`}
           disabled={openYear.isPending}
           style={{ marginTop: space.lg }}
           onPress={() =>
-            openYear.mutate(nextYear, {
-              onError: () => say('That didn’t open. Have another go in a moment.'),
+            openYear.mutate(openable, {
+              // Three distinct refusals, none of which a retry fixes. One message for all
+              // three was advice that could never work.
+              onError: (e) => {
+                const raw = e instanceof Error ? e.message : '';
+                say(
+                  /organizer/i.test(raw)
+                    ? 'Only the Organizer can open a Year.'
+                    : /already|exists/i.test(raw)
+                      ? `${openable} is already open.`
+                      : /past|ended/i.test(raw)
+                        ? 'That Year has already ended.'
+                        : 'That didn’t open. Have another go in a moment.',
+                );
+              },
             })
           }
         />
