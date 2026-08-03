@@ -31,9 +31,22 @@ import {
   useRosterActions,
 } from '../../lib/queries/invitations';
 import { useRemoveManagedMember } from '../../lib/queries/managed';
+import { useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
+import { openableYear, sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
+
+/** One phrase, used by both the visible text and the accessibility label. */
+const yearSays = (year: {
+  status: string;
+  setup_deadline: string;
+}): string =>
+  year.status === 'setup'
+    ? sealCopy(new Date(), new Date(year.setup_deadline))
+    : year.status === 'active'
+      ? 'under way'
+      : 'finished';
 
 export default function FamilyRoster() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,6 +57,8 @@ export default function FamilyRoster() {
   const invite = useCreateInvitation(id ?? '');
   const actions = useRosterActions(id ?? '');
   const removeChild = useRemoveManagedMember(id ?? '');
+  const years = useYears(id);
+  const openYear = useOpenYear(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
 
@@ -65,6 +80,20 @@ export default function FamilyRoster() {
   // though — invitations_organizer_read denies everyone else, so `open` is empty for a
   // plain Member and a pip row built from it would claim free seats the server will refuse.
   const canCount = roster.data?.canSeeInvitations === true;
+
+  // §5.1: one Year per Family per calendar year, and the window always ends on 1 January —
+  // so the only Year anyone could be opening is the next one. A picker would be a choice
+  // between one option and several errors.
+  const timezone = family?.timezone ?? 'UTC';
+  const allYears = years.data ?? [];
+  const openable = openableYear(new Date(), timezone, allYears.map((y) => y.calendar_year));
+
+  // `[0]` was newest-first by calendar year, which is not relevance: a frozen 2028 beside
+  // an active 2027 showed "2028, finished" and hid the Year actually being played.
+  const current =
+    allYears.find((y) => y.status === 'active') ??
+    allYears.find((y) => y.status === 'setup') ??
+    allYears[0];
   const taken = members.length + open.length;
   const full = taken >= SEATS;
 
@@ -143,6 +172,62 @@ export default function FamilyRoster() {
           />
         </View>
       )}
+
+      {/* The Year, if there is one. §4.5's deadline copy is factual and never conditional:
+          a date and a count of days, with nothing that could read as a scold (§0.3). */}
+      {current === undefined ? null : (
+        <View
+          accessible
+          accessibilityLabel={`${current.calendar_year}, ${
+            current.status === 'setup'
+              ? sealCopy(new Date(), new Date(current.setup_deadline))
+              : current.status
+          }`}
+          style={{
+            marginTop: space.lg,
+            padding: space.md,
+            backgroundColor: color.paperRaised,
+            borderRadius: radius.card,
+            borderWidth: 1,
+            borderColor: color.hairline,
+          }}
+        >
+          <Text style={{ ...styles.cardHead, color: color.ink }}>{current.calendar_year}</Text>
+          {/* The label and the visible text are the same words: a screen reader saying
+              "frozen" where the screen says "finished" is two different apps (§6 A1). */}
+          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
+            {yearSays(current)}
+          </Text>
+        </View>
+      )}
+
+      {/* Gated on the Years having loaded, or the button flashes for a Family that already
+          has that Year and races straight into a PT409. */}
+      {isOrganizer && !years.isPending && openable !== null ? (
+        <Button
+          label={openYear.isPending ? 'Opening…' : `Open ${openable}`}
+          disabled={openYear.isPending}
+          style={{ marginTop: space.lg }}
+          onPress={() =>
+            openYear.mutate(openable, {
+              // Three distinct refusals, none of which a retry fixes. One message for all
+              // three was advice that could never work.
+              onError: (e) => {
+                const raw = e instanceof Error ? e.message : '';
+                say(
+                  /organizer/i.test(raw)
+                    ? 'Only the Organizer can open a Year.'
+                    : /already|exists/i.test(raw)
+                      ? `${openable} is already open.`
+                      : /past|ended/i.test(raw)
+                        ? 'That Year has already ended.'
+                        : 'That didn’t open. Have another go in a moment.',
+                );
+              },
+            })
+          }
+        />
+      ) : null}
 
       {/* §4: any active adult Member may add a child, not just the Organizer — the
           Guardian is whoever is accountable for them (§4.3), and that is a parent rather
