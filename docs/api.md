@@ -114,7 +114,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `create_family(name, timezone)` | Family + Organizer Member, one transaction | Authenticated |
 | `create_invitation(family_id)` | Single-use token, 7-day expiry | Organizer only |
 | `redeem_invitation(token)` | Member at `status = 'pending'` | Valid, unused, unexpired |
-| `approve_member(member_id)` | `pending → active` | Organizer only |
+| `approve_member(member_id)` | `pending → active`, stamps `joined_at`, and deals a Board if the Year is already under way (§21) | Organizer only |
 | `create_managed_member(family_id, name)` | Member with `guardian_account_id` | Active adult Member |
 | `open_year(family_id, calendar_year)` | Year + Boards + 25 Tiles each + both Votes | Organizer, no Year exists |
 | `write_goal(tile_id, text, target, …)` | Authors or edits a Tile's Goal | Own Board, draft — plus the one §9.5 write |
@@ -124,6 +124,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `resolve_center_vote(year_id)` | Resolves both Votes, applies §8.3 / §9.3 fallbacks | `pg_cron` or Organizer, Setup Window closed |
 | `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent |
 | `seal_due_boards()` | The sweep: every Year past its deadline, then §21.1 stragglers | `pg_cron` |
+| `remaining_year_fraction(target_year_id)` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
 | `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
