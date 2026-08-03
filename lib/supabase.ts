@@ -70,32 +70,44 @@ const chunkedStorage = {
 };
 
 /**
- * Web keeps the session in memory only.
+ * Web persists to `localStorage`, and that is a development decision rather than a
+ * security one.
  *
- * There is no SecureStore in a browser, and falling through to supabase's default puts
- * two JWTs in `localStorage`, readable by any script on the origin. Web is a development
- * convenience here, not a shipping target (§0, "Platform: Expo"), so the honest trade is
- * a session that does not survive a refresh rather than one stored somewhere this project
- * would not accept on a phone.
+ * There is no keychain in a browser, so the only choices are localStorage — readable by
+ * any script on the origin — or memory, which drops the session on every refresh. This
+ * shipped as memory first, and it made the app unusable to develop against: create a
+ * Family, refresh, and you are back at sign-in with a rate-limited magic link as the only
+ * way back in.
+ *
+ * Web is explicitly not a shipping target (§0, "Platform: Expo (iOS + Android)"). Against
+ * a localhost dev server the "any script on the origin" threat is the developer's own
+ * bundle. If web ever becomes a real target this has to be revisited, which is why it
+ * fails loudly rather than quietly if that day comes without anyone noticing.
  */
-const memoryStorage = (() => {
-  const store = new Map<string, string>();
-  return {
-    getItem: (key: string) => Promise.resolve(store.get(key) ?? null),
-    setItem: (key: string, value: string) => {
-      store.set(key, value);
-      return Promise.resolve();
-    },
-    removeItem: (key: string) => {
-      store.delete(key);
-      return Promise.resolve();
-    },
-  };
-})();
+const webStorage = {
+  getItem: (key: string) => Promise.resolve(globalThis.localStorage?.getItem(key) ?? null),
+  setItem: (key: string, value: string) => {
+    globalThis.localStorage?.setItem(key, value);
+    return Promise.resolve();
+  },
+  removeItem: (key: string) => {
+    globalThis.localStorage?.removeItem(key);
+    return Promise.resolve();
+  },
+};
+
+if (Platform.OS === 'web' && process.env.NODE_ENV === 'production') {
+  // The one place this decision could go wrong is silently, in a build nobody meant to
+  // ship. §16.2's whole posture is that a token is not left somewhere convenient.
+  throw new Error(
+    'Web is a development target only: session storage here is localStorage, which is not ' +
+      'acceptable for a shipping build. Revisit lib/supabase.ts before enabling web.',
+  );
+}
 
 export const supabase = createClient(url, anonKey, {
   auth: {
-    storage: Platform.OS === 'web' ? memoryStorage : chunkedStorage,
+    storage: Platform.OS === 'web' ? webStorage : chunkedStorage,
     autoRefreshToken: true,
     persistSession: true,
     // There is no browser to hand the URL back on a device, so app/auth/callback.tsx and
