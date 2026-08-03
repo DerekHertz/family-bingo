@@ -37,6 +37,7 @@ npm run test:integration  # HTTP, against the running stack (needs db:start)
 | [`docs/schema.md`](docs/schema.md) | Data model, constraints, RLS policies, the twelve Lines |
 | [`docs/api.md`](docs/api.md) | Architecture, API surface, sequence diagrams |
 | [`docs/adr/`](docs/adr/) | The seven decisions that were hard to reverse and genuinely contested |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **Where the build is**, the per-slice rhythm, and the traps that have already cost time |
 
 ## Stack
 
