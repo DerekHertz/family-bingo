@@ -29,6 +29,32 @@ export interface OpenInvitation {
 }
 
 export const rosterKey = (familyId: string) => ['roster', familyId] as const;
+export const pendingKey = (accountId: string) => ['pending', accountId] as const;
+
+/**
+ * The Families the caller has asked to join and is still waiting on.
+ *
+ * §3.2 stops them reading anything about those Families — including their own Member row —
+ * so without this the app cannot tell them they are waiting after a relaunch, and Home
+ * shows first-run copy instead. pending_memberships() returns only their own rows and the
+ * Family name they were already given.
+ */
+export function usePendingMemberships(accountId: string | undefined) {
+  return useQuery({
+    queryKey: pendingKey(accountId ?? 'anonymous'),
+    enabled: accountId !== undefined,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pending_memberships');
+      if (error !== null) throw error;
+      return (data ?? []) as {
+        member_id: string;
+        family_id: string;
+        family_name: string;
+        asked_at: string;
+      }[];
+    },
+  });
+}
 
 /**
  * Everyone in the Family, and every invitation still outstanding.
@@ -57,9 +83,12 @@ export function useRoster(familyId: string | undefined) {
           .order('created_at', { ascending: true }),
       ]);
       if (members.error !== null) throw members.error;
-      if (invitations.error !== null) throw invitations.error;
+      // Not thrown: invitations_organizer_read denies a plain Member, which is correct and
+      // is not this screen failing. They see the roster without the outstanding codes.
+      const canSeeInvitations = invitations.error === null;
 
       return {
+        canSeeInvitations,
         members: (members.data ?? []).map(
           (m): RosterMember => ({
             id: m.id as string,
@@ -107,14 +136,28 @@ export function useRedeemInvitation() {
       if (error !== null) throw error;
       return data as { id: string; family_id: string; status: string };
     },
-    onSuccess: () => queryClient.invalidateQueries(),
+    // Redeeming creates a pending Member: the Families list is unchanged (still not
+    // active) but the pending list is not. Targeted, rather than dropping every Account's
+    // cache on the floor.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['pending'] });
+      void queryClient.invalidateQueries({ queryKey: ['families'] });
+    },
   });
 }
 
 /** §3.3 and §3.4 — the Organizer's four verbs, each one RPC. */
 export function useRosterActions(familyId: string) {
   const queryClient = useQueryClient();
-  const after = { onSuccess: () => queryClient.invalidateQueries({ queryKey: rosterKey(familyId) }) };
+  // Approving changes who is in the Family, which changes both the roster AND whether the
+  // approved Account sees it in their own list. Both keys, every time.
+  const after = {
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: rosterKey(familyId) });
+      void queryClient.invalidateQueries({ queryKey: ['families'] });
+      void queryClient.invalidateQueries({ queryKey: ['pending'] });
+    },
+  };
 
   const call = (fn: string, arg: Record<string, string>) => async () => {
     const { error } = await supabase.rpc(fn, arg);

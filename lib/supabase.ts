@@ -96,13 +96,24 @@ const webStorage = {
   },
 };
 
-if (Platform.OS === 'web' && process.env.NODE_ENV === 'production') {
-  // The one place this decision could go wrong is silently, in a build nobody meant to
-  // ship. §16.2's whole posture is that a token is not left somewhere convenient.
-  throw new Error(
-    'Web is a development target only: session storage here is localStorage, which is not ' +
-      'acceptable for a shipping build. Revisit lib/supabase.ts before enabling web.',
-  );
+/**
+ * The rationale is "against a localhost dev server the threat is the developer's own
+ * bundle", so the guard has to be localhost — not NODE_ENV.
+ *
+ * `expo start --tunnel`, a LAN IP, and any preview deployment are all NODE_ENV
+ * development, and every one of them is a shared origin where two JWTs in localStorage is
+ * exactly what §16.2 rules out. Checking the build mode let all three through.
+ */
+if (Platform.OS === 'web') {
+  const host = globalThis.location?.hostname ?? '';
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!isLocalhost) {
+    throw new Error(
+      `Web is a localhost development target only. This origin is "${host}", where session ` +
+        'storage would be localStorage — not acceptable for anything reachable by another ' +
+        'machine. Revisit lib/supabase.ts before serving web from anywhere but localhost.',
+    );
+  }
 }
 
 export const supabase = createClient(url, anonKey, {

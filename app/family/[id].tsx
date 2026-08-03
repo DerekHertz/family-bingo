@@ -10,7 +10,16 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  Share,
+  Text,
+  View,
+} from 'react-native';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import { SeatPips } from '../../components/SeatPips';
@@ -34,12 +43,22 @@ export default function FamilyRoster() {
   const invite = useCreateInvitation(id ?? '');
   const actions = useRosterActions(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
+  const [trouble, setTrouble] = useState<string | null>(null);
+
+  const say = (message: string) => {
+    setTrouble(message);
+    AccessibilityInfo.announceForAccessibility(message);
+  };
 
   const family = families.data?.find((f) => f.id === id);
   const isOrganizer = family?.member.role === 'organizer';
   const members = roster.data?.members ?? [];
   const open = roster.data?.invitations ?? [];
-  // An outstanding invitation holds a seat: §4.5 says a code already sent is a promise.
+  // An outstanding invitation holds a seat: §4.5 says a code already sent is a promise,
+  // and the server reserved it when it minted. Seats are only honest to an Organizer,
+  // though — invitations_organizer_read denies everyone else, so `open` is empty for a
+  // plain Member and a pip row built from it would claim free seats the server will refuse.
+  const canCount = roster.data?.canSeeInvitations === true;
   const taken = members.length + open.length;
   const full = taken >= SEATS;
 
@@ -64,9 +83,11 @@ export default function FamilyRoster() {
         {family?.name ?? 'Family'}
       </Text>
 
-      <View style={{ marginTop: space.lg }}>
-        <SeatPips taken={taken} total={SEATS} />
-      </View>
+      {canCount ? (
+        <View style={{ marginTop: space.lg }}>
+          <SeatPips taken={taken} total={SEATS} />
+        </View>
+      ) : null}
 
       {/* The code, once minted. It comes back from the RPC and is stored only as a hash, so
           leaving this screen loses it — minting another is cheap and is the only recovery. */}
@@ -87,9 +108,9 @@ export default function FamilyRoster() {
             // unrepeatable, and this one gets read aloud across a room (§4.5).
             accessibilityLabel={`Invitation code: ${[...code.code].join(' ')}`}
             style={{
-              ...styles.title,
-              fontSize: 30,
-              letterSpacing: 4.8,
+              // DM Mono, per §4.5. A serif is the wrong tool for eight characters read
+              // aloud across a room.
+              ...styles.code,
               // At capacity the card dims but stays legible — it is how the Members who
               // are already here arrived (§4.5).
               color: full ? color.ink3 : color.ink,
@@ -103,7 +124,10 @@ export default function FamilyRoster() {
           <Button
             label="Share the link"
             variant="primary"
-            disabled={full}
+            // Never disabled. This code's seat was reserved when it was minted, so the
+            // twentieth invitation would otherwise be spent the instant it appeared and
+            // unshareable forever after — the plaintext exists only in this component.
+            // §4.5: a code already sent is a promise.
             style={{ marginTop: space.md, alignSelf: 'stretch' }}
             onPress={() => {
               void Share.share({
@@ -122,10 +146,34 @@ export default function FamilyRoster() {
           style={{ marginTop: space.lg }}
           onPress={() =>
             invite.mutate(undefined, {
-              onSuccess: (row) => setCode({ code: row.code, expires_at: row.expires_at }),
+              onSuccess: (row) => {
+                setTrouble(null);
+                setCode({ code: row.code, expires_at: row.expires_at });
+              },
+              onError: (e) =>
+                say(
+                  /full/i.test(e instanceof Error ? e.message : '')
+                    ? 'This Family is full for now. Removing someone frees a seat.'
+                    : 'That didn’t work. Have another go in a moment.',
+                ),
             })
           }
         />
+      ) : null}
+
+      {trouble === null ? null : (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={{ ...styles.body, color: color.ink2, marginTop: space.md }}
+        >
+          {trouble}
+        </Text>
+      )}
+
+      {roster.isError ? (
+        <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>
+          Couldn’t load who’s in just now. Try again in a moment.
+        </Text>
       ) : null}
 
       <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>Who&rsquo;s in</Text>
@@ -151,6 +199,33 @@ export default function FamilyRoster() {
                     : ''}
               </Text>
             </View>
+
+            {/* §3.4 — "remove a Member at any time", and the only way a full Family frees
+                a seat. Never the Organizer's own row: remove_member() refuses to leave a
+                Family with no Organizer, and offering it here would be offering an error. */}
+            {isOrganizer && member.status === 'active' && member.id !== family?.member.id ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${member.display_name} from the Family`}
+                onPress={() =>
+                  Alert.alert(
+                    `Remove ${member.display_name}?`,
+                    'Their board and everything on it goes too. They can be invited again.',
+                    [
+                      { text: 'Keep them', style: 'cancel' },
+                      { text: 'Remove', onPress: () => actions.remove.mutate(member.id) },
+                    ],
+                  )
+                }
+                style={{
+                  minHeight: size.minTouch,
+                  justifyContent: 'center',
+                  paddingHorizontal: space.md,
+                }}
+              >
+                <Text style={{ ...styles.label, color: color.clayDeep }}>Remove</Text>
+              </Pressable>
+            ) : null}
 
             {/* §3.3 — the second gate. A link forwarded before its first use stops here. */}
             {isOrganizer && member.status === 'pending' ? (

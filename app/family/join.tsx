@@ -29,7 +29,7 @@ import {
 } from 'react-native';
 import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
-import { CODE_LENGTH, codeProblem, normalizeCode, useRedeemInvitation } from '../../lib/queries/invitations';
+import { codeProblem, normalizeCode, useRedeemInvitation } from '../../lib/queries/invitations';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -135,7 +135,9 @@ export default function JoinFamily() {
             placeholderTextColor={color.ink3}
             autoCapitalize="characters"
             autoCorrect={false}
-            maxLength={CODE_LENGTH}
+            // No maxLength: RN truncates BEFORE onChangeText, so pasting "ABCD-2345" —
+            // which the copy above explicitly invites — arrived as seven characters and
+            // was rejected for being the wrong length. normalizeCode strips the dash.
             returnKeyType="done"
             accessibilityLabel="Invitation code"
             style={{

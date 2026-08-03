@@ -14,6 +14,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-nati
 import { Button } from '../components/Button';
 import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
+import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
@@ -22,11 +23,13 @@ export default function Home() {
   const session = useSession();
   const router = useRouter();
   const families = useFamilies(session?.user.id);
+  const pending = usePendingMemberships(session?.user.id);
 
   if (session === undefined) return <View style={{ flex: 1, backgroundColor: color.paper }} />;
   if (session === null) return <Redirect href="/" />;
 
   const list = families.data ?? [];
+  const waiting = pending.data ?? [];
 
   return (
     <ScrollView
@@ -34,7 +37,7 @@ export default function Home() {
       contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop }}
     >
       <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
-        {list.length === 0 ? 'Welcome' : 'Your families'}
+        {list.length === 0 && waiting.length === 0 ? 'Welcome' : 'Your families'}
       </Text>
 
       {families.isPending ? (
@@ -48,7 +51,7 @@ export default function Home() {
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           Couldn’t reach your families just now. Pull down in a moment.
         </Text>
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && waiting.length === 0 ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           A Family is the group who’ll see your board. Start one, or join the one you were
           invited to.
@@ -81,6 +84,33 @@ export default function Home() {
                 {family.member.role === 'organizer' ? ' · organizer' : ''}
               </Text>
             </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* §3.2 lets them know they asked, and nothing else about the Family. Without this
+          a waiting Member sees first-run copy and has no way to learn they are in a queue
+          — re-entering the code just says it has been used. */}
+      {waiting.length === 0 ? null : (
+        <View style={{ marginTop: space.lg, gap: size.stack }}>
+          {waiting.map((request) => (
+            <View
+              key={request.member_id}
+              accessible
+              accessibilityLabel={`${request.family_name}, waiting to be let in`}
+              style={{
+                minHeight: size.minTouch,
+                padding: space.md,
+                borderRadius: radius.card,
+                borderWidth: 1,
+                borderColor: color.hairline,
+              }}
+            >
+              <Text style={{ ...styles.cardHead, color: color.ink2 }}>{request.family_name}</Text>
+              <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xs }}>
+                waiting to be let in
+              </Text>
+            </View>
           ))}
         </View>
       )}

@@ -27,6 +27,7 @@
   },
   "main": "expo-router/entry",
   "dependencies": {
+    "@expo-google-fonts/dm-mono": "^0.4.2",
     "@expo-google-fonts/shippori-mincho": "^0.4.1",
     "@expo-google-fonts/zen-kaku-gothic-new": "^0.4.1",
     "@supabase/supabase-js": "^2.112.0",

@@ -25,7 +25,20 @@ export function Avatar({ name, size = 44, pending = false, managed = false }: Pr
   const initial = [...name.trim()][0]?.toUpperCase() ?? '?';
 
   return (
-    <View style={{ width: size, height: size, opacity: pending ? 0.75 : 1 }}>
+    <View
+      accessible
+      // The clay dot is the only thing marking a Managed Member, so hiding it from
+      // VoiceOver hides the relationship §3 says to make visible. The avatar carries the
+      // whole label rather than the dot being a separate element nobody would reach.
+      accessibilityLabel={
+        name.trim() === ''
+          ? 'Invitation sent, nobody has joined yet'
+          : `${name}${managed ? ', a child in this Family' : ''}${
+              pending ? ', waiting to be let in' : ''
+            }`
+      }
+      style={{ width: size, height: size, opacity: pending ? 0.75 : 1 }}
+    >
       <View
         style={{
           width: size,

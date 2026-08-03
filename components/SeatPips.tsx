@@ -30,7 +30,12 @@ export function SeatPips({ taken, total }: { taken: number; total: number }) {
           ? `${taken} of ${total} seats. Full for now.`
           : `${taken} of ${total} seats. ${WORDS[left] ?? left} invitations left.`
       }
-      style={{ gap: space.sm }}
+      style={{
+        gap: space.sm,
+        padding: space.md,
+        backgroundColor: color.paperSunk,
+        borderRadius: radius.card,
+      }}
     >
       <View style={{ flexDirection: 'row', gap: space.xs, flexWrap: 'wrap' }}>
         {Array.from({ length: total }, (_, i) => (
@@ -45,7 +50,9 @@ export function SeatPips({ taken, total }: { taken: number; total: number }) {
           />
         ))}
       </View>
-      <Text style={{ ...styles.meta, color: color.ink2 }}>
+      {/* `label`, not `meta`: meta upper-cases, and "4 OF 20. SIXTEEN INVITATIONS LEFT."
+          is shouting a fact §4.5 wants stated quietly. */}
+      <Text style={{ ...styles.label, color: color.ink2 }}>
         {full
           ? `${taken} of ${total}. Full for now.`
           : `${taken} of ${total}. ${WORDS[left] ?? left} invitations left.`}

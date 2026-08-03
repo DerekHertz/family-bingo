@@ -82,6 +82,8 @@ export const categoryTint = {
 export const font = {
   display: 'ShipporiMincho',
   ui: 'ZenKakuGothicNew',
+  /** §4.5's Invitation code, and nothing else. Also SIL OFL. */
+  mono: 'DMMono',
 } as const;
 
 /**
@@ -98,6 +100,8 @@ export const type = {
   heading: { fontFamily: font.ui, fontSize: 19, lineHeight: 26, fontWeight: '700' },
   body: { fontFamily: font.ui, fontSize: 16, lineHeight: 24, fontWeight: '400' },
   label: { fontFamily: font.ui, fontSize: 14, lineHeight: 20, fontWeight: '500' },
+  /** The Invitation code (§4.5): 30pt, .16em. The one place a monospace appears. */
+  code: { fontFamily: font.mono, fontSize: 30, lineHeight: 38, letterSpacing: 4.8 },
   meta: {
     fontFamily: font.ui,
     fontSize: 12,
