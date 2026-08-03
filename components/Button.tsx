@@ -9,7 +9,8 @@
  */
 
 import { Pressable, Text, type ViewStyle } from 'react-native';
-import { color, radius, type } from '../theme/tokens';
+import { styles } from '../theme/fonts';
+import { color, radius, size } from '../theme/tokens';
 
 interface Props {
   label: string;
@@ -40,7 +41,7 @@ export function Button({
       {...(accessibilityHint === undefined ? {} : { accessibilityHint })}
       accessibilityState={{ disabled }}
       style={({ pressed }) => ({
-        height: 52,
+        height: size.control,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: radius.card,
@@ -51,12 +52,16 @@ export function Button({
         // opacity (§1.1).
         opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
         ...style,
+        // After the caller's overrides, never under §6 A3's floor. A layout tweak must not
+        // be able to shrink a touch target below the size an 8-year-old can hit (§0.4).
+        minHeight: size.minTouch,
       })}
     >
       <Text
         style={{
-          ...type.body,
-          fontWeight: '700',
+          // §4: 17pt/700. Resolved through `styles`, never a raw token — a raw token names
+          // the design system's family, which the renderer has never heard of.
+          ...styles.heading,
           fontSize: 17,
           color: filled ? color.paper : plain ? color.ink2 : color.ink,
         }}

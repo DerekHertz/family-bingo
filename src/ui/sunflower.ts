@@ -19,7 +19,9 @@ export const PETAL_SPREAD = { budding: 26, complete: 32 } as const;
 export const HEAD_SIZE = { budding: 18, complete: 27 } as const;
 
 export interface Petal {
+  /** Radial length, from the disc outward. Fixed — the spread does not change it. */
   readonly width: number;
+  /** Angular extent, perpendicular to the radius. This is what the spread scales. */
   readonly height: number;
   readonly borderRadius: number;
   /** Degrees clockwise from vertical; eight petals at a 45° period. */
@@ -31,15 +33,19 @@ export interface Petal {
 /**
  * The eight petals of a head of a given size.
  *
- * Proportions come from §2: each petal is 0.42 × 0.20 of the head with a 0.10 radius,
- * pushed 0.29 out from centre. `spread` scales the petal's width so the flower opens;
- * 26° is budding and 32° is complete, and the ratio between them is what the animation
- * interpolates.
+ * Proportions come from §2: each petal is 0.42 long × 0.20 wide with a 0.10 radius, pushed
+ * 0.29 out from centre — those are the `complete` values. `spread` is the angular width in
+ * degrees, 26° at budding and 32° at complete, and it scales the petal's ANGULAR extent so
+ * the flower reads as opening.
  */
 export const petalsOf = (size: number, spread: number): Petal[] =>
   Array.from({ length: 8 }, (_, i) => ({
-    width: size * 0.42 * (spread / PETAL_SPREAD.complete),
-    height: size * 0.2,
+    // `width` is the petal's RADIAL length — after `rotate(i*45deg) translateX(offset)` the
+    // petal's x-axis points outward from the centre, so its length is fixed and it is
+    // `height` that spans the angle. Scaling width instead made the flower LENGTHEN as it
+    // opened rather than widen, which is the opposite of what §2 asks for.
+    width: size * 0.42,
+    height: size * 0.2 * (spread / PETAL_SPREAD.complete),
     borderRadius: size * 0.1,
     rotation: i * 45,
     offset: size * 0.29,

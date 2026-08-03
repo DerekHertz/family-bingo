@@ -10,8 +10,18 @@
 import { View } from 'react-native';
 import { color, radius, space } from '../theme/tokens';
 
-/** Positions that carry the tint. Row-major, the same indexing the Board uses (§5.4). */
-const TINTED = new Set([6, 8, 12, 16, 18]);
+/** The board's real tile size at a 402pt handset (§3, `<Board>`). */
+const BOARD_TILE = 66;
+
+/**
+ * Positions that carry the moss tint. Row-major, the same indexing the Board uses (§5.4).
+ *
+ * 12 is deliberately absent: the Centre is the Family's, and §3 gives it `clayTint`. Clay
+ * means family and nothing else (§1.1), so the mark keeps that distinction rather than
+ * flattening it into a decorative scatter.
+ */
+const TINTED = new Set([6, 8, 16, 18]);
+const CENTRE = 12;
 
 export function BoardMark({ tile = 18, gap = space.xs }: { tile?: number; gap?: number }) {
   return (
@@ -27,8 +37,11 @@ export function BoardMark({ tile = 18, gap = space.xs }: { tile?: number; gap?: 
           style={{
             width: tile,
             height: tile,
-            borderRadius: radius.tile * (tile / 66),
-            backgroundColor: TINTED.has(i) ? color.mossTint : color.paperSunk,
+            // The tile radius is specified against the board's own ~66pt tile, so it
+            // scales with the mark rather than being reinvented at a fixed value.
+            borderRadius: radius.tile * (tile / BOARD_TILE),
+            backgroundColor:
+              i === CENTRE ? color.clayTint : TINTED.has(i) ? color.mossTint : color.paperSunk,
           }}
         />
       ))}

@@ -14,9 +14,28 @@ export function useSession(): Session | null | undefined {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => data.subscription.unsubscribe();
+    let live = true;
+
+    // onAuthStateChange fires INITIAL_SESSION immediately, and getSession() can resolve
+    // after it — so the slower answer would overwrite the newer one. Once a subscription
+    // event has been seen, the initial read is stale by definition and is dropped.
+    let sawEvent = false;
+
+    const { data } = supabase.auth.onAuthStateChange((_event, next) => {
+      if (!live) return;
+      sawEvent = true;
+      setSession(next);
+    });
+
+    void supabase.auth.getSession().then(({ data: read }) => {
+      if (!live || sawEvent) return;
+      setSession(read.session);
+    });
+
+    return () => {
+      live = false;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   return session;

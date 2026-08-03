@@ -13,6 +13,7 @@
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -23,10 +24,10 @@ import {
 } from 'react-native';
 import { Button } from '../components/Button';
 import { BoardMark } from '../components/BoardMark';
-import { signInWithEmail, signInWithProvider, type Provider } from '../lib/auth';
+import { SignInCancelled, signInWithEmail, signInWithProvider, type Provider } from '../lib/auth';
 import { useSession } from '../lib/session';
-import { text } from '../theme/fonts';
-import { color, radius, space, type } from '../theme/tokens';
+import { styles } from '../theme/fonts';
+import { color, radius, size, space } from '../theme/tokens';
 
 export default function SignIn() {
   const session = useSession();
@@ -42,7 +43,11 @@ export default function SignIn() {
   if (session === undefined) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator color={color.ink3} />
+        <ActivityIndicator
+          color={color.ink3}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Checking whether you are signed in"
+        />
       </View>
     );
   }
@@ -53,9 +58,19 @@ export default function SignIn() {
     setTrouble(null);
     try {
       await run();
-    } catch {
-      // Nothing scolds (§0.3). The Member is told what happened and what to do, once.
-      setTrouble('That didn’t go through. Have another go in a moment.');
+    } catch (e) {
+      // Backing out of the provider sheet is a decision, not a failure. Saying "that
+      // didn't go through" to someone who deliberately closed it is exactly the scolding
+      // §0.3 rules out.
+      if (e instanceof SignInCancelled) return;
+      const message =
+        e instanceof Error && e.message.startsWith('that does not look')
+          ? 'That doesn’t look like an email address.'
+          : 'That didn’t go through. Have another go in a moment.';
+      setTrouble(message);
+      // accessibilityLiveRegion is Android-only; iOS needs to be told outright, or the
+      // one piece of feedback on this screen is silent for a VoiceOver user (§6 A6).
+      AccessibilityInfo.announceForAccessibility(message);
     } finally {
       setBusy(null);
     }
@@ -65,10 +80,13 @@ export default function SignIn() {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, justifyContent: 'center' }}>
         <BoardMark />
-        <Text style={{ ...text(type.title), color: color.ink, marginTop: space.xl }}>
+        <Text
+          accessibilityRole="header"
+          style={{ ...styles.title, color: color.ink, marginTop: space.xl }}
+        >
           Check your email
         </Text>
-        <Text style={{ ...text(type.body), color: color.ink2, marginTop: space.sm }}>
+        <Text style={{ ...styles.body, color: color.ink2, marginTop: space.sm }}>
           We sent a link to {sentTo}. Opening it on this phone signs you in.
         </Text>
         <Button
@@ -100,9 +118,8 @@ export default function SignIn() {
         <Text
           accessibilityRole="header"
           style={{
-            ...text(type.display),
-            fontSize: 38,
-            lineHeight: 44,
+            ...styles.display,
+            ...size.wordmark,
             color: color.ink,
             marginTop: space.lg,
           }}
@@ -110,7 +127,14 @@ export default function SignIn() {
           Family Bingo
         </Text>
 
-        <View style={{ width: '100%', maxWidth: 340, marginTop: space.xxl, gap: 10 }}>
+        <View
+          style={{
+            width: '100%',
+            maxWidth: size.formWidth,
+            marginTop: space.xxl,
+            gap: size.stack,
+          }}
+        >
           {showEmail ? (
             <>
               <TextInput
@@ -125,8 +149,8 @@ export default function SignIn() {
                 inputMode="email"
                 accessibilityLabel="Email address"
                 style={{
-                  ...text(type.body),
-                  height: 52,
+                  ...styles.body,
+                  height: size.control,
                   paddingHorizontal: space.md,
                   color: color.ink,
                   backgroundColor: color.paperRaised,
@@ -145,6 +169,17 @@ export default function SignIn() {
                     setSentTo(email.trim());
                   })
                 }
+              />
+              {/* Choosing email was one tap; leaving has to be one too. Without this the
+                  only way out is to relaunch the app. */}
+              <Button
+                label="Other ways to sign in"
+                variant="text"
+                disabled={busy !== null}
+                onPress={() => {
+                  setShowEmail(false);
+                  setTrouble(null);
+                }}
               />
             </>
           ) : (
@@ -174,11 +209,11 @@ export default function SignIn() {
           <Text
             accessibilityLiveRegion="polite"
             style={{
-              ...text(type.body),
+              ...styles.body,
               color: color.ink2,
               marginTop: space.lg,
               textAlign: 'center',
-              maxWidth: 340,
+              maxWidth: size.formWidth,
             }}
           >
             {trouble}
@@ -187,11 +222,11 @@ export default function SignIn() {
 
         <Text
           style={{
-            ...text(type.label),
+            ...styles.label,
             color: color.ink2,
             marginTop: space.xxl,
             textAlign: 'center',
-            maxWidth: 300,
+            maxWidth: size.proseWidth,
           }}
         >
           No passwords. Not now, not later — there&rsquo;s nothing to forget.

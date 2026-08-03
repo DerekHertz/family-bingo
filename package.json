@@ -32,8 +32,6 @@
     "@supabase/supabase-js": "^2.112.0",
     "@tanstack/react-query": "^5.101.4",
     "expo": "~57.0.9",
-    "expo-auth-session": "~57.0.5",
-    "expo-constants": "~57.0.0",
     "expo-font": "~57.0.1",
     "expo-linking": "~57.0.0",
     "expo-router": "~57.0.9",

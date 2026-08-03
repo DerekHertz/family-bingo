@@ -28,6 +28,7 @@
   "include": [
     "src",
     "app",
+    "components",
     "theme",
     "lib",
     "*.ts",

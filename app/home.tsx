@@ -4,22 +4,27 @@
  * trip and gives sign-out somewhere to live.
  */
 
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { signOut } from '../lib/auth';
 import { useSession } from '../lib/session';
-import { text } from '../theme/fonts';
-import { color, space, type } from '../theme/tokens';
+import { styles } from '../theme/fonts';
+import { color, space } from '../theme/tokens';
 
 export default function Home() {
   const session = useSession();
   const router = useRouter();
 
+  // Signing out from here leaves this screen mounted for a frame. Without the guard it
+  // renders "You're in" to somebody who just left.
+  if (session === undefined) return <View style={{ flex: 1, backgroundColor: color.paper }} />;
+  if (session === null) return <Redirect href="/" />;
+
   return (
     <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, justifyContent: 'center' }}>
-      <Text style={{ ...text(type.title), color: color.ink }}>You&rsquo;re in</Text>
-      <Text style={{ ...text(type.body), color: color.ink2, marginTop: space.sm }}>
+      <Text style={{ ...styles.title, color: color.ink }}>You&rsquo;re in</Text>
+      <Text style={{ ...styles.body, color: color.ink2, marginTop: space.sm }}>
         {session?.user.email ?? 'Signed in'}
       </Text>
       <Button

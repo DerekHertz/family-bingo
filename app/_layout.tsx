@@ -19,12 +19,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { color } from '../theme/tokens';
 
-void SplashScreen.preventAutoHideAsync();
+// A rejection here is not worth crashing over: the splash simply hides on its own.
+SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function RootLayout() {
   // Bundled, never fetched (§8) — @expo-google-fonts ships the files and the OFL licence
   // in the package rather than pulling them at runtime.
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     ShipporiMincho_500Medium,
     ZenKakuGothicNew_400Regular,
     ZenKakuGothicNew_500Medium,
@@ -47,17 +48,27 @@ export default function RootLayout() {
       }),
   );
 
+  const ready = fontsLoaded || fontError !== null;
+
   useEffect(() => {
-    if (fontsLoaded) void SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    if (ready) SplashScreen.hideAsync().catch(() => undefined);
+  }, [ready]);
 
   // Holding the splash rather than rendering in a fallback face: the wordmark is Shippori
   // at 38pt, and the substitution would be the first thing anyone saw.
-  if (!fontsLoaded) return null;
+  //
+  // `fontError` is what stops that being forever. Without it a failed font load left
+  // `fontsLoaded` false permanently — a blank screen under a splash that never hid, and
+  // no way for the Member to tell it apart from a hang. A fallback face is a bad first
+  // impression; an app that never opens is worse.
+  if (!ready) return null;
 
   return (
     <QueryClientProvider client={queryClient}>
-      <StatusBar style="auto" />
+      {/* Not "auto": every ground in this app is `paper`, whatever the handset's scheme
+          is set to, so auto puts white glyphs on cream on a dark phone. Dark mode is
+          §1.2's job and is not wired up yet. */}
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.paper } }}
       />

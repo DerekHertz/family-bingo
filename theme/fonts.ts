@@ -1,3 +1,5 @@
+import { type } from './tokens';
+
 /**
  * The loaded font family names.
  *
@@ -32,3 +34,24 @@ export const text = <T extends { fontFamily: string; fontWeight?: string }>(toke
   const { fontWeight, ...rest } = token;
   return { ...rest, fontFamily: face(token.fontFamily, fontWeight) };
 };
+
+/**
+ * Every `type` token, pre-resolved. **Use these, not the raw tokens.**
+ *
+ * Spreading `type.body` directly is a silent bug: it carries the design system's family
+ * name (`ZenKakuGothicNew`), which is not a face the renderer has loaded, so the text
+ * falls back to the system font and nothing warns you. It shipped that way in the first
+ * button written against these tokens.
+ *
+ * `tokens.ts` stays a pure description of the design system (§1); this is the only place
+ * that knows what @expo-google-fonts actually registered.
+ */
+export const styles = {
+  display: text(type.display),
+  title: text(type.title),
+  cardHead: text(type.cardHead),
+  heading: text(type.heading),
+  body: text(type.body),
+  label: text(type.label),
+  meta: text(type.meta),
+} as const;

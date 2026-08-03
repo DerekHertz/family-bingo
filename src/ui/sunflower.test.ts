@@ -12,8 +12,11 @@ describe('petalsOf (§2)', () => {
   it('widens from budding to complete, which is the whole animation', () => {
     const budding = petalsOf(HEAD_SIZE.complete, PETAL_SPREAD.budding)[0]!;
     const complete = petalsOf(HEAD_SIZE.complete, PETAL_SPREAD.complete)[0]!;
-    expect(complete.width).toBeGreaterThan(budding.width);
-    expect(budding.width / complete.width).toBeCloseTo(26 / 32, 5);
+    // The ANGULAR extent grows. `width` is radial length and must not move, or the flower
+    // lengthens instead of opening.
+    expect(complete.height).toBeGreaterThan(budding.height);
+    expect(budding.height / complete.height).toBeCloseTo(26 / 32, 5);
+    expect(budding.width).toBe(complete.width);
   });
 
   it('scales every dimension with the head, so one component serves both sizes', () => {
@@ -21,6 +24,7 @@ describe('petalsOf (§2)', () => {
     const large = petalsOf(HEAD_SIZE.complete, PETAL_SPREAD.budding)[0]!;
     const ratio = HEAD_SIZE.complete / HEAD_SIZE.budding;
     expect(large.width / small.width).toBeCloseTo(ratio, 5);
+    expect(large.height / small.height).toBeCloseTo(ratio, 5);
     expect(large.offset / small.offset).toBeCloseTo(ratio, 5);
   });
 

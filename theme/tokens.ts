@@ -89,9 +89,12 @@ export const font = {
  * no labels, nothing a finger touches (§1.1).
  */
 export const type = {
-  display: { fontFamily: font.display, fontSize: 32, lineHeight: 38, letterSpacing: -0.3 },
-  title: { fontFamily: font.display, fontSize: 24, lineHeight: 30 },
-  cardHead: { fontFamily: font.display, fontSize: 19, lineHeight: 26 },
+  display: {
+    fontFamily: font.display, fontSize: 32, lineHeight: 38, fontWeight: '500',
+    letterSpacing: -0.3,
+  },
+  title: { fontFamily: font.display, fontSize: 24, lineHeight: 30, fontWeight: '500' },
+  cardHead: { fontFamily: font.display, fontSize: 19, lineHeight: 26, fontWeight: '500' },
   heading: { fontFamily: font.ui, fontSize: 19, lineHeight: 26, fontWeight: '700' },
   body: { fontFamily: font.ui, fontSize: 16, lineHeight: 24, fontWeight: '400' },
   label: { fontFamily: font.ui, fontSize: 14, lineHeight: 20, fontWeight: '500' },
@@ -107,6 +110,23 @@ export const type = {
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 20, xl: 28, xxl: 44 } as const;
 
+/**
+ * Sizes §4 states directly, so no screen has to invent them.
+ *
+ * `control` is the button and field height from §4's sign-in row; `minTouch` is §6 A3's
+ * floor and nothing may go under it. `stack` is the 10pt the three sign-in buttons sit
+ * apart. `wordmark` is the 38pt Shippori on that screen — the one display size not in the
+ * type scale, because it is used once.
+ */
+export const size = {
+  control: 52,
+  minTouch: 44,
+  stack: 10,
+  formWidth: 340,
+  proseWidth: 300,
+  wordmark: { fontSize: 38, lineHeight: 44 },
+} as const;
+
 /** Android takes tile 12 and sheet 28 (§1). */
 export const radius = { tile: 11, card: 12, sheet: 22, pill: 999 } as const;
 
@@ -116,11 +136,11 @@ export const radius = { tile: 11, card: 12, sheet: 22, pill: 999 } as const;
  * carry the reward and they are not motion.
  */
 export const motion = {
-  tap: { duration: 120 },
-  grow: { duration: 320 },
-  complete: { duration: 520 },
-  lineStep: { duration: 60 },
-  reduced: { duration: 150 },
+  tap: { duration: 120, easing: 'ease-out' },
+  grow: { duration: 320, easing: 'cubic-bezier(.2,.8,.2,1)' },
+  complete: { duration: 520, easing: 'cubic-bezier(.2,.8,.2,1)' },
+  lineStep: { duration: 60, easing: 'linear' },
+  reduced: { duration: 150, easing: 'linear' },
 } as const;
 
 /** The board never scrolls, never shrinks, never paginates (§3, `<Board>`). */
