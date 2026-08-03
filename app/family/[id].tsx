@@ -23,6 +23,7 @@ import {
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import { SeatPips } from '../../components/SeatPips';
+import { useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
 import {
   SEATS,
@@ -34,6 +35,7 @@ import { useRemoveManagedMember } from '../../lib/queries/managed';
 import { useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
 import { openableYear, sealCopy } from '../../src/domain/year';
+import { draftProgress } from '../../src/domain/goal';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -96,6 +98,12 @@ export default function FamilyRoster() {
     allYears[0];
   const taken = members.length + open.length;
   const full = taken >= SEATS;
+
+  // Slice 6's way in. Every Board in the current Year the caller may author on: their own,
+  // plus one per Managed Member they guard (§4.2). The query filters to controlled Members
+  // itself — `boards_read` is Family-wide, so an unfiltered list would offer links to
+  // Boards write_goal() refuses.
+  const myBoards = useMyBoards(current?.id, session?.user.id);
 
   if (roster.isPending || families.isPending) {
     return (
@@ -200,6 +208,40 @@ export default function FamilyRoster() {
           </Text>
         </View>
       )}
+
+      {/* The way onto a Board (§6). One row per Member the caller may author for, which is
+          themselves plus any child they guard — a Guardian authoring for a Managed Member
+          is the normal case, not an administrative one (§4.2). */}
+      {(myBoards.data ?? []).map((b) => (
+        <Pressable
+          key={b.id}
+          accessibilityRole="button"
+          accessibilityLabel={`${b.memberName}: ${draftProgress(b.written)} goals written`}
+          accessibilityHint="Opens the drafting table"
+          onPress={() => router.push({ pathname: '/board/[id]', params: { id: b.id } })}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.md,
+            marginTop: space.md,
+            padding: space.md,
+            minHeight: size.minTouch,
+            backgroundColor: color.paperRaised,
+            borderRadius: radius.card,
+            borderWidth: 1,
+            borderColor: color.hairline,
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <Avatar name={b.memberName} managed={b.isManaged} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...styles.body, color: color.ink }}>{b.memberName}</Text>
+            <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xs }}>
+              {b.sealedAt === null ? draftProgress(b.written) : 'sealed'}
+            </Text>
+          </View>
+        </Pressable>
+      ))}
 
       {/* Gated on the Years having loaded, or the button flashes for a Family that already
           has that Year and races straight into a PT409. */}

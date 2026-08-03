@@ -27,7 +27,9 @@ describe('resolved styles (§1)', () => {
     expect(styles.display.fontFamily).toBe(loaded.display);
     expect(styles.title.fontFamily).toBe(loaded.display);
     expect(styles.cardHead.fontFamily).toBe(loaded.display);
-    for (const key of ['heading', 'body', 'label', 'meta'] as const) {
+    // `compose` is the goal field (§4.1) and is the one most likely to be "improved" into
+    // the display face — it is the largest text on its screen, and it is still a control.
+    for (const key of ['heading', 'body', 'compose', 'label', 'meta', 'code', 'index'] as const) {
       expect(styles[key].fontFamily).not.toBe(loaded.display);
     }
   });
