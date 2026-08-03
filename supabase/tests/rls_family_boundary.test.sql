@@ -102,8 +102,13 @@ insert into revisions (board_id, tile_id, before_text, before_target, after_text
 
 insert into wrapped (id, year_id) values
   ('00000000-0000-4000-8000-0000000000da', '00000000-0000-4000-8000-0000000000d1');
-insert into wrapped_member_cards (wrapped_id, member_id) values
-  ('00000000-0000-4000-8000-0000000000da', '00000000-0000-4000-8000-0000000000e1');
+-- `stats` carries the keys stats_has_the_cards requires: §8.2 says encode the card shape
+-- as a constraint rather than a convention, so a fixture has to be a real card.
+insert into wrapped_member_cards (wrapped_id, member_id, stats) values
+  ('00000000-0000-4000-8000-0000000000da', '00000000-0000-4000-8000-0000000000e1',
+   '{"tiles_completed": 0, "lines_completed": 0, "blackout": false, "increments": 0,
+     "biggest_month": null, "longest_goal_span_days": null, "notes": 0, "photos": 0,
+     "swaps_used": 0, "most_exceeded": null}'::jsonb);
 insert into wrapped_awards (wrapped_id, member_id, axis, label) values
   ('00000000-0000-4000-8000-0000000000da', '00000000-0000-4000-8000-0000000000e1',
    'most_notes', 'Most Notes Written');

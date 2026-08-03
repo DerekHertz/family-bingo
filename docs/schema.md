@@ -595,7 +595,30 @@ CREATE INDEX ON revisions (created_at DESC);              -- the Feed
 CREATE INDEX ON members (family_id, joined_at DESC);      -- the Feed
 CREATE INDEX ON votes (year_id, resolved_at DESC) WHERE resolved_at IS NOT NULL;  -- the Feed
 CREATE INDEX ON invitations (token_hash) WHERE used_at IS NULL AND revoked_at IS NULL;
+
+-- The outboxes (§15, §16.6, §19). Each is a work queue drained by an Edge Function, so
+-- each is indexed on the predicate that finds the undone work.
+CREATE INDEX ON notifications (created_at) WHERE sent_at IS NULL AND failed_at IS NULL;
+CREATE INDEX ON notifications (account_id, created_at DESC);
+CREATE INDEX ON orphaned_objects (orphaned_at) WHERE reaped_at IS NULL;
+CREATE INDEX ON digests (year_id, week_start DESC);
 ```
+
+### 7.1 Tables that are queues, not history
+
+Three tables exist to be drained rather than read: `notifications` (§15), `orphaned_objects`
+(§16.6) and `digests` (§19). The first two carry **no policy and no grant to
+`authenticated`** — RLS is enabled and matches nothing, which is how the schema says
+"service role only". A Member sees what happened in the Feed (§14), never in a delivery
+queue; and a list of recently deleted photo paths is nobody's business but the reaper's.
+
+`digests` is the exception among them: it holds the Family's own week, so it is
+Family-readable like anything else the Family did.
+
+The service role's grants are **column-scoped** where it writes (`20260801000029`), for the
+same reason `members` is: a row-level policy cannot see which columns an UPDATE touched, and
+a service that could rewrite `notifications.kind` or `account_id` would be deciding what a
+Family gets interrupted for.
 
 The Feed reads from five tables, so five of these carry it — one per branch of the view,
 each on the column that branch contributes to `feed.created_at`.

@@ -26,7 +26,7 @@ interface StatsRow {
   member_id: string;
   increments: number;
   biggest_month_increments: number;
-  worst_month_increments: number;
+  comeback_delta: number | null;
   median_gap_days: number | null;
   longest_goal_span_days: number | null;
   photos: number;
@@ -44,12 +44,14 @@ const toStats = (row: StatsRow): MemberYearStats => ({
   medianGapDays: row.median_gap_days === null ? null : Number(row.median_gap_days),
   longestGoalSpanDays:
     row.longest_goal_span_days === null ? null : Number(row.longest_goal_span_days),
-  // Best month minus worst. A Member with one month of activity has no comeback to speak
-  // of, and the axis should not reach them rather than reaching them with a zero.
+  // Computed in SQL now. It used to be synthesised here from best-minus-worst, which put
+  // an Award's own input outside the materialized Wrapped that §20.2 froze so it would be
+  // reproducible — and read "worst" as the quietest ACTIVE month, so a Member idle from
+  // February to November had their comeback understated to nothing.
   comebackDelta:
-    Number(row.biggest_month_increments) > Number(row.worst_month_increments)
-      ? Number(row.biggest_month_increments) - Number(row.worst_month_increments)
-      : null,
+    row.comeback_delta === null || Number(row.comeback_delta) <= 0
+      ? null
+      : Number(row.comeback_delta),
   photos: Number(row.photos),
   notes: Number(row.notes),
   firstBingoAt: row.first_bingo_at === null ? null : new Date(row.first_bingo_at),
@@ -61,6 +63,10 @@ const toStats = (row: StatsRow): MemberYearStats => ({
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response('method not allowed', { status: 405 });
+  }
+
+  if (req.headers.get('Authorization') === null) {
+    return new Response('unauthorized', { status: 401 });
   }
 
   const db = createClient(

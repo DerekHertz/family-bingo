@@ -35,7 +35,7 @@ graph TB
     Q -->|"upsert on client UUID"| PG
     UI -->|"invoke"| SHARP
     SHARP -->|"API key never leaves here"| ANTH
-    PG -->|"Milestone insert"| PUSH
+    PG -->|"notifications insert"| PUSH
     PUSH --> APNS
     CRON -->|"seal · freeze · expire"| PG
     CRON --> DIG
@@ -59,7 +59,7 @@ other Family. Everything else is plumbing.
 | Log an Increment | **PostgREST** upsert on client UUID | Idempotent by construction — makes the offline queue safe |
 | Multi-step writes (create Family, open Year, seal, Swap) | **Postgres RPC** (`SECURITY INVOKER`) | Atomic and RLS-respecting |
 | Sharpening | **Edge Function** | The Claude API key cannot ship in a mobile app |
-| Push fan-out | **Edge Function** on Milestone insert | Needs Expo Push credentials |
+| Push fan-out | **Edge Function** draining the `notifications` outbox | Needs Expo Push credentials; who to notify is decided in SQL (§6.1) |
 | Seal, freeze, expire, digest | **`pg_cron`** | Time-driven, no client involved |
 | Photos | **Storage** + short-TTL signed URLs | Private bucket, Family-scoped path |
 
@@ -132,6 +132,10 @@ with no Year at all, so filtering by Year loses nothing.
 | `finalize_wrapped(year_id, awards)` | Writes the Awards from `assignAwards()` and pushes every Member at once (§20.3) | `wrap` Edge Function; refuses a Wrapped that leaves a Member out (§20.7) |
 
 ### 2.2 Edge Functions
+
+Every one requires an `Authorization` header. They run as `service_role` and each of them
+can change what a Family sees — marking the outbox sent, deleting photographs — so none of
+them is an open POST.
 
 | Function | Trigger | Notes |
 |---|---|---|
@@ -293,11 +297,14 @@ POST /rest/v1/increments
 Prefer: resolution=ignore-duplicates
 ```
 
-**Not the default.** PostgREST resolves an upsert with `merge-duplicates` unless told
-otherwise, and that is an `UPDATE` — which returns **403** here, because §11.3 makes the
-log append-only and there is no UPDATE grant to fall back on. A queue built on the default
-would work against any table someone had granted UPDATE on and fail the first time it
-retried against this one.
+**The header is what makes it an upsert at all.** Without a `Prefer: resolution=…`,
+PostgREST issues a plain `INSERT` and a replayed tap returns **409** on the primary key.
+With `resolution=merge-duplicates` — the resolution PostgREST uses when asked to merge —
+it issues an `UPDATE`, which returns **403** here, because §11.3 makes the log append-only
+and there is no UPDATE grant to fall back on.
+
+Only `ignore-duplicates` gives the queue what §17.4 describes: a replay that is a silent
+no-op. Both failure modes are asserted in `supabase/tests/integration/offline_sync.test.ts`.
 
 **Two failures the queue must tell apart**, because §17.2 retries on reconnect forever and
 one of these never succeeds:
@@ -336,6 +343,11 @@ flowchart LR
 | Tile completed | 144/yr | ~1 per 2.5 days ✅ |
 | Bingo | ~12/yr | An event ✅ |
 | Blackout | 0–2/yr | Everyone should hear ✅ |
+
+Device tokens are pruned only on Expo's `DeviceNotRegistered` — the app is gone and the
+token is not coming back. Any other delivery failure is retried, and an Account with no
+registered device is marked sent rather than retried: declining notifications is not an
+error.
 
 Notification permission is a **one-way door**: once someone disables it at the OS level,
 the app cannot win them back. Do not spend it on `+1 walk`.
