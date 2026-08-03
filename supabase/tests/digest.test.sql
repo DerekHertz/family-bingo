@@ -12,7 +12,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(32);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -119,8 +119,13 @@ delete from notifications;
 select set_config('role', 'postgres', true);
 update members set digest_opt_in = true where display_name = 'Alice';
 
+-- A window genuinely before anything happened. The Family's own founding — Members
+-- arriving, the Center Vote resolving — is activity, and lands in the current week; a
+-- test that used this week for "nothing happened" would be asserting against a week that
+-- was not empty.
 select act_as_cron();
-select is(build_and_send_digest(year_of('Hertzell Family'), this_week(), week_end()), 0,
+select is(build_and_send_digest(year_of('Hertzell Family'),
+                                now() - interval '21 days', now() - interval '14 days'), 0,
   'a week with no activity sends nothing at all (§19.3)');
 select is((select count(*)::int from digests), 0,
   'and builds no Digest to send — the row is not created either');
@@ -237,8 +242,42 @@ select is(digests_for('00000000-0000-4000-8000-0000000000a1'), 1,
 
 -- A different week is a different Digest.
 select is(build_and_send_digest(year_of('Hertzell Family'),
-                                this_week() - interval '7 days', this_week()), 0,
-  'the week before had no activity, so it still sends nothing');
+                                now() - interval '21 days', now() - interval '14 days'), 0,
+  'a week before the Family existed still sends nothing');
+
+-- ---------------------------------------------------------------------------------
+-- §19.2, §19.3 — "activity" is the Feed, not just Increments
+-- ---------------------------------------------------------------------------------
+--
+-- CONTEXT.md: a Digest is "a weekly summary of the Family's Feed", and the Feed is "every
+-- Increment, Milestone, Swap, vote outcome and Member arriving". A week in which somebody
+-- swapped a Goal and nothing else is exactly the week a quiet Family wants to hear about.
+
+select set_config('role', 'postgres', true);
+delete from digests;
+delete from notifications;
+create temporary table quiet_window (starts timestamptz, ends timestamptz);
+insert into quiet_window
+  values (now() - interval '40 days', now() - interval '33 days');
+
+select act_as_cron();
+select is(build_and_send_digest(year_of('Hertzell Family'),
+                                (select starts from quiet_window),
+                                (select ends from quiet_window)), 0,
+  'a window with nothing in it sends nothing');
+
+select set_config('role', 'postgres', true);
+insert into revisions (board_id, tile_id, before_text, before_target,
+                       after_text, after_target, created_at)
+  select b.id, tile_of('Alice', 1), 'One', 1, 'One, differently', 1,
+         (select starts from quiet_window) + interval '1 day'
+    from boards b where b.member_id = member_of('Alice');
+
+select act_as_cron();
+select is(build_and_send_digest(year_of('Hertzell Family'),
+                                (select starts from quiet_window),
+                                (select ends from quiet_window)), 1,
+  'but a week whose only news is a Swap is still news (§19.3)');
 
 -- ---------------------------------------------------------------------------------
 -- Opting out, and opting in

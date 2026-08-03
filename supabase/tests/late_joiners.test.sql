@@ -13,7 +13,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(42);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -233,6 +233,18 @@ select is((select count(*)::int from milestones m
               and m.member_id = member_of('Carol')), 1,
   'and Carol''s Centre completes with everyone else''s — the §12.3 hole is closed');
 
+-- §15.5, and the case that made the rule insufficient as written. Alice marked it done;
+-- every OTHER Board's Tile 12 completes with a different subject, and excluding only the
+-- subject's own Account left Alice being pushed N-1 times about a Milestone her own thumb
+-- caused. The actor is auth.uid(), and it is excluded everywhere.
+select is((select count(*)::int from notifications n
+            where n.kind = 'tile_completed'
+              and n.account_id = '00000000-0000-4000-8000-0000000000a1'), 0,
+  'and the Member who marked it done is pushed none of it (§15.5)');
+select cmp_ok((select count(*)::int from notifications n
+                where n.kind = 'tile_completed'), '>', 0,
+  'while the rest of the Family is told');
+
 select is((select count(*)::int from milestones m
             where m.year_id = year_of('Hertzell Family') and m.type = 'tile_completed'), 3,
   'one Milestone each, across all three Members');
@@ -307,6 +319,42 @@ select act_as_cron();
 select is((select count(*)::int from boards b
             where b.member_id = '00000000-0000-4000-8000-0000000000e9'), 0,
   'but gets no Board — a frozen Year is permanent history, not somewhere to start (§20.1)');
+
+-- ---------------------------------------------------------------------------------
+-- §21.3 — the SQL copy agrees with the TypeScript one
+-- ---------------------------------------------------------------------------------
+--
+-- schema.md §5: where a computation exists in both languages, a test asserting the same
+-- value on both sides is the only thing holding them together. These are the fixtures
+-- from remainingYearFraction's own tests in src/domain/setup-window.test.ts, to the
+-- instant, so the two files fail together or not at all.
+
+select act_as_cron();
+insert into families (id, name, timezone) values
+  ('00000000-0000-4000-8000-0000000000fc', 'Parity Family', 'UTC');
+insert into years (id, family_id, calendar_year, status, setup_deadline) values
+  ('00000000-0000-4000-8000-0000000000fd', '00000000-0000-4000-8000-0000000000fc',
+   2027, 'setup', '2027-01-01T00:00:00Z');
+
+select is(
+  remaining_year_fraction('00000000-0000-4000-8000-0000000000fd',
+                          '2027-01-01T00:00:00Z'::timestamptz),
+  1::numeric, 'is 1 at the very start of the Year');
+
+select is(
+  remaining_year_fraction('00000000-0000-4000-8000-0000000000fd',
+                          '2026-12-01T00:00:00Z'::timestamptz),
+  1::numeric, 'is 1 before the Year begins, so Setup Window targets are full-year');
+
+select is(
+  remaining_year_fraction('00000000-0000-4000-8000-0000000000fd',
+                          '2028-01-01T00:00:00Z'::timestamptz),
+  0::numeric, 'is 0 once the Year has ended');
+
+select ok(
+  remaining_year_fraction('00000000-0000-4000-8000-0000000000fd',
+                          '2027-07-02T12:00:00Z'::timestamptz) between 0.49 and 0.51,
+  'and is about half at the start of July — the same instant the TypeScript test uses');
 
 select * from finish();
 rollback;

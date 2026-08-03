@@ -300,9 +300,12 @@ select is(queued_for('00000000-0000-4000-8000-0000000000a3', 'setup_closing'), 1
 -- A notification is addressed to one Account
 -- ---------------------------------------------------------------------------------
 
+-- The outbox is a delivery queue, not shared history. No client reads it at all: the
+-- Feed is where a Member sees what happened (§14.2), and a read grant here was surface
+-- with nothing behind it.
 select act_as('00000000-0000-4000-8000-0000000000a2');
-select is((select count(*)::int from notifications), 0,
-  'Bob sees none of the Okonkwo Family''s outbox — and none of his own Family''s here');
+select throws_ok($$select count(*) from notifications$$, '42501', null,
+  'no client reads the outbox — not even their own rows');
 
 select throws_ok($$
   insert into notifications (account_id, family_id, kind)

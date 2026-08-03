@@ -58,7 +58,7 @@ create policy digests_read on digests for select to authenticated
   using (family_id in (select visible_family_ids()));
 
 grant select on digests to authenticated;
--- The `digest` Edge Function reads it to render the push.
+-- `notify` reads it to render the push. There is no separate digest sender.
 grant select on digests to service_role;
 
 create index digests_year_week_idx on digests (year_id, week_start desc);
