@@ -1,4 +1,14 @@
--- Both halves of the Edge Function wiring come from Vault.
+-- Both halves of the Edge Function wiring come from Vault, and pg_net is made explicit.
+--
+-- pg_net was never created by a migration. The local stack enables it by default and the
+-- hosted project does not, so every reference to net.http_post in migrations 29 and 30
+-- was resolving only by luck of the environment — and only *seeming* to work, because
+-- invoke_edge_function() returns early when Vault is unset and so never reached the call.
+-- Configuring the secrets would have turned every cron job into a runtime error at once.
+--
+-- Extensions are idempotent, so this is safe on a database that already has it.
+create extension if not exists pg_net;
+
 --
 -- `alter database postgres set app.settings.functions_url = ...` is denied on Supabase:
 -- the role the SQL editor runs as is not superuser, and ALTER DATABASE ... SET needs to
@@ -61,13 +71,20 @@ $$;
 --
 -- This is the one query to run after configuring a project. It answers the three
 -- questions in order — is it configured, did a request go out, what did the function say.
+--
+-- plpgsql with a to_regclass guard rather than plain SQL: a `language sql` body has its
+-- table references resolved when the function is CREATED, so naming net._http_response
+-- directly makes this migration fail outright on any database where pg_net is absent —
+-- which is exactly the situation it exists to diagnose.
 create or replace function edge_wiring_status()
 returns table (check_name text, status text, detail text)
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public, extensions, net, vault
-as $$
+as $fn$
+begin
+  return query
   select 'functions_url' as check_name,
          case when exists (select 1 from vault.decrypted_secrets where name = 'functions_url')
               then 'set' else 'MISSING' end,
@@ -91,16 +108,28 @@ as $$
                    from vault.decrypted_secrets where name = 'service_role_key' limit 1),
                   'add it to Vault')
   union all
-  select 'last request',
-         case when (select count(*) from net._http_response) = 0 then 'NONE SENT'
-              when (select status_code from net._http_response
-                     order by created desc limit 1) between 200 and 299 then 'ok'
-              else 'FAILED' end,
-         coalesce((select 'HTTP ' || coalesce(status_code::text, 'no response') ||
-                          coalesce(' — ' || left(error_msg, 120), '')
-                     from net._http_response order by created desc limit 1),
-                  'call invoke_edge_function(''notify'') to send one')
-$$;
+  select 'pg_net',
+         case when to_regclass('net._http_response') is null then 'MISSING' else 'set' end,
+         case when to_regclass('net._http_response') is null
+              then 'extension absent — no request can leave the database'
+              else 'installed' end;
+
+  -- Read dynamically for the same reason the function is plpgsql at all.
+  if to_regclass('net._http_response') is not null then
+    return query execute $q$
+      select 'last request',
+             case when (select count(*) from net._http_response) = 0 then 'NONE SENT'
+                  when (select status_code from net._http_response
+                         order by created desc limit 1) between 200 and 299 then 'ok'
+                  else 'FAILED' end,
+             coalesce((select 'HTTP ' || coalesce(status_code::text, 'no response') ||
+                              coalesce(' — ' || left(error_msg, 120), '')
+                         from net._http_response order by created desc limit 1),
+                      'call invoke_edge_function(`notify`) to send one')
+    $q$;
+  end if;
+end;
+$fn$;
 
 comment on function edge_wiring_status() is
   'Run after configuring a project. Every failure in this pipeline is silent — an unset '
