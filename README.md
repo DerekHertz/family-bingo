@@ -43,6 +43,55 @@ npm run test:integration  # HTTP, against the running stack (needs db:start)
 Expo (React Native) + TypeScript · Supabase (Postgres + Auth + Storage + Edge Functions +
 `pg_cron`) · `claude-opus-5` for goal Sharpening.
 
+## Deploying to a Supabase project
+
+Four steps, and only the first three need a human. Run them once per project.
+
+```sh
+supabase login                      # opens a browser
+supabase link --project-ref <ref>   # the subdomain of your project URL
+supabase db push                    # applies every migration in supabase/migrations
+supabase functions deploy           # notify · reap-attachments · sharpen · wrap
+```
+
+**1. The Claude API key** is an *Edge Function secret*, not a shell variable — a local
+`export` is invisible to a deployed function:
+
+```sh
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**2. The service role key goes in Vault**, not in a database setting. It bypasses RLS
+entirely, and a setting is readable by anyone who can query `pg_settings`. In the SQL
+editor:
+
+```sql
+select vault.create_secret('<service-role-key>', 'service_role_key');
+```
+
+**3. The functions URL** is not a secret, so it is an ordinary setting:
+
+```sql
+alter database postgres
+  set app.settings.functions_url = 'https://<ref>.supabase.co/functions/v1';
+```
+
+Until 2 and 3 are set, `invoke_edge_function()` returns quietly and **the cron-driven
+functions do nothing** — deliberately, so local development and tests stay green without a
+live project behind them.
+
+**4. Nothing to do.** The Database Webhook that drains the push outbox within seconds is
+a trigger in `20260801000030_edge_invocation.sql`, applied by `db push`. Do not also
+create one in the dashboard — you would get two.
+
+### Checking it works
+
+```sql
+select jobname, schedule from cron.job;      -- 5 jobs: seal, digest, freeze, reap, drain
+select invoke_edge_function('notify');       -- non-null request id once 2 and 3 are set
+select * from net._http_response order by created desc limit 5;
+```
+
 ## Working on this
 
 **Test-first, one vertical slice at a time.** Each slice in the PRD cuts through the whole
