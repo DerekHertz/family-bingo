@@ -35,7 +35,7 @@ graph TB
     Q -->|"upsert on client UUID"| PG
     UI -->|"invoke"| SHARP
     SHARP -->|"API key never leaves here"| ANTH
-    PG -->|"Milestone insert"| PUSH
+    PG -->|"notifications insert"| PUSH
     PUSH --> APNS
     CRON -->|"seal · freeze · expire"| PG
     CRON --> DIG
@@ -59,7 +59,7 @@ other Family. Everything else is plumbing.
 | Log an Increment | **PostgREST** upsert on client UUID | Idempotent by construction — makes the offline queue safe |
 | Multi-step writes (create Family, open Year, seal, Swap) | **Postgres RPC** (`SECURITY INVOKER`) | Atomic and RLS-respecting |
 | Sharpening | **Edge Function** | The Claude API key cannot ship in a mobile app |
-| Push fan-out | **Edge Function** on Milestone insert | Needs Expo Push credentials |
+| Push fan-out | **Edge Function** draining the `notifications` outbox | Needs Expo Push credentials; who to notify is decided in SQL (§6.1) |
 | Seal, freeze, expire, digest | **`pg_cron`** | Time-driven, no client involved |
 | Photos | **Storage** + short-TTL signed URLs | Private bucket, Family-scoped path |
 
@@ -114,7 +114,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `create_family(name, timezone)` | Family + Organizer Member, one transaction | Authenticated |
 | `create_invitation(family_id)` | Single-use token, 7-day expiry | Organizer only |
 | `redeem_invitation(token)` | Member at `status = 'pending'` | Valid, unused, unexpired |
-| `approve_member(member_id)` | `pending → active` | Organizer only |
+| `approve_member(member_id)` | `pending → active`, stamps `joined_at`, and deals a Board if the Year is already under way (§21) | Organizer only |
 | `create_managed_member(family_id, name)` | Member with `guardian_account_id` | Active adult Member |
 | `open_year(family_id, calendar_year)` | Year + Boards + 25 Tiles each + both Votes | Organizer, no Year exists |
 | `write_goal(tile_id, text, target, …)` | Authors or edits a Tile's Goal | Own Board, draft — plus the one §9.5 write |
@@ -124,6 +124,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `resolve_center_vote(year_id)` | Resolves both Votes, applies §8.3 / §9.3 fallbacks | `pg_cron` or Organizer, Setup Window closed |
 | `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent |
 | `seal_due_boards()` | The sweep: every Year past its deadline, then §21.1 stragglers | `pg_cron` |
+| `remaining_year_fraction(target_year_id)` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
 | `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
@@ -131,6 +132,10 @@ with no Year at all, so filtering by Year loses nothing.
 | `finalize_wrapped(year_id, awards)` | Writes the Awards from `assignAwards()` and pushes every Member at once (§20.3) | `wrap` Edge Function; refuses a Wrapped that leaves a Member out (§20.7) |
 
 ### 2.2 Edge Functions
+
+Every one requires an `Authorization` header. They run as `service_role` and each of them
+can change what a Family sees — marking the outbox sent, deleting photographs — so none of
+them is an open POST.
 
 | Function | Trigger | Notes |
 |---|---|---|
@@ -292,11 +297,14 @@ POST /rest/v1/increments
 Prefer: resolution=ignore-duplicates
 ```
 
-**Not the default.** PostgREST resolves an upsert with `merge-duplicates` unless told
-otherwise, and that is an `UPDATE` — which returns **403** here, because §11.3 makes the
-log append-only and there is no UPDATE grant to fall back on. A queue built on the default
-would work against any table someone had granted UPDATE on and fail the first time it
-retried against this one.
+**The header is what makes it an upsert at all.** Without a `Prefer: resolution=…`,
+PostgREST issues a plain `INSERT` and a replayed tap returns **409** on the primary key.
+With `resolution=merge-duplicates` — the resolution PostgREST uses when asked to merge —
+it issues an `UPDATE`, which returns **403** here, because §11.3 makes the log append-only
+and there is no UPDATE grant to fall back on.
+
+Only `ignore-duplicates` gives the queue what §17.4 describes: a replay that is a silent
+no-op. Both failure modes are asserted in `supabase/tests/integration/offline_sync.test.ts`.
 
 **Two failures the queue must tell apart**, because §17.2 retries on reconnect forever and
 one of these never succeeds:
@@ -335,6 +343,11 @@ flowchart LR
 | Tile completed | 144/yr | ~1 per 2.5 days ✅ |
 | Bingo | ~12/yr | An event ✅ |
 | Blackout | 0–2/yr | Everyone should hear ✅ |
+
+Device tokens are pruned only on Expo's `DeviceNotRegistered` — the app is gone and the
+token is not coming back. Any other delivery failure is retried, and an Account with no
+registered device is marked sent rather than retried: declining notifications is not an
+error.
 
 Notification permission is a **one-way door**: once someone disables it at the OS level,
 the app cannot win them back. Do not spend it on `+1 walk`.

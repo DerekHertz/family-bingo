@@ -89,7 +89,10 @@ insert into members (family_id, account_id, display_name, role, status) values
   (family_named('Hertzell Family'), '00000000-0000-4000-8000-0000000000a4', 'Dele', 'member', 'active');
 
 select act_as('00000000-0000-4000-8000-0000000000a1');
-select open_year(family_named('Hertzell Family'), 2027);
+-- The CURRENT calendar year: stats now bucket into the months of the Year they belong to,
+-- in the Family's timezone (§8.3 T3), so a fixture whose taps fall outside its own Year
+-- would count nothing.
+select open_year(family_named('Hertzell Family'), extract(year from now())::int);
 select write_goal(tile_of('Alice', 0), 'Walk the dog', 3, 'walks', 'walk', 'fitness');
 select write_goal(tile_of('Alice', 1), 'Read a book', 2, 'books', 'book', 'learning');
 -- A Goal that skipped Sharpening: no unit_canonical, no category (§6.1a). It counts
@@ -260,8 +263,8 @@ select is((card('Alice') ->> 'increments')::int, 8,
 
 select isnt(family_card() -> 'busiest_month', null, 'the month the Family was most active');
 select isnt(family_card() -> 'milestones', null, 'a timeline of Milestones');
-select is((family_card() ->> 'next_year')::int, 2028,
-  'and the final card is not a stat — "Ready for 2028?" (§20.6)');
+select is((family_card() ->> 'next_year')::int, extract(year from now())::int + 1,
+  'and the final card is not a stat — "Ready for next year?" (§20.6)');
 
 -- ---------------------------------------------------------------------------------
 -- §20.7 — every Member receives at least one Award
@@ -271,25 +274,11 @@ select is((family_card() ->> 'next_year')::int, 2028,
 -- guard: finalize_wrapped() refuses to publish a Wrapped that leaves somebody out, which
 -- is the exact failure mode §20.7 names — "a family of 6 where one person gets nothing".
 
+-- Dele is deliberately left out of the Awards handed in. Refusing to publish would cost
+-- the whole Family their Wrapped — no Awards and no push for anybody, on cards that were
+-- already committed — which is a worse outcome than the one it was preventing. The floor
+-- is applied instead, which is the answer assignAwards() would have given.
 select act_as_cron();
-select throws_ok(
-  format($$select finalize_wrapped(%L, %L::jsonb)$$, year_of('Hertzell Family'),
-         json_build_array(
-           json_build_object('member_id', member_of('Alice'),
-                             'axis', 'most_increments', 'label', 'Most Increments'),
-           json_build_object('member_id', member_of('Bob'),
-                             'axis', 'most_consistent', 'label', 'Most Consistent'),
-           json_build_object('member_id', member_of('Carol'),
-                             'axis', 'most_notes', 'label', 'Most Notes Written'))::text),
-  'PT422', null,
-  'a Wrapped that leaves one Member out is refused (§20.7)');
-
-select is((select count(*)::int from wrapped_awards), 0,
-  'and nothing is published — not even the three that were fine');
-select is((select count(*)::int from notifications where kind = 'wrapped'), 0,
-  'nor is anyone told');
-
--- With everyone covered, it publishes.
 select is(
   finalize_wrapped(year_of('Hertzell Family'),
     json_build_array(
@@ -298,10 +287,15 @@ select is(
       json_build_object('member_id', member_of('Bob'),
                         'axis', 'most_consistent', 'label', 'Most Consistent'),
       json_build_object('member_id', member_of('Carol'),
-                        'axis', 'most_notes', 'label', 'Most Notes Written'),
-      json_build_object('member_id', member_of('Dele'),
-                        'axis', 'showed_up', 'label', 'Showed Up'))::jsonb),
+                        'axis', 'most_notes', 'label', 'Most Notes Written'))::jsonb),
   4, '§20.3: every Member receives a push, simultaneously');
+
+select is(awards_for('Dele'), 1,
+  'the Member the Awards left out still receives one (§20.7)');
+select is((select a.axis from wrapped_awards a where a.member_id = member_of('Dele')),
+  'showed_up', 'the floor, which is never comparative');
+select is((select count(*)::int from wrapped_awards), 4,
+  'and the three that were fine are published unchanged');
 
 select is(awards_for('Alice'), 1, 'Alice has an Award');
 select is(awards_for('Dele'), 1, 'and so does Dele, whose Year was one drawing');

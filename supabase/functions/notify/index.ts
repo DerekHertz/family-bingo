@@ -113,6 +113,13 @@ Deno.serve(async (req) => {
     return new Response('method not allowed', { status: 405 });
   }
 
+  // An open POST here would let anyone mark the outbox sent, which is a silent way to
+  // stop a Family being notified of anything. `sharpen` checks for a bearer token and so
+  // does this; the caller is pg_cron or a Database Webhook, both of which send one.
+  if (req.headers.get('Authorization') === null) {
+    return new Response('unauthorized', { status: 401 });
+  }
+
   // Service role: this reads across every Family by design. It is the one component that
   // does, which is why it is a server function with no client path to it (ADR-0004).
   const db = createClient(
@@ -217,9 +224,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // A row that reached at least one device counts as delivered. Partial success on a
-  // Member with two phones is not worth a duplicate push to the one that worked.
-  for (const id of failed) stamped.delete(id);
+  // A row that reached at least one device counts as delivered, and the code used to say
+  // the opposite of its comment: un-stamping on any failure meant the next drain re-pushed
+  // to the phone that had already received it. Partial success on a Member with two
+  // devices is not worth a duplicate push to the one that worked (§15.3).
+  for (const id of stamped) failed.delete(id);
 
   if (stamped.size > 0) {
     await db.from('notifications')

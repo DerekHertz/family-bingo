@@ -34,6 +34,12 @@ Deno.serve(async (req) => {
     return new Response('method not allowed', { status: 405 });
   }
 
+  // Deleting photographs of children is not something an unauthenticated caller gets to
+  // trigger, however idempotent it is (ADR-0005).
+  if (req.headers.get('Authorization') === null) {
+    return new Response('unauthorized', { status: 401 });
+  }
+
   const db = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
