@@ -3,7 +3,7 @@ import { FAMILY_NAME, familyNameProblem } from './family';
 
 describe('familyNameProblem (§2.3)', () => {
   it('accepts an ordinary name', () => {
-    expect(familyNameProblem('Hertzell Family')).toBeNull();
+    expect(familyNameProblem('Smith Family')).toBeNull();
   });
 
   it('rejects nothing at all, and whitespace that amounts to nothing', () => {

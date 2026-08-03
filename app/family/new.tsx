@@ -82,7 +82,7 @@ export default function NewFamily() {
           value={name}
           onChangeText={setName}
           onSubmitEditing={submit}
-          placeholder="The Hertzell Family"
+          placeholder="The Smith Family"
           placeholderTextColor={color.ink3}
           maxLength={FAMILY_NAME.max}
           autoFocus
