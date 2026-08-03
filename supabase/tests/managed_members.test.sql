@@ -171,8 +171,11 @@ insert into increments (id, tile_id, member_id) values
   ('00000000-0000-4000-8000-0000000000c1',
    (select id from tiles where board_id = '00000000-0000-4000-8000-0000000000b1' and position = 0),
    (select id from members where display_name = 'Theo'));
-insert into attachments (increment_id, storage_path) values
-  ('00000000-0000-4000-8000-0000000000c1', 'f/c1.jpg');
+-- {family_id}/{increment_id} — the only shape enforce_attachment_path() accepts (§16.2).
+insert into attachments (increment_id, storage_path)
+  select '00000000-0000-4000-8000-0000000000c1',
+         m.family_id || '/00000000-0000-4000-8000-0000000000c1.jpg'
+    from members m where m.display_name = 'Theo';
 
 select act_as('00000000-0000-4000-8000-0000000000a2');
 select throws_ok(
