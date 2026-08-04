@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { type Proposal, resolveGoalVote, resolveModeVote } from './votes';
+import {
+  type Proposal,
+  goalStandingCopy,
+  modeStandingCopy,
+  resolveGoalVote,
+  resolveModeVote,
+  voteCountCopy,
+} from './votes';
 
 const proposals = (...ids: string[]): Proposal[] =>
   ids.map((id, order) => ({ id, order }));
@@ -138,5 +145,90 @@ describe('resolveGoalVote (§9)', () => {
     };
     const first = resolveGoalVote(input);
     for (let n = 0; n < 20; n++) expect(resolveGoalVote(input)).toEqual(first);
+  });
+});
+
+describe('voteCountCopy (§4.3)', () => {
+  it('never says nought — a nought beside an idea is a verdict on it', () => {
+    expect(voteCountCopy(0)).toBe('No votes yet');
+    expect(voteCountCopy(-1)).toBe('No votes yet');
+    expect(voteCountCopy(0)).not.toContain('0');
+  });
+
+  it('counts in words after that', () => {
+    expect(voteCountCopy(1)).toBe('1 vote');
+    expect(voteCountCopy(4)).toBe('4 votes');
+  });
+});
+
+describe('modeStandingCopy (§4.3, §8.4, §0.3)', () => {
+  it('reads no votes as the plan, not as a failure to agree', () => {
+    expect(modeStandingCopy([])).toBe('As it stands, everyone writes their own middle square.');
+  });
+
+  it('states the outcome a majority would produce', () => {
+    expect(modeStandingCopy(['shared', 'shared', 'personal']))
+      .toBe('As it stands, you’ll share one goal in the middle.');
+  });
+
+  it('states a tie as personal, without calling it a tie (§8.3)', () => {
+    expect(modeStandingCopy(['shared', 'personal']))
+      .toBe('As it stands, everyone writes their own middle square.');
+  });
+
+  it('never asks anyone to go and get more votes', () => {
+    const every = [
+      modeStandingCopy([]),
+      modeStandingCopy(['shared']),
+      modeStandingCopy(['personal']),
+      modeStandingCopy(['shared', 'personal']),
+      modeStandingCopy(['shared', 'shared', 'personal']),
+    ];
+    for (const copy of every) {
+      // §8.4: silence must never be framed as an obstacle, and §0.3 rules out anything
+      // that reads as pressure on a family member.
+      expect(copy).not.toMatch(/need|waiting|more vote|one away|behind|still to|hurry/i);
+      // §4.3: never a defeat, never a scoreboard.
+      expect(copy).not.toMatch(/winning|losing|ahead|beat|\bvs\b/i);
+    }
+  });
+});
+
+describe('goalStandingCopy (§4.3, §9.3)', () => {
+  const textOf = (id: string) => ({ a: 'Camping trip', b: 'Learn to sail' })[id];
+
+  it('names the Goal that would go in the middle', () => {
+    const copy = goalStandingCopy(
+      { proposals: proposals('a', 'b'), ballots: ['a', 'a', 'b'] },
+      textOf,
+    );
+    expect(copy).toBe('As it stands, “Camping trip” goes in the middle.');
+  });
+
+  it('says nobody has proposed one rather than reporting a failure (§9.3)', () => {
+    expect(goalStandingCopy({ proposals: [], ballots: [] }, textOf))
+      .toBe('Nobody has put one forward yet, so everyone writes their own.');
+  });
+
+  it('resolves a tie silently to the earliest, without announcing the tie', () => {
+    const copy = goalStandingCopy(
+      { proposals: proposals('a', 'b'), ballots: ['a', 'b'] },
+      textOf,
+    );
+    expect(copy).toBe('As it stands, “Camping trip” goes in the middle.');
+    expect(copy).not.toMatch(/tie|tied|draw|level/i);
+  });
+
+  it('degrades to a true sentence when the text cannot be resolved', () => {
+    expect(goalStandingCopy({ proposals: proposals('a'), ballots: [] }, () => undefined))
+      .toBe('As it stands, one of these goes in the middle.');
+  });
+
+  it('never names the Proposals that would not win', () => {
+    const copy = goalStandingCopy(
+      { proposals: proposals('a', 'b'), ballots: ['a', 'a'] },
+      textOf,
+    );
+    expect(copy).not.toContain('Learn to sail');
   });
 });
