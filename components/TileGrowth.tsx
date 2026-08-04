@@ -75,6 +75,47 @@ function Soil({ progress }: { progress: number }) {
   );
 }
 
+/**
+ * §2's 1px/7px diagonal hatch at 10% white, and the fourth of completion's four cues.
+ *
+ * §6 A2 is a test, not a preference: *"Completion carries four independent cues: fill,
+ * silhouette, check, hatch. Test by desaturating a board screenshot; if you can't count
+ * the finished tiles, it fails."* Fill and silhouette are both colour, so desaturated they
+ * collapse into one — the hatch and the check are what survive it.
+ *
+ * Fixed-pitch bars rather than anything sized to the Tile: the pitch IS the spec, and a
+ * hatch that stretched with the square would be a different hatch on an SE. The Tile clips
+ * with `overflow: hidden`, so drawing past the edges costs nothing.
+ */
+const HATCH_PITCH = 7;
+const HATCH_BARS = 16;
+
+function Hatch() {
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+    >
+      {Array.from({ length: HATCH_BARS }, (_, i) => (
+        <View
+          key={i}
+          style={{
+            position: 'absolute',
+            left: i * HATCH_PITCH,
+            // Overhangs top and bottom so the 45° rotation still reaches both corners.
+            top: -HATCH_PITCH * HATCH_BARS,
+            bottom: -HATCH_PITCH * HATCH_BARS,
+            width: 1,
+            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            transform: [{ rotate: '45deg' }],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 export const TileGrowth = memo(function TileGrowth({ stage, progress }: Props) {
   if (stage === 'dormant') return null;
 
@@ -82,11 +123,14 @@ export const TileGrowth = memo(function TileGrowth({ stage, progress }: Props) {
     // Stem and leaf fall away — leaves are for growing, the flower is for arriving. Do not
     // add a leaf back to "balance" it (§2).
     return (
-      <Sunflower
-        size={HEAD_SIZE.complete}
-        petalColor={color.paper}
-        petalSpread={PETAL_SPREAD.complete}
-      />
+      <>
+        <Hatch />
+        <Sunflower
+          size={HEAD_SIZE.complete}
+          petalColor={color.paper}
+          petalSpread={PETAL_SPREAD.complete}
+        />
+      </>
     );
   }
 
@@ -100,7 +144,9 @@ export const TileGrowth = memo(function TileGrowth({ stage, progress }: Props) {
             bottom: 9,
             width: 9,
             height: 12,
-            borderRadius: 6,
+            // §2 says border-radius 50% — an ellipse, which on a 9×12 is not the same
+            // shape as a 6pt radius. That one draws a stadium with flat sides.
+            borderRadius: '50%',
             backgroundColor: color.ink3,
           }}
         />

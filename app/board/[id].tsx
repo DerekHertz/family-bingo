@@ -33,7 +33,7 @@ export default function DraftingTable() {
   const session = useSession();
   const head = useBoardHead(id, session?.user.id);
   const board = useBoard(id);
-  const counts = useTileCounts((board.data ?? []).map((t) => t.id));
+  const counts = useTileCounts((board.data ?? []).map((t) => t.id), session?.user.id);
 
   if (head.isPending || board.isPending) {
     return (
@@ -108,6 +108,37 @@ export default function DraftingTable() {
    * the moment twenty-four sentences become a board.
    */
   if (sealed) {
+    // A Board rendered from counts that never arrived is a Board of 25 dormant Tiles and
+    // an empty pip strip — a confident, wrong answer of exactly the kind `board.isError`
+    // above exists to prevent. `isLoading` rather than `isPending`, because a disabled
+    // query is pending forever and the Tiles are not fetched yet on the first render.
+    if (counts.isLoading) {
+      return (
+        <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
+          <ActivityIndicator
+            color={color.ink3}
+            accessibilityRole="progressbar"
+            accessibilityLabel="Loading the board"
+          />
+        </View>
+      );
+    }
+    if (counts.isError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
+          <Text style={{ ...styles.body, color: color.ink2 }}>
+            Couldn&rsquo;t open that board just now. Try again in a moment.
+          </Text>
+          <Button
+            label="Back"
+            variant="text"
+            style={{ marginTop: space.lg, alignItems: 'flex-start' }}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
+          />
+        </View>
+      );
+    }
+
     const tileCounts = counts.data ?? {};
     const boardTiles = tiles.map((t) => ({
       id: t.id,
@@ -121,7 +152,16 @@ export default function DraftingTable() {
               // Target 1: it is done when the Family says it is.
               { text: t.familyGoalText, target: 1, unit: null }
             : null,
-      count: tileCounts[t.id] ?? 0,
+      // The shared Centre takes no Increments — `tile_is_loggable()` refuses them, because
+      // a Family Goal has no Target and is marked done rather than counted up (§12.3). Its
+      // count comes from `completed_at`, and counting Increments there would answer 0 for
+      // a Goal the whole Family has finished.
+      count:
+        t.familyGoalText !== null
+          ? t.familyGoalCompletedAt === null
+            ? 0
+            : 1
+          : (tileCounts[t.id] ?? 0),
     }));
 
     // Derived here, on every render, from the counts already in hand — §13.1's Lines are

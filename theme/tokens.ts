@@ -177,7 +177,10 @@ export const motion = {
 
 /** The board never scrolls, never shrinks, never paginates (§3, `<Board>`). */
 export const board = {
-  columns: 5,
+  // No `columns` here. Five is not a design token — it is the Board's geometry, and
+  // `BOARD_WIDTH` in src/domain/lines.ts is the same five that `position = row * 5 + col`
+  // and the twelve Lines are built from (§5.4). A second copy is a copy that can disagree
+  // with line detection.
   gap: { ios: 7, android: 8 },
   paddingHorizontal: { ios: 20, android: 16 },
 } as const;

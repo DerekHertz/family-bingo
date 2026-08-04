@@ -34,7 +34,8 @@ interface Props {
   count: number;
   isCentre: boolean;
   centreMode: 'shared' | 'personal' | 'undecided';
-  onPress: () => void;
+  /** Omitted when no tile sheet exists to open — the square then renders inert (§6 A1). */
+  onPress?: (() => void) | undefined;
 }
 
 export const Tile = memo(function Tile({
@@ -66,7 +67,12 @@ export const Tile = memo(function Tile({
   return (
     <Pressable
       onPress={onPress}
+      // With no handler the square is not a button and must not say it is: it stays one
+      // focusable element carrying the same four facts, and announces as disabled rather
+      // than inviting a tap that does nothing (§6 A1).
+      disabled={onPress === undefined}
       accessibilityRole="button"
+      accessibilityState={{ disabled: onPress === undefined }}
       accessibilityLabel={label}
       style={({ pressed }) => ({
         width: '100%',
@@ -104,6 +110,11 @@ export const Tile = memo(function Tile({
 
       {stage === 'complete' ? (
         <Text
+          // §6 A4: Dynamic Type runs to XXL everywhere except the board, which caps at L —
+          // L being the default, so the multiplier is 1. The board's geometry is fixed at
+          // 66.8pt and text that grew past it would push the check off the square. The
+          // tile sheet carries the full range, so larger text is always one tap away.
+          maxFontSizeMultiplier={1}
           style={{
             ...styles.label,
             position: 'absolute',

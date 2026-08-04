@@ -35,9 +35,15 @@ export interface BoardTile {
 interface Props {
   tiles: BoardTile[];
   centreMode: 'shared' | 'personal' | 'undecided';
-  /** Indices into `LINES` that are complete. Empty until slice 13 records any. */
+  /** Indices into `LINES` that are complete, derived on read and never stored (§13.1). */
   completedLines?: readonly number[];
-  onPressTile: (tile: BoardTile) => void;
+  /**
+   * Opens the tile sheet. **Omit it when there is no sheet to open** — the squares then
+   * render inert instead of announcing themselves as 25 buttons that do nothing, which is
+   * what §6 A1 costs when a screen reader is invited to tap something with no action
+   * behind it. One-tap logging is never wired here (§3, §11.1).
+   */
+  onPressTile?: (tile: BoardTile) => void;
 }
 
 export function Board({ tiles, centreMode, completedLines = [], onPressTile }: Props) {
@@ -54,9 +60,11 @@ export function Board({ tiles, centreMode, completedLines = [], onPressTile }: P
   return (
     <View style={{ paddingHorizontal: padding }}>
       <View
-        // No `grid` role: React Native's AccessibilityRole has no such value, and the
-        // squares carry their own row/column in their labels anyway (§6).
-        accessibilityLabel="Board, five by five"
+        // Deliberately unlabelled. React Native's AccessibilityRole has no `grid`, and a
+        // label here would need `accessible` to be announced at all — which on iOS
+        // collapses the subtree into one element and takes all 25 Tile labels with it.
+        // The squares carry their own row and column instead (§6 A1), which is the
+        // navigation a swipe actually needs.
         style={{ gap }}
       >
         {rows.map((row, rowIndex) => (
@@ -76,7 +84,9 @@ export function Board({ tiles, centreMode, completedLines = [], onPressTile }: P
                     count={tile.count}
                     isCentre={tile.position === CENTER_POSITION}
                     centreMode={centreMode}
-                    onPress={() => onPressTile(tile)}
+                    onPress={
+                      onPressTile === undefined ? undefined : () => onPressTile(tile)
+                    }
                   />
                 </View>
               ),
