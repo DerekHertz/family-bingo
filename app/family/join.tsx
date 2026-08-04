@@ -27,6 +27,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
 import { codeProblem, normalizeCode, useRedeemInvitation } from '../../lib/queries/invitations';
@@ -163,7 +164,7 @@ export default function JoinFamily() {
             label="Not now"
             variant="text"
             disabled={redeem.isPending}
-            onPress={() => router.back()}
+            onPress={() => leaveTo('/home')}
           />
         </View>
 

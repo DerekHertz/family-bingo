@@ -160,6 +160,63 @@ supabase secrets unset DEV_LOGIN_SECRET
 The first Account for each address still has to be made the ordinary way, once: the
 function looks an address up and never creates one.
 
+## Running it on a phone
+
+`npx expo start` and Expo Go is the quickest route, but Expo Go only runs the **one** SDK
+its App Store build was compiled against — SDK 57 needs Expo Go **57.0.6** (iOS) or
+**57.0.3** (Android), and an older one refuses with *"Project is incompatible with this
+version of Expo Go"*. That coupling is permanent; it breaks again on every SDK bump.
+
+A **development build** is the same app with this project's own native modules baked in,
+so the SDK question goes away for good. `eas.json` is set up for it:
+
+```sh
+npm install -g eas-cli          # or use npx
+eas login                       # opens a browser
+eas build --profile development --platform android   # ~10 min, produces an APK
+```
+
+Install the result and run `npx expo start --dev-client`. The dev build connects to Metro
+exactly like Expo Go, with fast refresh unchanged.
+
+Install the result and run `npx expo start --dev-client`.
+
+**On iOS, a free Apple ID is enough — but only locally.** The distinction is where the
+signing happens, not what you are allowed to run:
+
+| Route | Account | Notes |
+|---|---|---|
+| Expo Go | none | Only ever runs the SDK its store build was compiled against |
+| `npx expo run:ios --device` | **free Apple ID** | Xcode signs with a personal team. Expires after **7 days**, then re-run it. Needs `npx expo prebuild` and Xcode (~15 GB) |
+| `eas build --platform ios` | **paid, $99/yr** | Ad-hoc profiles come from the Developer Program API; EAS cannot use a personal team |
+| `eas build --platform android` | none | APK sideloads |
+
+So EAS is the paid path and Xcode is the free one. On an **Intel** Mac check which Xcode
+the App Store actually offers before committing to the download — Xcode's newest releases
+have dropped Intel, and React Native 0.86 wants a recent one.
+
+**`expo-dev-client` is deliberately not a dependency.** Installing it flips
+`npx expo start` into dev-build mode, which is the wrong default while Expo Go is the
+route that works. `eas build` adds what it needs at build time; install it locally only
+once you have a dev build to run.
+
+### Two things that will bite
+
+**EAS does not read `.env`.** `EXPO_PUBLIC_*` values are inlined at build time from the
+machine doing the build, and that machine is in the cloud. So the Supabase URL and anon
+key live in `eas.json` under each profile's `env`. Both are public by design — the anon
+key authorizes nothing on its own, RLS decides every row (ADR-0004), and both ship inside
+every bundle regardless.
+
+**`EXPO_PUBLIC_DEV_LOGIN_SECRET` is deliberately not in `eas.json`.** It is the only value
+here that is a real credential, and a committed file is the wrong place for it. A dev build
+therefore has no dev sign-in row, which is the right default for a build you might hand to
+somebody. To include it in your own builds:
+
+```sh
+eas env:create --name EXPO_PUBLIC_DEV_LOGIN_SECRET --value <the secret> --environment development
+```
+
 ## Working on this
 
 **Test-first, one vertical slice at a time.** Each slice in the PRD cuts through the whole

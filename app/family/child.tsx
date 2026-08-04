@@ -14,7 +14,7 @@
  * explicitly out of scope.
  */
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import {
   AccessibilityInfo,
@@ -25,7 +25,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
+import { failure } from '../../lib/failure';
 import { useCreateManagedMember } from '../../lib/queries/managed';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
@@ -54,7 +56,6 @@ const CONTRACT = [
 
 export default function AddChild() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
   const [name, setName] = useState('');
   const [trouble, setTrouble] = useState<string | null>(null);
   const create = useCreateManagedMember(id ?? '');
@@ -73,10 +74,12 @@ export default function AddChild() {
         // Every failure announced and success did not, which for a screen that navigates
         // away leaves a VoiceOver user with no confirmation anything happened (§6).
         AccessibilityInfo.announceForAccessibility(`${trimmed} is in the Family.`);
-        router.back();
+        leaveTo({ pathname: '/family/[id]', params: { id: id ?? '' } });
       },
       onError: (e) => {
-        const raw = e instanceof Error ? e.message : '';
+        // PostgREST rejects with a plain object, so `instanceof Error` read '' and
+        // every branch below was unreachable — see lib/failure.ts.
+        const raw = failure(e).message;
         const message = /full/i.test(raw)
           ? // A child takes a seat like anyone else (§4.5 of the PRD).
             'This Family is full for now. A child takes a seat like anyone else.'
@@ -192,7 +195,7 @@ export default function AddChild() {
             label="Not now"
             variant="text"
             disabled={create.isPending}
-            onPress={() => router.back()}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: id ?? '' } })}
           />
         </View>
       </ScrollView>

@@ -21,6 +21,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { FAMILY_NAME, familyNameProblem, useCreateFamily } from '../../lib/queries/families';
 import { styles } from '../../theme/fonts';
@@ -123,7 +124,7 @@ export default function NewFamily() {
             label="Not now"
             variant="text"
             disabled={create.isPending}
-            onPress={() => router.back()}
+            onPress={() => leaveTo('/home')}
           />
         </View>
       </ScrollView>

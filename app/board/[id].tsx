@@ -15,6 +15,7 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { useBoard, useBoardHead } from '../../lib/queries/boards';
 import { useSession } from '../../lib/session';
@@ -56,7 +57,7 @@ export default function DraftingTable() {
           label="Back"
           variant="text"
           style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-          onPress={() => router.back()}
+          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
         />
       </View>
     );
@@ -93,6 +94,8 @@ export default function DraftingTable() {
       : head.data.year.setupDeadline;
 
   const title = head.data.isSelf ? 'Your goals' : `${head.data.memberName}’s goals`;
+  // Hoisted out of head.data because the narrowing above does not survive into a closure.
+  const centreRoute = { yearId: head.data.year.id, familyId: head.data.familyId };
 
   const compose = (tileId: string) =>
     router.push({ pathname: '/board/goal', params: { boardId: id ?? '', tileId } });
@@ -145,13 +148,26 @@ export default function DraftingTable() {
 
       {/* The Centre, in clay because clay means family and nothing else (§1.1). Not
           authored here (§6.5) — it is the Centre Vote's, and that is slices 8 and 9. */}
-      <View
-        style={{
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`The centre: ${
+          centre?.familyGoalText ?? centre?.goal?.text ?? 'your family decides this one together'
+        }`}
+        accessibilityHint="Opens the family vote for the middle square"
+        onPress={() =>
+          router.push({
+            pathname: '/year/centre',
+            params: centreRoute,
+          })
+        }
+        style={({ pressed }) => ({
           marginTop: space.lg,
           padding: space.md,
+          minHeight: size.minTouch,
           backgroundColor: color.clayTint,
           borderRadius: radius.card,
-        }}
+          opacity: pressed ? 0.7 : 1,
+        })}
       >
         <Text style={{ ...styles.label, color: color.clayDeep }}>The centre</Text>
         <Text style={{ ...styles.body, color: color.ink, marginTop: space.xs }}>
@@ -159,7 +175,7 @@ export default function DraftingTable() {
             centre?.goal?.text ??
             'Your family decides this one together.'}
         </Text>
-      </View>
+      </Pressable>
 
       {/* Position order, which in practice IS write order: "Write another" always fills
           the lowest empty position, so the two agree unless a square is cleared and
@@ -255,7 +271,7 @@ export default function DraftingTable() {
         label="Back"
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-        onPress={() => router.back()}
+        onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
       />
     </ScrollView>
   );
