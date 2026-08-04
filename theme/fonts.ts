@@ -61,4 +61,5 @@ export const styles = {
   meta: text(type.meta),
   ringCount: text(type.ringCount),
   ringOf: text(type.ringOf),
+  action: text(type.action),
 } as const;

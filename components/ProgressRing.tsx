@@ -28,6 +28,19 @@ interface Props {
   progress: number;
   /** The ground the hole is punched in. The ring is drawn *on* the sheet, not on paper. */
   ground?: string;
+  /**
+   * The unfilled part. `paperSunk` everywhere except the shared Centre, which §4.3 gives a
+   * `clayTint` track because clay means family. **The fill is never anything but `moss`** —
+   * progress is progress on every square, and tinting it would make the Centre's the only
+   * progress that looked different from progress.
+   */
+  track?: string;
+  /**
+   * §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal has no Target
+   * to count toward — it is marked done — so "0 of 1" would be a number invented to fill
+   * the hole.
+   */
+  showCount?: boolean;
 }
 
 /** One half-disc, pinned at the ring's centre so rotation sweeps rather than orbits. */
@@ -82,6 +95,8 @@ export const ProgressRing = memo(function ProgressRing({
   target,
   progress,
   ground = color.paperRaised,
+  track = color.paperSunk,
+  showCount = true,
 }: Props) {
   const box = ringBox();
   const sweep = sweepOf(progress);
@@ -91,7 +106,9 @@ export const ProgressRing = memo(function ProgressRing({
       accessible
       // One element, one sentence. Twelve rotated views in the tree would say nothing
       // anyone could use, and the count is the whole point (§6).
-      accessibilityLabel={countSummary(count, target)}
+      accessibilityLabel={
+        showCount ? countSummary(count, target) : progress >= 1 ? 'Done' : 'Not done yet'
+      }
       style={{
         width: box.size,
         height: box.size,
@@ -107,7 +124,7 @@ export const ProgressRing = memo(function ProgressRing({
           width: box.size,
           height: box.size,
           borderRadius: box.radius,
-          backgroundColor: color.paperSunk,
+          backgroundColor: track,
         }}
       />
 
@@ -129,20 +146,29 @@ export const ProgressRing = memo(function ProgressRing({
           justifyContent: 'center',
         }}
       >
-        <Text
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={{ ...styles.ringCount, color: color.ink }}
-        >
-          {count}
-        </Text>
-        <Text
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={{ ...styles.ringOf, color: color.ink2 }}
-        >
-          of {target}
-        </Text>
+        {showCount ? (
+          <>
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              // The hole is a fixed 76pt and the ring's geometry is what §3 specifies, so
+              // this one number cannot grow with Dynamic Type without spilling out of it.
+              // Everything else in the sheet does (§6 A4).
+              maxFontSizeMultiplier={1.2}
+              style={{ ...styles.ringCount, color: color.ink }}
+            >
+              {count}
+            </Text>
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              maxFontSizeMultiplier={1.2}
+              style={{ ...styles.ringOf, color: color.ink2 }}
+            >
+              of {target}
+            </Text>
+          </>
+        ) : null}
       </View>
     </View>
   );

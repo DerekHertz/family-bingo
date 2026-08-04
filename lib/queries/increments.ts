@@ -16,8 +16,39 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RECENT_INCREMENTS } from '../../src/domain/increment';
+import { failedWith } from '../failure';
 import { supabase } from '../supabase';
 import { tileCountsKey } from './boards';
+
+/** A write the server would not take, and that a retry will not fix. */
+export class IncrementRefused extends Error {
+  constructor(readonly action: 'log' | 'delete') {
+    super(`the server refused to ${action} this increment`);
+    this.name = 'IncrementRefused';
+  }
+}
+
+/**
+ * What to tell somebody whose tap did not land.
+ *
+ * Matched on `code` rather than message text, because the SQLSTATE is the only part that
+ * is stable — `PT403` and `42501` never appear in the sentence, so every `/PT403/` tested
+ * against a message has always been a no-op. §0.3: never ask for a retry that is
+ * guaranteed to fail.
+ */
+export const incrementFailureCopy = (thrown: unknown): string => {
+  // `stamp_increment()` — an Increment that predates the seal (§11.5).
+  if (failedWith(thrown, 'PT403')) return 'That one can’t be logged against this board.';
+  // RLS: `increments_own_insert` is a `with check`, and a frozen Year or somebody else's
+  // Board both land here.
+  if (failedWith(thrown, '42501')) return 'This board isn’t taking progress right now.';
+  if (thrown instanceof IncrementRefused) {
+    return thrown.action === 'delete'
+      ? 'That one couldn’t be removed. It may already be gone.'
+      : 'That one didn’t save.';
+  }
+  return 'That didn’t save. Have another go in a moment.';
+};
 
 export interface Increment {
   id: string;
@@ -81,8 +112,10 @@ export interface LogIncrement {
  * When the offline queue arrives in slice 17 it will have to send the time it actually
  * happened; until then, the honest value is the one the server stamps.
  */
-export function useLogIncrement(boardId: string, tileIds: readonly string[], accountId: string | undefined) {
+export function useLogIncrement(tileIds: readonly string[], accountId: string | undefined) {
   const queryClient = useQueryClient();
+  const countsKey = tileCountsKey(tileIds, accountId ?? 'anonymous');
+
   return useMutation({
     mutationFn: async (tap: LogIncrement): Promise<void> => {
       const { error } = await supabase
@@ -98,8 +131,61 @@ export function useLogIncrement(boardId: string, tileIds: readonly string[], acc
         );
       if (error !== null) throw error;
     },
-    onSuccess: (_data, tap) => {
-      void queryClient.invalidateQueries({ queryKey: tileCountsKey(tileIds, accountId ?? 'anonymous') });
+
+    /**
+     * §3: "One tap, **optimistic**, haptic on touch-down", and §17.2 says the same thing
+     * again — "progress updates immediately on tap". The ring has to move under the finger.
+     * Waiting for the round trip is what makes a tap feel lost, and it is the reason a
+     * Member taps a second time and logs two.
+     *
+     * The count and the Recent list are both patched, because the sheet shows both and a
+     * ring that moved above a list that did not is worse than neither moving.
+     */
+    onMutate: async (tap) => {
+      const recentKey = recentIncrementsKey(tap.tileId, accountId ?? 'anonymous');
+      // Any refetch already in flight would land after this and undo it.
+      await queryClient.cancelQueries({ queryKey: countsKey });
+      await queryClient.cancelQueries({ queryKey: recentKey });
+
+      const counts = queryClient.getQueryData<Record<string, number>>(countsKey);
+      const recent = queryClient.getQueryData<Increment[]>(recentKey);
+
+      queryClient.setQueryData<Record<string, number>>(countsKey, (current) => ({
+        ...(current ?? {}),
+        [tap.tileId]: (current?.[tap.tileId] ?? 0) + 1,
+      }));
+      queryClient.setQueryData<Increment[]>(recentKey, (current) =>
+        [
+          {
+            id: tap.id,
+            tileId: tap.tileId,
+            note: tap.note ?? null,
+            // The server stamps the real one (§11.5). This is only what the row looks
+            // like for the second before the truth arrives.
+            occurredAt: new Date().toISOString(),
+          },
+          ...(current ?? []),
+        ].slice(0, RECENT_INCREMENTS),
+      );
+
+      return { counts, recent, recentKey };
+    },
+
+    /**
+     * Put back exactly what was there. §11.5 and `tile_is_loggable()` refuse real taps —
+     * a frozen Year, an empty Tile, the shared Centre — and a refusal that left the ring
+     * one ahead would have the Member believe a tap landed that never did.
+     */
+    onError: (_error, _tap, context) => {
+      if (context === undefined) return;
+      queryClient.setQueryData(countsKey, context.counts);
+      queryClient.setQueryData(context.recentKey, context.recent);
+    },
+
+    // Reconcile either way: on success the server's `occurred_at` replaces the guess, and
+    // on failure this re-reads what is actually there rather than trusting the rollback.
+    onSettled: (_data, _error, tap) => {
+      void queryClient.invalidateQueries({ queryKey: countsKey });
       void queryClient.invalidateQueries({
         queryKey: recentIncrementsKey(tap.tileId, accountId ?? 'anonymous'),
       });
@@ -115,13 +201,56 @@ export function useLogIncrement(boardId: string, tileIds: readonly string[], acc
  */
 export function useDeleteIncrement(tileIds: readonly string[], accountId: string | undefined) {
   const queryClient = useQueryClient();
+  const countsKey = tileCountsKey(tileIds, accountId ?? 'anonymous');
+
   return useMutation({
     mutationFn: async (increment: { id: string; tileId: string }): Promise<void> => {
-      const { error } = await supabase.from('increments').delete().eq('id', increment.id);
+      // `.select()` is not decoration. `increments_own_delete` is a `using` policy, so a
+      // refused DELETE matches nothing and PostgREST answers 204 with **no error object** —
+      // "Remove" looked like it worked every single time, and the row came back on the
+      // next refetch. Asking for the deleted rows makes an empty result the refusal it is.
+      const { data, error } = await supabase
+        .from('increments')
+        .delete()
+        .eq('id', increment.id)
+        .select('id');
       if (error !== null) throw error;
+      if ((data ?? []).length === 0) throw new IncrementRefused('delete');
     },
-    onSuccess: (_data, increment) => {
-      void queryClient.invalidateQueries({ queryKey: tileCountsKey(tileIds, accountId ?? 'anonymous') });
+
+    // Optimistic for the same reason logging is: removing a tap you did not mean to make
+    // is housekeeping, and housekeeping that stalls reads as a refusal.
+    onMutate: async (increment) => {
+      const recentKey = recentIncrementsKey(increment.tileId, accountId ?? 'anonymous');
+      await queryClient.cancelQueries({ queryKey: countsKey });
+      await queryClient.cancelQueries({ queryKey: recentKey });
+
+      const counts = queryClient.getQueryData<Record<string, number>>(countsKey);
+      const recent = queryClient.getQueryData<Increment[]>(recentKey);
+
+      queryClient.setQueryData<Record<string, number>>(countsKey, (current) => ({
+        ...(current ?? {}),
+        // Never below zero: the cache is a guess and a negative count would render as a
+        // dormant Tile on a Goal with progress on it.
+        [increment.tileId]: Math.max(0, (current?.[increment.tileId] ?? 0) - 1),
+      }));
+      queryClient.setQueryData<Increment[]>(recentKey, (current) =>
+        (current ?? []).filter((row) => row.id !== increment.id),
+      );
+
+      return { counts, recent, recentKey };
+    },
+
+    onError: (_error, _increment, context) => {
+      if (context === undefined) return;
+      queryClient.setQueryData(countsKey, context.counts);
+      queryClient.setQueryData(context.recentKey, context.recent);
+    },
+
+    // The removed row leaves a hole in a list of three, and only the server knows what
+    // fills it — so this refetch is a correction, not a formality.
+    onSettled: (_data, _error, increment) => {
+      void queryClient.invalidateQueries({ queryKey: countsKey });
       void queryClient.invalidateQueries({
         queryKey: recentIncrementsKey(increment.tileId, accountId ?? 'anonymous'),
       });

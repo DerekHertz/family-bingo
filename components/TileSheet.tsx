@@ -28,7 +28,7 @@ import { columnOf, rowOf } from '../src/domain/lines';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
 import { ProgressRing } from './ProgressRing';
-import type { Increment } from '../lib/queries/increments';
+import type { Increment, LogIncrement } from '../lib/queries/increments';
 
 export interface SheetTile {
   id: string;
@@ -38,6 +38,16 @@ export interface SheetTile {
   unit: string | null;
   unitCanonical: string | null;
   count: number;
+  /**
+   * The shared Centre is a different sheet (§4.3): a `clayTint` ring track — the fill
+   * stays `moss`, progress is always `moss` — and the app's only plural verb, "We did it".
+   *
+   * It also takes no Increments at all: `tile_is_loggable()` refuses them because a Family
+   * Goal has no Target and is *marked done* by any Member, completing for everyone at once
+   * (§12.3). Marking it is slice 12; until then this sheet reads rather than writes, which
+   * is still far better than what it replaced — tapping the Centre did nothing whatsoever.
+   */
+  isCentre: boolean;
 }
 
 interface Props {
@@ -47,10 +57,19 @@ interface Props {
   ownerName: string | null;
   recent: Increment[];
   recentPending: boolean;
-  /** False on a frozen Year or somebody else's Board: the sheet reads, it does not write. */
-  canLog: boolean;
+  /**
+   * Why this sheet cannot log, or `null` when it can.
+   *
+   * A boolean was not enough: it collapsed "the Year is frozen" and "this is not your
+   * Board" into one flag, and the one sentence behind it told an owner looking at their
+   * own frozen Board *"Only this member can log progress here."* Two different facts
+   * deserve two different sentences (§0.3).
+   */
+  blocked: 'frozen' | 'not-yours' | null;
+  /** Set when the last write failed. Already phrased — see `incrementFailureCopy`. */
+  failure: string | null;
   onClose: () => void;
-  onLog: (tap: { id: string; tileId: string; memberId: string; note: string | null }) => void;
+  onLog: (tap: LogIncrement) => void;
   onDelete: (increment: { id: string; tileId: string }) => void;
 }
 
@@ -63,12 +82,14 @@ export function TileSheet({
   ownerName,
   recent,
   recentPending,
-  canLog,
+  blocked,
+  failure,
   onClose,
   onLog,
   onDelete,
 }: Props) {
   const [note, setNote] = useState('');
+  const canLog = blocked === null;
   const [noteOpen, setNoteOpen] = useState(false);
 
   if (tile === null) return null;
@@ -106,7 +127,7 @@ export function TileSheet({
         accessibilityRole="button"
         accessibilityLabel="Close"
         onPress={onClose}
-        style={{ flex: 1, backgroundColor: 'rgba(51, 48, 42, 0.35)' }}
+        style={{ flex: 1, backgroundColor: color.scrim }}
       />
 
       <View
@@ -135,10 +156,35 @@ export function TileSheet({
           )}
 
           <View style={{ alignItems: 'center', marginTop: space.lg }}>
-            <ProgressRing count={tile.count} target={tile.target} progress={progress} />
+            <ProgressRing
+              count={tile.count}
+              target={tile.target}
+              progress={progress}
+              // §4.3: the Centre's track is `clayTint` because clay means family. The fill
+              // is never anything but `moss` — progress is progress on every square.
+              track={tile.isCentre ? color.clayTint : color.paperSunk}
+              showCount={!tile.isCentre}
+            />
           </View>
 
-          {canLog ? (
+          {tile.isCentre ? (
+            // §4.3's "We did it" — the app's only plural. Not a control yet: marking a
+            // Family Goal done is §12.3, and a button that answered every press with an
+            // error would be worse than none. Stated as a fact instead, which is what the
+            // rest of the Centre's copy does (§0.3).
+            <Text
+              style={{
+                ...styles.body,
+                color: color.ink2,
+                marginTop: space.lg,
+                textAlign: 'center',
+              }}
+            >
+              {complete
+                ? 'We did it — your family finished this one together.'
+                : 'Your family decides when this one is done.'}
+            </Text>
+          ) : canLog ? (
             <>
               <Pressable
                 accessibilityRole="button"
@@ -152,7 +198,12 @@ export function TileSheet({
                 }}
                 onPress={log}
                 style={({ pressed }) => ({
-                  height: 56,
+                  // `minHeight`, not `height`. §6 A4 gives the sheet the *full* Dynamic
+                  // Type range — it is where larger text is meant to live — and a fixed
+                  // 56 truncates the label at XXL instead of growing with it.
+                  minHeight: size.controlPrimary,
+                  paddingVertical: space.sm,
+                  paddingHorizontal: space.md,
                   marginTop: space.lg,
                   borderRadius: radius.card,
                   backgroundColor: color.moss,
@@ -161,7 +212,7 @@ export function TileSheet({
                   opacity: pressed ? 0.85 : 1,
                 })}
               >
-                <Text style={{ ...styles.heading, color: color.paper }}>
+                <Text style={{ ...styles.action, color: color.paper, textAlign: 'center' }}>
                   {incrementVerb(tile.unit, tile.unitCanonical)}
                 </Text>
               </Pressable>
@@ -181,7 +232,7 @@ export function TileSheet({
                     color: color.ink,
                     marginTop: space.md,
                     padding: space.md,
-                    minHeight: 46,
+                    minHeight: size.controlSharpen,
                     borderWidth: 1,
                     borderColor: color.hairline,
                     borderRadius: radius.card,
@@ -193,7 +244,8 @@ export function TileSheet({
                   accessibilityLabel="Add a note"
                   onPress={() => setNoteOpen(true)}
                   style={({ pressed }) => ({
-                    height: 46,
+                    minHeight: size.controlSharpen,
+                    paddingVertical: space.sm,
                     marginTop: space.md,
                     borderRadius: radius.card,
                     borderWidth: 1,
@@ -216,8 +268,31 @@ export function TileSheet({
                 textAlign: 'center',
               }}
             >
-              {complete ? 'This one is done.' : 'Only this member can log progress here.'}
+              {blocked === 'frozen'
+                ? 'This year is finished. Nothing more can be logged.'
+                : `${ownerName ?? 'This member'} logs progress on this one.`}
             </Text>
+          )}
+
+          {/* A refused write said nothing at all before this: the optimistic count rolled
+              back and the Member watched their tap quietly undo itself. `PT403` and
+              `42501` never appear in the message text, so the copy is matched on the
+              SQLSTATE (`incrementFailureCopy`) — and none of it asks for a retry that is
+              guaranteed to fail (§0.3). */}
+          {failure === null ? null : (
+            <View
+              accessible
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={failure}
+              style={{
+                marginTop: space.md,
+                padding: space.md,
+                borderRadius: radius.card,
+                backgroundColor: color.clayTint,
+              }}
+            >
+              <Text style={{ ...styles.body, color: color.clayDeep }}>{failure}</Text>
+            </View>
           )}
 
           <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xl }}>Recent</Text>

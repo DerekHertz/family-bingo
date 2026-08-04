@@ -22,12 +22,13 @@ import { Button } from '../../components/Button';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import {
+  incrementFailureCopy,
   useDeleteIncrement,
   useLogIncrement,
   useRecentIncrements,
 } from '../../lib/queries/increments';
 import { useSession } from '../../lib/session';
-import { isTileComplete, progressOf } from '../../src/domain/growth';
+import { isTileComplete } from '../../src/domain/growth';
 import { columnOf, completedLines, rowOf } from '../../src/domain/lines';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
@@ -48,7 +49,7 @@ export default function DraftingTable() {
   // with — the ring has to move under the finger or the tap looks lost.
   const [openTileId, setOpenTileId] = useState<string | null>(null);
   const recent = useRecentIncrements(openTileId ?? undefined, session?.user.id);
-  const logIncrement = useLogIncrement(id ?? '', tileIds, session?.user.id);
+  const logIncrement = useLogIncrement(tileIds, session?.user.id);
   const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);
 
   if (head.isPending || board.isPending) {
@@ -192,29 +193,50 @@ export default function DraftingTable() {
       ),
     );
 
-    // Only a personal Goal takes Increments. `tile_is_loggable()` refuses them on an empty
-    // Tile and on the shared Centre, for different reasons (§10.2, §12.3) — so a square
-    // with nothing to log opens nothing, rather than opening a sheet whose button the
-    // server would answer with an error.
+    // An **empty** Tile opens nothing: it has no Goal to show and `tile_is_loggable()`
+    // refuses Increments on it (§10.2), so a sheet there would be a sheet about nothing.
+    //
+    // The shared Centre does open, and §4.3 says what it looks like — a `clayTint` track,
+    // no count, "We did it". It was a dead tap before: `goal` is null on the Centre because
+    // the Goal it carries is a `family_goal`, so the square and its row in the list both
+    // swallowed the press in silence.
     const openTile = boardTiles.find((t) => t.id === openTileId) ?? null;
     const sourceTile = tiles.find((t) => t.id === openTileId) ?? null;
     const sheetTile: SheetTile | null =
-      openTile === null || sourceTile === null || sourceTile.goal === null
+      openTile === null || sourceTile === null || openTile.goal === null
         ? null
         : {
             id: openTile.id,
             position: openTile.position,
-            text: sourceTile.goal.text,
-            target: sourceTile.goal.target,
-            unit: sourceTile.goal.unit,
-            unitCanonical: sourceTile.goal.unit_canonical,
+            text: openTile.goal.text,
+            target: openTile.goal.target,
+            unit: openTile.goal.unit,
+            unitCanonical: sourceTile.goal?.unit_canonical ?? null,
             count: openTile.count,
+            isCentre: sourceTile.familyGoalText !== null,
           };
 
     // The same two conditions `tile_is_loggable()` gates on, plus the one it cannot see:
     // whether this Board is the caller's to write on at all. `boards_read` is Family-wide,
     // so this route opens on anyone's Board.
-    const canLog = head.data.controlled && head.data.year.status !== 'frozen';
+    // Two different facts, not one flag. A single boolean told an owner looking at their
+    // own frozen Board "Only this member can log progress here", which is false and
+    // unhelpable. The Centre's own gate lives in `SheetTile.isCentre`.
+    const blocked: 'frozen' | 'not-yours' | null =
+      head.data.year.status === 'frozen'
+        ? 'frozen'
+        : !head.data.controlled
+          ? 'not-yours'
+          : null;
+
+    // Whichever write failed last. Both mutations feed one line, because only one of them
+    // can be in flight from a sheet showing a single Tile.
+    const writeFailure =
+      logIncrement.error !== null
+        ? incrementFailureCopy(logIncrement.error)
+        : deleteIncrement.error !== null
+          ? incrementFailureCopy(deleteIncrement.error)
+          : null;
 
     return (
       // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
@@ -237,7 +259,12 @@ export default function DraftingTable() {
             completedLines={lines}
             // §3: the square opens the sheet and never logs directly — a mis-tap on a
             // 67pt target in a pocket must not write a row.
-            onPressTile={(t) => setOpenTileId(t.id)}
+            onPressTile={(t) => {
+              // An empty Tile opens nothing (§10.2): no Goal to show, and Increments are
+              // refused there. Setting the id anyway left the sheet resolving to `null`
+              // and the state quietly stale.
+              if (t.goal !== null) setOpenTileId(t.id);
+            }}
           />
         </View>
 
@@ -270,14 +297,21 @@ export default function DraftingTable() {
               .filter((t) => t.goal !== null)
               .map((t) => {
                 const done = isTileComplete(t.count, t.goal?.target ?? 1);
+                // §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal
+                // has no Target to count toward — it is marked done — so "0/1" would be a
+                // number invented to fill the column.
+                const isCentre =
+                  tiles.find((s) => s.id === t.id)?.familyGoalText != null;
                 return (
                   <Pressable
                     key={t.id}
                     accessibilityRole="button"
                     accessibilityLabel={`Row ${rowOf(t.position) + 1}, column ${
                       columnOf(t.position) + 1
-                    }. ${t.goal?.text ?? ''}. ${t.count} of ${t.goal?.target ?? 1}.${
-                      done ? ' Complete.' : ''
+                    }. ${t.goal?.text ?? ''}. ${
+                      isCentre
+                        ? `The centre.${done ? ' Done.' : ''}`
+                        : `${t.count} of ${t.goal?.target ?? 1}.${done ? ' Complete.' : ''}`
                     }`}
                     onPress={() => setOpenTileId(t.id)}
                     style={({ pressed }) => ({
@@ -303,11 +337,12 @@ export default function DraftingTable() {
                       style={{
                         ...styles.label,
                         // `moss` only once it is actually done — a count part-way there is
-                        // not growth to be celebrated, it is a fact (§4.1).
-                        color: done ? color.moss : color.ink2,
+                        // not growth to be celebrated, it is a fact (§4.1). Never larger
+                        // than `label`: §3 keeps the one big number in the sheet's ring.
+                        color: done ? color.moss : isCentre ? color.clayDeep : color.ink2,
                       }}
                     >
-                      {t.count}/{t.goal?.target ?? 1}
+                      {isCentre ? 'The centre' : `${t.count}/${t.goal?.target ?? 1}`}
                     </Text>
                   </Pressable>
                 );
@@ -328,8 +363,15 @@ export default function DraftingTable() {
           ownerName={head.data.isSelf ? null : head.data.memberName}
           recent={recent.data ?? []}
           recentPending={recent.isLoading}
-          canLog={canLog}
-          onClose={() => setOpenTileId(null)}
+          blocked={blocked}
+          failure={writeFailure}
+          onClose={() => {
+            setOpenTileId(null);
+            // A refusal is about the tap, not the Tile. Left set, it greets whoever opens
+            // the next square with a sentence about a write they never made.
+            logIncrement.reset();
+            deleteIncrement.reset();
+          }}
           onLog={(tap) => logIncrement.mutate(tap)}
           onDelete={(increment) => deleteIncrement.mutate(increment)}
         />
