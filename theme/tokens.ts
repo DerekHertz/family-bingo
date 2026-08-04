@@ -39,6 +39,14 @@ export const color = {
 
   // Accent 3 — the sunflower head at 'budding', and nothing else in the entire app.
   sun: '#C9A05A',
+
+  /**
+   * Behind a sheet: the board dimmed to 35% (§3 `<TileSheet>`).
+   *
+   * `ink` at 35%, as a token rather than an `rgba()` written into a component — a literal
+   * there is a light-mode colour that can never flip, and `dark` carries its own.
+   */
+  scrim: 'rgba(51, 48, 42, 0.35)',
 } as const;
 
 /**
@@ -62,6 +70,8 @@ export const dark = {
   clay: '#B98A70',
   clayTint: '#3A2B23',
   sun: '#D2A961',
+  /** Darker than light's, because a dim room needs more separation, not less. */
+  scrim: 'rgba(0, 0, 0, 0.55)',
 } as const;
 
 /**
@@ -124,6 +134,24 @@ export const type = {
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
+  /**
+   * The count inside the tile sheet's ring (§3): 23pt/700.
+   *
+   * The largest number anywhere in the app, and the only one — §3 calls the sheet "the one
+   * place the exact number appears large", because a Member is looking at their own Goal
+   * and nobody else's. The same size on a screen that shows two Members would be a score,
+   * which §13.5 forbids. Do not reuse this token outside the ring.
+   */
+  ringCount: { fontFamily: font.ui, fontSize: 23, lineHeight: 28, fontWeight: '700' },
+  /** "of 144" beneath it (§3): 11pt, and deliberately not `meta` — no caps, no tracking. */
+  ringOf: { fontFamily: font.ui, fontSize: 11, lineHeight: 15, fontWeight: '500' },
+  /**
+   * The tile sheet's primary action (§3): 17pt/700 on a 56pt `moss` button.
+   *
+   * Not `heading`, which is 19pt — close enough to look deliberate and wrong by two
+   * points on the one control a Member presses more than any other.
+   */
+  action: { fontFamily: font.ui, fontSize: 17, lineHeight: 22, fontWeight: '700' },
 } as const;
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 20, xl: 28, xxl: 44 } as const;

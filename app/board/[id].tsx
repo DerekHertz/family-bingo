@@ -14,14 +14,22 @@
  */
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
-import { Board } from '../../components/Board';
+import { Board, type BoardTile } from '../../components/Board';
 import { Button } from '../../components/Button';
+import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
+import {
+  incrementFailureCopy,
+  useDeleteIncrement,
+  useLogIncrement,
+  useRecentIncrements,
+} from '../../lib/queries/increments';
 import { useSession } from '../../lib/session';
 import { isTileComplete } from '../../src/domain/growth';
-import { completedLines } from '../../src/domain/lines';
+import { columnOf, completedLines, rowOf } from '../../src/domain/lines';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
@@ -33,7 +41,16 @@ export default function DraftingTable() {
   const session = useSession();
   const head = useBoardHead(id, session?.user.id);
   const board = useBoard(id);
-  const counts = useTileCounts((board.data ?? []).map((t) => t.id), session?.user.id);
+  const tileIds = (board.data ?? []).map((t) => t.id);
+  const counts = useTileCounts(tileIds, session?.user.id);
+
+  // Which square the sheet is showing. Held as an id rather than the Tile itself, so the
+  // sheet re-reads the live count after a tap instead of showing the snapshot it opened
+  // with — the ring has to move under the finger or the tap looks lost.
+  const [openTileId, setOpenTileId] = useState<string | null>(null);
+  const recent = useRecentIncrements(openTileId ?? undefined, session?.user.id);
+  const logIncrement = useLogIncrement(tileIds, session?.user.id);
+  const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);
 
   if (head.isPending || board.isPending) {
     return (
@@ -140,7 +157,7 @@ export default function DraftingTable() {
     }
 
     const tileCounts = counts.data ?? {};
-    const boardTiles = tiles.map((t) => ({
+    const boardTiles: BoardTile[] = tiles.map((t) => ({
       id: t.id,
       position: t.position,
       goal:
@@ -176,6 +193,51 @@ export default function DraftingTable() {
       ),
     );
 
+    // An **empty** Tile opens nothing: it has no Goal to show and `tile_is_loggable()`
+    // refuses Increments on it (§10.2), so a sheet there would be a sheet about nothing.
+    //
+    // The shared Centre does open, and §4.3 says what it looks like — a `clayTint` track,
+    // no count, "We did it". It was a dead tap before: `goal` is null on the Centre because
+    // the Goal it carries is a `family_goal`, so the square and its row in the list both
+    // swallowed the press in silence.
+    const openTile = boardTiles.find((t) => t.id === openTileId) ?? null;
+    const sourceTile = tiles.find((t) => t.id === openTileId) ?? null;
+    const sheetTile: SheetTile | null =
+      openTile === null || sourceTile === null || openTile.goal === null
+        ? null
+        : {
+            id: openTile.id,
+            position: openTile.position,
+            text: openTile.goal.text,
+            target: openTile.goal.target,
+            unit: openTile.goal.unit,
+            unitCanonical: sourceTile.goal?.unit_canonical ?? null,
+            count: openTile.count,
+            isCentre: sourceTile.familyGoalText !== null,
+          };
+
+    // The same two conditions `tile_is_loggable()` gates on, plus the one it cannot see:
+    // whether this Board is the caller's to write on at all. `boards_read` is Family-wide,
+    // so this route opens on anyone's Board.
+    // Two different facts, not one flag. A single boolean told an owner looking at their
+    // own frozen Board "Only this member can log progress here", which is false and
+    // unhelpable. The Centre's own gate lives in `SheetTile.isCentre`.
+    const blocked: 'frozen' | 'not-yours' | null =
+      head.data.year.status === 'frozen'
+        ? 'frozen'
+        : !head.data.controlled
+          ? 'not-yours'
+          : null;
+
+    // Whichever write failed last. Both mutations feed one line, because only one of them
+    // can be in flight from a sheet showing a single Tile.
+    const writeFailure =
+      logIncrement.error !== null
+        ? incrementFailureCopy(logIncrement.error)
+        : deleteIncrement.error !== null
+          ? incrementFailureCopy(deleteIncrement.error)
+          : null;
+
     return (
       // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
       // never shrinks, never paginates. Header and board are outside the ScrollView; only
@@ -195,10 +257,14 @@ export default function DraftingTable() {
             tiles={boardTiles}
             centreMode={head.data.year.centerMode}
             completedLines={lines}
-            // Logging is slice 11 and the tile sheet is where it lives (§3) — a mis-tap
-            // on a 67pt target in a pocket must never write a row. Until that exists,
-            // tapping a square does nothing rather than doing something surprising.
-            onPressTile={() => undefined}
+            // §3: the square opens the sheet and never logs directly — a mis-tap on a
+            // 67pt target in a pocket must not write a row.
+            onPressTile={(t) => {
+              // An empty Tile opens nothing (§10.2): no Goal to show, and Increments are
+              // refused there. Setting the id anyway left the sheet resolving to `null`
+              // and the state quietly stale.
+              if (t.goal !== null) setOpenTileId(t.id);
+            }}
           />
         </View>
 
@@ -214,6 +280,75 @@ export default function DraftingTable() {
             This board has sealed. Changing a goal now costs a swap.
           </Text>
 
+          {/* The sealed Board's goals, readable as a list.
+              §4.1 takes the list away at seal — "the board isn't drawn until it seals" —
+              and nothing put one back, so from January the only way to read your own
+              twenty-four sentences was to tap twenty-four squares one at a time. The board
+              stays pinned above and this scrolls under it, which is exactly what §3's
+              "content scrolls under a pinned board" is for.
+
+              Each row carries where the Goal sits, because the list and the grid are the
+              same twenty-four things and a list that does not say which square it means
+              cannot be matched back to one. Position order, not write order: this list
+              exists to be read *against the board*. */}
+          <View style={{ marginTop: space.xl, paddingHorizontal: space.xl }}>
+            <Text style={{ ...styles.meta, color: color.ink3 }}>All goals</Text>
+            {boardTiles
+              .filter((t) => t.goal !== null)
+              .map((t) => {
+                const done = isTileComplete(t.count, t.goal?.target ?? 1);
+                // §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal
+                // has no Target to count toward — it is marked done — so "0/1" would be a
+                // number invented to fill the column.
+                const isCentre =
+                  tiles.find((s) => s.id === t.id)?.familyGoalText != null;
+                return (
+                  <Pressable
+                    key={t.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Row ${rowOf(t.position) + 1}, column ${
+                      columnOf(t.position) + 1
+                    }. ${t.goal?.text ?? ''}. ${
+                      isCentre
+                        ? `The centre.${done ? ' Done.' : ''}`
+                        : `${t.count} of ${t.goal?.target ?? 1}.${done ? ' Complete.' : ''}`
+                    }`}
+                    onPress={() => setOpenTileId(t.id)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: space.md,
+                      paddingVertical: space.md,
+                      minHeight: size.minTouch,
+                      borderTopWidth: 1,
+                      borderTopColor: color.hairline,
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    {/* Mono, like the drafting table's index and for the same reason: a
+                        column of coordinates read down a list has to align. */}
+                    <Text style={{ ...styles.index, color: color.ink3 }}>
+                      {`R${rowOf(t.position) + 1}C${columnOf(t.position) + 1}`}
+                    </Text>
+                    <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
+                      {t.goal?.text}
+                    </Text>
+                    <Text
+                      style={{
+                        ...styles.label,
+                        // `moss` only once it is actually done — a count part-way there is
+                        // not growth to be celebrated, it is a fact (§4.1). Never larger
+                        // than `label`: §3 keeps the one big number in the sheet's ring.
+                        color: done ? color.moss : isCentre ? color.clayDeep : color.ink2,
+                      }}
+                    >
+                      {isCentre ? 'The centre' : `${t.count}/${t.goal?.target ?? 1}`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+          </View>
+
           <Button
             label="Back"
             variant="text"
@@ -221,6 +356,25 @@ export default function DraftingTable() {
             onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
           />
         </ScrollView>
+
+        <TileSheet
+          tile={sheetTile}
+          memberId={head.data.memberId}
+          ownerName={head.data.isSelf ? null : head.data.memberName}
+          recent={recent.data ?? []}
+          recentPending={recent.isLoading}
+          blocked={blocked}
+          failure={writeFailure}
+          onClose={() => {
+            setOpenTileId(null);
+            // A refusal is about the tap, not the Tile. Left set, it greets whoever opens
+            // the next square with a sentence about a write they never made.
+            logIncrement.reset();
+            deleteIncrement.reset();
+          }}
+          onLog={(tap) => logIncrement.mutate(tap)}
+          onDelete={(increment) => deleteIncrement.mutate(increment)}
+        />
       </View>
     );
   }

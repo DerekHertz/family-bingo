@@ -89,7 +89,12 @@ export const Tile = memo(function Tile({
         borderColor: shared ? color.clay : color.hairline,
         alignItems: 'center',
         justifyContent: 'center',
-        opacity: pressed ? 0.7 : 1,
+        // §5's Tap: 1 → 0.96 → 1, and it "fires on touch-down, not on server response".
+        // A press state is the honest version of that with no animation driver — the
+        // square answers the finger, and whether the row landed is the ring's business.
+        // Opacity alone reads as *disabled* on a square that now actually does something.
+        transform: [{ scale: pressed ? 0.96 : 1 }],
+        opacity: pressed ? 0.9 : 1,
       })}
     >
       {/* The shared centre's clay dot, top-centre (§3). Clay means family, nothing else. */}
