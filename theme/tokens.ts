@@ -124,6 +124,17 @@ export const type = {
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
+  /**
+   * The count inside the tile sheet's ring (§3): 23pt/700.
+   *
+   * The largest number anywhere in the app, and the only one — §3 calls the sheet "the one
+   * place the exact number appears large", because a Member is looking at their own Goal
+   * and nobody else's. The same size on a screen that shows two Members would be a score,
+   * which §13.5 forbids. Do not reuse this token outside the ring.
+   */
+  ringCount: { fontFamily: font.ui, fontSize: 23, lineHeight: 28, fontWeight: '700' },
+  /** "of 144" beneath it (§3): 11pt, and deliberately not `meta` — no caps, no tracking. */
+  ringOf: { fontFamily: font.ui, fontSize: 11, lineHeight: 15, fontWeight: '500' },
 } as const;
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 20, xl: 28, xxl: 44 } as const;

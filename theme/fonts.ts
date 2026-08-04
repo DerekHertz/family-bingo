@@ -59,4 +59,6 @@ export const styles = {
   index: text(type.index),
   label: text(type.label),
   meta: text(type.meta),
+  ringCount: text(type.ringCount),
+  ringOf: text(type.ringOf),
 } as const;

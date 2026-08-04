@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest';
+import { RECENT_INCREMENTS, countSummary, incrementVerb } from './increment';
+
+describe('incrementVerb (§3, §4.1)', () => {
+  it('says "Did it" when there is no unit', () => {
+    expect(incrementVerb(null, null)).toBe('Did it');
+  });
+
+  it('uses the irregular verb §3 names for a walk', () => {
+    expect(incrementVerb('walks', 'walk')).toBe('Walked one');
+  });
+
+  it('uses the irregular verb §3 names for a book', () => {
+    expect(incrementVerb('Books', 'book')).toBe('Read one');
+  });
+
+  it('falls back to a phrasing that is plain but never wrong', () => {
+    expect(incrementVerb('pomodoros', 'pomodoro')).toBe('Log one pomodoro');
+  });
+
+  it('prefers the canonical singular over the Member’s plural wording', () => {
+    expect(incrementVerb('books', 'chapter')).toBe('Read one');
+    expect(incrementVerb('widgets', 'widget')).toBe('Log one widget');
+  });
+
+  it('never puts the Member’s own wording after "one" — it is usually plural', () => {
+    // "Log one runs" reads as a bug in the app rather than a gap in the copy. A Goal that
+    // skipped Sharpening has no singular to use (§6.1a), so it says one *what* nowhere —
+    // the ring beside the button already does.
+    expect(incrementVerb('runs', null)).toBe('Log one');
+    expect(incrementVerb('laps', null)).toBe('Log one');
+    expect(incrementVerb('glasses of water', null)).toBe('Log one');
+  });
+
+  it('is not fooled by case or padding in either field', () => {
+    expect(incrementVerb('  Walks ', '  WALK  ')).toBe('Walked one');
+  });
+
+  it('treats an empty-string unit as no unit at all', () => {
+    expect(incrementVerb('', '')).toBe('Did it');
+    expect(incrementVerb('   ', null)).toBe('Did it');
+  });
+
+  it('never returns an empty or whitespace-only label', () => {
+    for (const unit of [null, '', ' ', 'x', 'books']) {
+      for (const canonical of [null, '', ' ', 'book', 'unknown-thing']) {
+        expect(incrementVerb(unit, canonical).trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('countSummary', () => {
+  it('reads as §3’s ring label', () => {
+    expect(countSummary(3, 144)).toBe('3 of 144');
+    expect(countSummary(0, 1)).toBe('0 of 1');
+  });
+
+  it('does not clamp overshoot — the ring stops at full, the count does not', () => {
+    // §13.5 hides overshoot on the *board*; the sheet is where the real number lives.
+    expect(countSummary(160, 150)).toBe('160 of 150');
+  });
+});
+
+describe('RECENT_INCREMENTS', () => {
+  it('is the three §3 asks for', () => {
+    expect(RECENT_INCREMENTS).toBe(3);
+  });
+});
