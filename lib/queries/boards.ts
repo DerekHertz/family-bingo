@@ -267,6 +267,40 @@ export function useBoard(boardId: string | undefined) {
   });
 }
 
+/**
+ * How many Increments each Tile on this Board has.
+ *
+ * Counted here rather than read from a column, because §11.4 is explicit: progress is
+ * `COUNT(increments)` and **must not be denormalised** — a cached counter and an
+ * append-only log drift, and the log is the source of truth.
+ *
+ * Keyed by `tile_id`, which is what `increments` actually references. A Goal is reachable
+ * only through its Tile, and a Swap replaces the Goal while the Tile stays put (§18.6) —
+ * so counting per Tile is also the only version that survives slice 18.
+ */
+export function useTileCounts(tileIds: readonly string[]) {
+  // Sorted so the key is stable: the same Board must not produce a different cache entry
+  // because two Tiles arrived in a different order.
+  const key = [...tileIds].sort().join(',');
+  return useQuery({
+    queryKey: ['tile-counts', key] as const,
+    enabled: tileIds.length > 0,
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await supabase
+        .from('increments')
+        .select('tile_id')
+        .in('tile_id', [...tileIds]);
+      if (error !== null) throw error;
+      const counts: Record<string, number> = {};
+      for (const row of data ?? []) {
+        const id = row.tile_id as string;
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+      return counts;
+    },
+  });
+}
+
 export interface GoalDraft {
   tileId: string;
   text: string;

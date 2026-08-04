@@ -12,7 +12,7 @@ state of play and the working rhythm.
 deployed to the live Supabase project — 31 migrations applied, 4 Edge Functions deployed,
 verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 
-**Client: slices 1–5 merged.** Slices 6–21 remain.
+**Client: slices 1–9 merged.** Slice 10 is in progress on `slice-10-seal`; 11–21 remain.
 
 | Slice | Client status |
 |---|---|
@@ -21,10 +21,36 @@ verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 | 3 Invite and approve | Merged. Both gates, seat pips, roster, `pending_memberships()` |
 | 4 Child profiles | Merged. §4.7 contract before the button |
 | 5 Open a Year | Merged |
-| 6–21 | **Not started** |
+| 6 Write a Goal | Merged. Drafting table + compose screen; `sharpened_at` added in slice 7 |
+| 7 Sharpening | Merged. Save-then-ask, two equal cards, one sharpen per Goal |
+| 8–9 The Centre | Merged. Mode vote, Goal vote, proposals, Organizer tiebreak |
+| 10 Seal | **In progress** on `slice-10-seal` — see below |
+| 11–21 | **Not started** |
 
-Suites: **333 Vitest · 788 pgTAP · 19 integration**, `tsc` clean. All three must pass
+Suites: **411 Vitest · 794 pgTAP · 19 integration**, `tsc` clean. All three must pass
 before a merge.
+
+### Where slice 10 got to
+
+The server half (`seal_year`, `seal_due_boards`, the `pg_cron` job) shipped with the
+server. The client half is **the Board being drawn**, because §4.1 says authoring is a
+list and "the board isn't drawn until it seals" — so sealing is the moment twenty-four
+sentences become a grid.
+
+Done and typechecking on the branch:
+
+- `components/Sunflower.tsx` — 8 `View` petals + disc, memoised, all geometry from the
+  already-tested `src/ui/sunflower.ts`
+- `components/Tile.tsx` — the five growth stages of §2, including the leaf positioned
+  against the *stem* rather than the tile
+- `components/Board.tsx` — 5×5, never scrolls, plus the 12-segment line pip row
+- `app/board/[id].tsx` branches: sealed renders the grid, a draft renders the list
+- `useTileCounts` — `COUNT(increments)` per Tile, never denormalised (§11.4)
+
+Not done: nobody has **looked at it**. No sealed Board exists in the dev data, so the
+growth ladder has never been rendered — that is the first thing to check, and it needs a
+Board with `sealed_at` set and some Increments. Tapping a Tile is deliberately inert;
+the TileSheet and one-tap logging are slice 11.
 
 ```sh
 npm test                  # pure layers — milliseconds, no Docker
@@ -72,10 +98,23 @@ against it.
   domain layer.
 - `.env` holds `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`; it is
   gitignored. `.env.example` is the template.
-- **No simulator on this machine** (Intel Mac, no Xcode). `npx expo start --web` runs at
-  `localhost:8081` and is the only preview. The assistant **cannot see it** — the Chrome
-  automation drives a different machine's browser. The user is the eyes; ask them to look
-  when a screen's type or spacing matters.
+- **No simulator on this machine** (Intel Mac, macOS 15.7, no Xcode). `npx expo start --web`
+  is one preview; **Expo Go on the user's iPhone 15 (iOS 26.6)** is the other. The
+  assistant **cannot see either** — the Chrome automation drives a different machine's
+  browser. The user is the eyes; ask them to look when a screen's type or spacing matters.
+- **Expo Go must match the SDK exactly.** SDK 57 needs Expo Go **57.0.6** (iOS) /
+  **57.0.3** (Android); an older client refuses with *"Project is incompatible with this
+  version of Expo Go"*. An in-place App Store update can sit pending — deleting and
+  reinstalling Expo Go is the reliable fix. `expo-dev-client` is deliberately NOT a
+  dependency: installing it flips `expo start` into dev-build mode, which is the wrong
+  default while Expo Go is the working route.
+- **iOS signing:** a free Apple ID works via local Xcode (`npx expo run:ios --device`,
+  7-day expiry, needs `expo prebuild`). EAS **cloud** builds need the paid $99/yr
+  programme, because ad-hoc profiles come from the Developer Program API. Android needs
+  no account at all. `eas.json` is set up for all of it.
+- **Two duplicated-dependency traps have already bitten.** `react-native-screens` was
+  installed twice at different versions, which Expo Go cannot load at all; `expo-doctor`
+  catches this class and is worth running whenever the device build misbehaves.
 
 ---
 
@@ -116,6 +155,20 @@ back to the system font. `theme/fonts.test.ts` greps for the mistake.
 - **Expo typed routes** reject links to screens that do not exist yet. Do not ship a button
   to an unbuilt route; leave it out and say so in the PR.
 - **zsh globs `[id].tsx`** — write route files with the file tool, not a heredoc.
+- **PostgREST rejects with a plain object, not an `Error`.** `e instanceof Error` is
+  false, so `e.message` reads `''` and every message branch silently dies — four screens
+  shipped that way and answered every failure with "have another go in a moment". Use
+  `lib/failure.ts`, and match on `code` (the SQLSTATE) rather than the message text,
+  because `PT403`/`PT409` never appear in the message.
+- **`router.back()` assumes a history that often is not there** — any route can be first
+  on web, and a magic link is a deep link. Use `leaveTo(fallback)` from `lib/leave.ts`.
+- **`controlled_member_ids()` is not Family-scoped.** Somebody in two Families is two
+  Members and both match `account_id`, so a client-side reproduction of it needs
+  `.eq('family_id', …)` as well — otherwise a screen can act as the wrong Member and
+  every write is refused by a guard that cannot explain itself.
+- **RPC argument names are now guarded** by `lib/rpc-signatures.test.ts`, which checks
+  every `supabase.rpc()` call site against the migrations and fails on any call it cannot
+  parse. Write the function name as a literal; a name behind a helper is invisible to it.
 
 ---
 
@@ -123,6 +176,16 @@ back to the system font. `theme/fonts.test.ts` greps for the mistake.
 
 1. **`docs/api.md` §2.2 lists a `digest` Edge Function that does not exist.** The outbox
    made it redundant and `notify` sends digests. Worth deleting the row.
+1a. **Two spec contradictions worth settling**, both found while building §4.2/§4.3:
+   FRONTEND_DESIGN §4.2 asks for both "One call per Goal, no reroll" *and* a "Sharpen it
+   again" row; and PRD §7's acceptance test says "2–3 alternatives are returned" while
+   §4.2 says one, never a menu. Both were resolved toward the prose rule (no reroll after
+   success; one suggestion) — the documents should be corrected so the next reader does
+   not undo it.
+1b. **`ithertzalot` has no Board in the 2026 Year**, only 2027 — they were approved after
+   2026 opened, and the late-joiner trigger dealt them a Board on the Year current at
+   that moment. Slice 21's territory, but it means the 2026 Centre has a voter with
+   nowhere to write goals.
 2. **"Wrapped" is flagged in FRONTEND_DESIGN §8** as strongly associated with another
    company's product, suggesting *The Almanac*. Slice 4's copy already says "Almanac" while
    the codebase says "Wrapped" — inconsistent, and cheap to settle now rather than after it
