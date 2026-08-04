@@ -133,8 +133,16 @@ select author_positions('Alice', array[0], 3);
 select author_positions('Alice',
   array[1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
+-- Bob authors every square, not just the row he is going to finish.
+--
+-- The squares are dealt at seal (§4.1), so "write five Goals to positions 0-4" no longer
+-- puts five Goals on row 0 — it puts them wherever the deal sends them, and a Line drawn
+-- through empty Tiles can never close. Authoring the whole Board is what makes a
+-- *positional* assertion meaningful once the mapping from write order to square is gone,
+-- and it is what a Member who finishes a row will actually have done.
 select act_as('00000000-0000-4000-8000-0000000000a2');
-select author_positions('Bob', array[0,1,2,3,4], 1);
+select author_positions('Bob',
+  array[0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
 select set_config('role', 'postgres', true);
 update years set setup_deadline = now() - interval '1 minute'
@@ -322,8 +330,12 @@ select act_as('00000000-0000-4000-8000-0000000000a3');
 select open_year((select id from families where name = 'Okonkwo Family'), 2028);
 
 -- Every Tile on the four Lines through the centre, and nothing else.
+-- The whole Board again, for the reason above: the deal (§4.1) scatters whatever subset
+-- is authored, and the sixteen squares this test then finishes are chosen for the *Lines*
+-- they nearly close. A Line drawn through an empty Tile can never close, so leaving
+-- squares unauthored made the assertion depend on where the shuffle happened to land.
 select author_positions('Chidi',
-  array[10,11,13,14, 2,7,17,22, 0,6,18,24, 4,8,16,20], 1);
+  array[0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
 select set_config('role', 'postgres', true);
 insert into proposals (id, vote_id, member_id, text)

@@ -91,6 +91,25 @@ select write_goal(tile_of('Alice', 1), 'One', 1);
 select write_goal(tile_of('Alice', 2), 'Two', 1);
 select write_goal(tile_of('Alice', 3), 'Three', 1);
 select write_goal(tile_of('Alice', 4), 'Four', 1);
+-- The rest of Alice's Board, so a Line has Tiles to pass through.
+--
+-- Before the deal, "write five Goals to positions 0-4" put five Goals on row 0. It does
+-- not any more (§4.1) — they land wherever the shuffle sends them — so a Line assertion
+-- against a partly-authored Board depends on luck, and was flaky exactly that way.
+do $author$
+declare p int;
+begin
+  for p in 0..24 loop
+    if p <> 12 and (select goal_id from tiles t join boards b on b.id = t.board_id
+                     where b.member_id = member_of('Alice') and t.position = p) is null then
+      perform write_goal(
+        (select t.id from tiles t join boards b on b.id = t.board_id
+          where b.member_id = member_of('Alice') and t.position = p),
+        'Filler ' || p, 1);
+    end if;
+  end loop;
+end $author$;
+
 
 -- Bob authors one Tile and leaves the other 24 empty, which is what §10.2 permits and
 -- what the "near a Line" nudge has to be careful about further down.
@@ -105,6 +124,67 @@ update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
 
 select act_as_cron();
+
+-- ---------------------------------------------------------------------------------
+-- The squares are dealt at seal (§4.1), so from here a Tile is found by its Goal
+-- ---------------------------------------------------------------------------------
+--
+-- `positions are dealt at seal, so no Member can place the easy one in a corner`. Every
+-- assertion below means "the Tile carrying the Goal I wrote to that square", never "square
+-- N" — so that is what tile_of() now answers. Squares nothing was written to, including
+-- the Centre at 12, still resolve literally: that is what the empty-Tile assertions of
+-- §10.2 are about.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select coalesce(
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+       join goals  g on g.id = t.goal_id
+      where b.member_id = member_of(name)
+        and g.text = (select m.txt from (values
+                ('Alice', 0, 'Walk the dog'),
+                ('Alice', 1, 'One'),
+                ('Alice', 2, 'Two'),
+                ('Alice', 3, 'Three'),
+                ('Alice', 4, 'Four'),
+                ('Bob', 0, 'Swim')
+              ) as m(nm, ps, txt)
+             where m.nm = name and m.ps = pos)),
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+      where b.member_id = member_of(name) and t.position = pos)
+  )
+$dealt$;
+
+-- The squares are dealt at seal (§4.1), so "the Tile at position N" and "the Tile holding
+-- the Goal I wrote at N" are two different things now. tile_of() above answers the second,
+-- which is what every progress assertion means. **Lines are the exception**: §13.1 pays out
+-- on squares, so a Line test has to say squares.
+create or replace function tile_at(name text, pos int) returns uuid
+language sql stable as $at$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name) and t.position = pos
+$at$;
+
+-- Complete whatever Goal now sits on a square, by logging its own Target.
+create or replace function finish_at(name text, pos int) returns void
+language plpgsql as $fin$
+declare n int; tgt int;
+begin
+  select g.target into tgt
+    from tiles t join goals g on g.id = t.goal_id
+   where t.id = tile_at(name, pos);
+  for n in 1..tgt loop
+    insert into increments (id, tile_id, member_id)
+    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
+  end loop;
+end;
+$fin$;
+
+
 select is(seal_due_boards(), 3, 'three Boards seal and the Year is under way');
 delete from notifications;
 
@@ -191,9 +271,12 @@ select is((select jsonb_array_length(d.near_line) from digests d), 0,
   'nobody is near a Line yet');
 
 select act_as('00000000-0000-4000-8000-0000000000a1');
-select tap('Alice', 1, '00000000-0000-4000-8000-0000000000d1');
-select tap('Alice', 2, '00000000-0000-4000-8000-0000000000d2');
-select tap('Alice', 3, '00000000-0000-4000-8000-0000000000d3');
+-- By square, not by Goal: "near a Line" is a positional fact (§13.1), and row 0 is row 0
+-- whichever Goals the deal put on it.
+select finish_at('Alice', 0);
+select finish_at('Alice', 1);
+select finish_at('Alice', 2);
+select finish_at('Alice', 3);
 
 select act_as_cron();
 select is((select count(*)::int from members_near_a_line(year_of('Hertzell Family'))), 1,
@@ -205,7 +288,7 @@ select is((select n.missing_position from members_near_a_line(year_of('Hertzell 
 
 -- Closing it takes her off the list — she is no longer NEAR a Line, she has one.
 select act_as('00000000-0000-4000-8000-0000000000a1');
-select tap('Alice', 4, '00000000-0000-4000-8000-0000000000d4');
+select finish_at('Alice', 4);
 
 select act_as_cron();
 select is((select count(*)::int from members_near_a_line(year_of('Hertzell Family'))), 0,
