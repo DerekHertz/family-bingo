@@ -14,7 +14,7 @@
  * explicitly out of scope.
  */
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import {
   AccessibilityInfo,
@@ -25,6 +25,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { failure } from '../../lib/failure';
 import { useCreateManagedMember } from '../../lib/queries/managed';
@@ -55,7 +56,6 @@ const CONTRACT = [
 
 export default function AddChild() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
   const [name, setName] = useState('');
   const [trouble, setTrouble] = useState<string | null>(null);
   const create = useCreateManagedMember(id ?? '');
@@ -74,7 +74,7 @@ export default function AddChild() {
         // Every failure announced and success did not, which for a screen that navigates
         // away leaves a VoiceOver user with no confirmation anything happened (§6).
         AccessibilityInfo.announceForAccessibility(`${trimmed} is in the Family.`);
-        router.back();
+        leaveTo({ pathname: '/family/[id]', params: { id: id ?? '' } });
       },
       onError: (e) => {
         // PostgREST rejects with a plain object, so `instanceof Error` read '' and
@@ -195,7 +195,7 @@ export default function AddChild() {
             label="Not now"
             variant="text"
             disabled={create.isPending}
-            onPress={() => router.back()}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: id ?? '' } })}
           />
         </View>
       </ScrollView>

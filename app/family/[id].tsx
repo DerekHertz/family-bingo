@@ -20,6 +20,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import { SeatPips } from '../../components/SeatPips';
@@ -483,7 +484,7 @@ export default function FamilyRoster() {
         label="Back"
         variant="text"
         style={{ marginTop: space.xxl, alignItems: 'flex-start' }}
-        onPress={() => router.back()}
+        onPress={() => leaveTo('/home')}
       />
     </ScrollView>
   );

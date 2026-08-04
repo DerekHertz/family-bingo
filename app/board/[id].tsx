@@ -15,6 +15,7 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { useBoard, useBoardHead } from '../../lib/queries/boards';
 import { useSession } from '../../lib/session';
@@ -56,7 +57,7 @@ export default function DraftingTable() {
           label="Back"
           variant="text"
           style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-          onPress={() => router.back()}
+          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
         />
       </View>
     );
@@ -270,7 +271,7 @@ export default function DraftingTable() {
         label="Back"
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-        onPress={() => router.back()}
+        onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
       />
     </ScrollView>
   );

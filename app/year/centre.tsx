@@ -18,7 +18,7 @@
  * the SQL uses — and the two are kept in step deliberately (see migration 15's header).
  */
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -32,6 +32,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import {
@@ -103,7 +104,6 @@ function Voters({ names }: { names: { id: string; name: string; isManaged: boole
 
 export default function Centre() {
   const { yearId, familyId } = useLocalSearchParams<{ yearId: string; familyId: string }>();
-  const router = useRouter();
   const session = useSession();
   const centre = useCentre(yearId, session?.user.id, familyId);
   const families = useFamilies(session?.user.id);
@@ -155,7 +155,7 @@ export default function Centre() {
           label="Back"
           variant="text"
           style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-          onPress={() => router.back()}
+          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
         />
       </View>
     );
@@ -639,7 +639,7 @@ export default function Centre() {
           label="Back"
           variant="text"
           style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-          onPress={() => router.back()}
+          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
         />
       </ScrollView>
     </KeyboardAvoidingView>

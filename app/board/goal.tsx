@@ -33,7 +33,7 @@
  * §7.9 rules out.
  */
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import {
   AccessibilityInfo,
@@ -47,6 +47,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { SuggestionCards, type Choice } from '../../components/SuggestionCards';
 import { useBoard, useBoardHead, useClearGoal, useWriteGoal } from '../../lib/queries/boards';
@@ -105,7 +106,6 @@ function Step({ label, hint, onPress, disabled }: {
 
 export default function ComposeGoal() {
   const { boardId, tileId } = useLocalSearchParams<{ boardId: string; tileId: string }>();
-  const router = useRouter();
   const session = useSession();
   const board = useBoard(boardId);
   const head = useBoardHead(boardId, session?.user.id);
@@ -237,7 +237,7 @@ export default function ComposeGoal() {
         // inference from `category`, which a null category and the pre-save both defeated.
         sharpened,
       });
-      if (andLeave) router.back();
+      if (andLeave) leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } });
       return true;
     } catch (e) {
       // `failure()`, not `instanceof Error` — PostgREST rejects with a plain object, so
@@ -602,7 +602,7 @@ export default function ComposeGoal() {
                   text: 'Clear it',
                   onPress: () =>
                     clear.mutate(tileId ?? '', {
-                      onSuccess: () => router.back(),
+                      onSuccess: () => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } }),
                       onError: () => say('That didn’t clear. Have another go in a moment.'),
                     }),
                 },
@@ -624,7 +624,7 @@ export default function ComposeGoal() {
           variant="text"
           disabled={write.isPending || clear.isPending}
           style={{ marginTop: space.sm }}
-          onPress={() => router.back()}
+          onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
         />
       </ScrollView>
     </KeyboardAvoidingView>
