@@ -60,11 +60,7 @@ import {
   targetProblem,
   unitProblem,
 } from '../../src/domain/goal';
-import {
-  type Suggestion,
-  acceptSuggestion,
-  keepOwnWords,
-} from '../../src/domain/sharpen';
+import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -132,6 +128,22 @@ export default function ComposeGoal() {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [choice, setChoice] = useState<Choice>(null);
   const [sharpenFailed, setSharpenFailed] = useState(false);
+  /**
+   * The Member's own words, target and unit at the moment they asked.
+   *
+   * A snapshot rather than a live read, because choosing SHARPENED overwrites the fields
+   * — and the AS YOU WROTE IT card has to keep showing what they actually wrote. Without
+   * it that card renders whatever is in the fields, which after one tap is the model's
+   * wording under a heading claiming it is theirs.
+   */
+  const [askedWith, setAskedWith] = useState<{
+    text: string;
+    target: number;
+    unit: string | null;
+  } | null>(null);
+  /** True only for the save that runs *before* the model is asked, so it can be excluded
+   *  from the Save button's pending state — §4.2: "Save stays enabled". */
+  const [presaving, setPresaving] = useState(false);
 
   if (!seeded && board.data !== undefined) {
     setSeeded(true);
@@ -166,27 +178,50 @@ export default function ComposeGoal() {
   const mine = { text, target, unit: unit.trim() === '' ? null : unit };
 
   /**
-   * What actually gets written, given which card is selected.
+   * Whether the suggestion still describes what is in the fields.
    *
-   * `null` selects nothing new: it is the plain slice-6 save, and it is also what a Member
-   * gets if they edit the fields by hand after the cards appear. Both cards stay editable
-   * afterwards, so refinement is manual rather than another model call (§4.2).
+   * The fields stay editable after the cards arrive (§4.2), so the Member can replace
+   * "take a walk every day" with "save for a house" and then tap AS YOU WROTE IT. Without
+   * this the walking suggestion's `category: 'fitness'` would ride along onto a money
+   * goal and put it in the wrong Wrapped bucket (§20.5) — the same failure the
+   * `unitCanonical` guard already prevents, on the field that had no guard.
+   *
+   * Either wording counts as still-this-goal: the words it was sharpened FROM, or the
+   * words it was sharpened INTO.
    */
-  const resolved =
-    choice === 'sharpened' && suggestion !== null
-      ? acceptSuggestion(suggestion)
-      : keepOwnWords(mine, suggestion);
+  const suggestionApplies =
+    suggestion !== null &&
+    askedWith !== null &&
+    (text.trim() === askedWith.text.trim() || text.trim() === suggestion.text.trim());
 
-  const save = (
+  /**
+   * What gets written — always resolved from the live fields.
+   *
+   * Choosing SHARPENED copies the suggestion into the fields rather than shadowing them,
+   * so from that moment there is one source of truth and an edit afterwards is simply an
+   * edit. It read `acceptSuggestion(suggestion)` directly, which meant a Member who
+   * picked the card and then nudged the target from 300 down to 150 watched 300 get
+   * saved — §4.2 invites that edit and the screen threw it away.
+   */
+  const resolved = authoredFrom(mine, suggestionApplies ? suggestion : null);
+
+  /**
+   * Write the Goal. Resolves `true` when it landed, so a caller can tell.
+   *
+   * `mutateAsync` rather than `mutate` because `askToSharpen` has to KNOW: it saves the
+   * Member's words before asking the model, and if that save failed then "your goal is
+   * saved as you wrote it" is a lie told to somebody who is about to lose their typing.
+   */
+  const save = async (
     goal = resolved,
-    { andLeave = true }: { andLeave?: boolean } = {},
-  ) => {
+    { andLeave = true, sharpened = false }: { andLeave?: boolean; sharpened?: boolean } = {},
+  ): Promise<boolean> => {
     if (problem !== null) {
       say(problem);
-      return;
+      return false;
     }
-    write.mutate(
-      {
+    try {
+      await write.mutateAsync({
         tileId: tileId ?? '',
         text: goal.text,
         target: goal.target,
@@ -197,27 +232,27 @@ export default function ComposeGoal() {
         unitCanonical: goal.unitCanonical,
         category: goal.category,
         paceHint: goal.paceHint,
-      },
-      {
-        onSuccess: () => {
-          if (andLeave) router.back();
-        },
-        onError: (e) => {
-          const raw = e instanceof Error ? e.message : '';
-          say(
-            /sealed/i.test(raw)
-              ? 'This board has sealed. Changing a goal now costs a swap.'
-              : /Center Tile|centre/i.test(raw)
-                ? 'The centre square is the family’s, not yours to write.'
-                : /not your Board/i.test(raw)
-                  ? 'That board isn’t yours to write on.'
-                  : /frozen/i.test(raw)
-                    ? 'This year has finished.'
-                    : 'That didn’t save. Have another go in a moment.',
-          );
-        },
-      },
-    );
+        // Records that this Goal's one sharpen is spent (§4.2). A column rather than an
+        // inference from `category`, which a null category and the pre-save both defeated.
+        sharpened,
+      });
+      if (andLeave) router.back();
+      return true;
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : '';
+      say(
+        /sealed/i.test(raw)
+          ? 'This board has sealed. Changing a goal now costs a swap.'
+          : /Center Tile|centre/i.test(raw)
+            ? 'The centre square is the family’s, not yours to write.'
+            : /not your Board/i.test(raw)
+              ? 'That board isn’t yours to write on.'
+              : /frozen/i.test(raw)
+                ? 'This year has finished.'
+                : 'That didn’t save. Have another go in a moment.',
+      );
+      return false;
+    }
   };
 
   /**
@@ -229,24 +264,39 @@ export default function ComposeGoal() {
    * than hopeful, because "saved as you wrote it" has already happened by the time it is
    * shown.
    */
-  const askToSharpen = () => {
+  const askToSharpen = async () => {
     if (problem !== null) {
       say(problem);
       return;
     }
     setTrouble(null);
     setSharpenFailed(false);
-    // Not `andLeave` — the Member stays here to see the answer.
-    save(keepOwnWords(mine, null), { andLeave: false });
+
+    // The save is AWAITED, and its outcome decides what the failure copy is allowed to
+    // say. It used to be fired and forgotten, which made the reassurance a lie in the one
+    // situation it mattered: offline, `write_goal` failed, and the sharpen result arrived
+    // afterwards and overwrote "That didn't save" with "Your goal is saved as you wrote
+    // it." A Member who then tapped "Not now" lost their words to a screen that had just
+    // promised otherwise — §7.9's whole point, inverted.
+    //
+    // A failed save also stops the sharpen outright. There is no reason to spend a model
+    // call, or a unit of §7.8's budget, on a Goal that is not on disk.
+    setPresaving(true);
+    const stored = await save(keepOwnWords(mine, null), { andLeave: false });
+    setPresaving(false);
+    if (!stored) return;
+
+    setAskedWith(mine);
 
     sharpen.mutate(
-      { text, memberId: head.data?.memberId ?? '', yearId: head.data?.year.id ?? '' },
+      { text: mine.text, memberId: head.data?.memberId ?? '', yearId: head.data?.year.id ?? '' },
       {
         onSuccess: (result) => {
           if (result.suggestion === null) {
             setSharpenFailed(true);
-            // §7.9's exact promise, and no more than it. No red, no retry modal, no dead
-            // end — and never a word suggesting the Member's goal was the problem.
+            // §7.9's exact promise — and true, because the await above confirmed it. No
+            // red, no retry modal, no dead end, and never a word suggesting the Member's
+            // goal was the problem.
             say(
               result.reason === 'budget_spent'
                 ? 'That’s all the sharpening this year. Your goal is saved as you wrote it.'
@@ -257,6 +307,11 @@ export default function ComposeGoal() {
           setSuggestion(result.suggestion);
           // Nothing is pre-selected on the Member's behalf (§4.2).
           setChoice(null);
+          // Two cards appear below the fold with no sound and no movement. A sighted
+          // Member may scroll; a VoiceOver one has nothing at all to go on (§6 A6).
+          AccessibilityInfo.announceForAccessibility(
+            'Two wordings to choose from: sharpened, or as you wrote it.',
+          );
         },
         // useSharpen never rejects (§7.5) — this is here so a future change to that
         // cannot silently turn a failed suggestion into a stuck spinner.
@@ -268,12 +323,41 @@ export default function ComposeGoal() {
     );
   };
 
+  /**
+   * Choosing a card fills the fields from it, rather than shadowing them.
+   *
+   * This is what makes §4.2's "both cards stay editable by hand afterwards" true. It also
+   * removes the second source of truth: after this, the fields are the Goal, and `save`
+   * has nothing to reconcile.
+   */
+  const choose = (next: Choice) => {
+    setChoice(next);
+    if (next === 'sharpened' && suggestion !== null) {
+      setText(suggestion.text);
+      setTarget(suggestion.target);
+      setUnit(suggestion.unit ?? '');
+    } else if (next === 'mine' && askedWith !== null) {
+      setText(askedWith.text);
+      setTarget(askedWith.target);
+      setUnit(askedWith.unit ?? '');
+    }
+  };
+
   // One sharpen per Goal, and no reroll after a successful one — a rerollable sharpener
-  // turns writing a goal into a slot machine (§4.2). `category` is the durable half of
-  // that rule: it is set by both cards, so reopening a Goal that has been through
-  // Sharpening does not offer it again. A failure is offered again, because a failure
-  // does not spend the sharpen.
-  const alreadySharpened = suggestion !== null || existing?.category != null;
+  // turns writing a goal into a slot machine (§4.2). A failure IS offered again, because
+  // a failure does not spend the sharpen.
+  //
+  // `sharpened_at` (migration 33) rather than the presence of a `category`, which was an
+  // inference and wrong twice over: the pre-save writes the Member's own words with no
+  // category at all, so backing out of the cards and reopening the Tile offered a fresh
+  // sharpen — one navigation per reroll, which is the slot machine itself — and a model
+  // response whose category fell outside the seven-member enum left the Goal rerollable
+  // for good. A rule enforced by inference is not a rule.
+  const alreadySharpened = suggestion !== null || existing?.sharpened_at != null;
+  // A failed head read is a real state, and silence is the wrong answer to it: the button
+  // would simply be absent, indistinguishable from a Goal that has already been sharpened.
+  // Saying so costs one line and turns a mystery into a fact (§0.3 — plain words, no red).
+  const headUnknown = head.isError || (!head.isPending && head.data == null);
   const canSharpen = head.data?.controlled === true && !alreadySharpened;
 
   return (
@@ -396,14 +480,24 @@ export default function ComposeGoal() {
         {/* §4.2, "Sharpen it". 46pt, and below the fields rather than beside them: it acts
             on what is written above it, so it reads down. Absent once a suggestion has
             been given — one sharpen per Goal, no reroll. */}
+        {headUnknown ? (
+          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.lg }}>
+            Sharpening isn&rsquo;t available just now. Your goal saves as normal.
+          </Text>
+        ) : null}
+
         {canSharpen ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Sharpen it"
+            // Matches the visible text rather than staying fixed at "Sharpen it" — a
+            // label that says one thing while the button says another is §6 A1's exact
+            // failure, and it was also the only signal a screen-reader Member could have
+            // had that the call had started.
+            accessibilityLabel={sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
             accessibilityHint="Suggests a countable version. Your own wording is always kept as an option."
             // Never disabled while the call is out (§4.2, "no disabled control"). Tapping
             // again during a call is harmless: the mutation replaces its own result.
-            onPress={askToSharpen}
+            onPress={() => void askToSharpen()}
             style={({ pressed }) => ({
               height: size.controlSharpen,
               alignItems: 'center',
@@ -425,18 +519,29 @@ export default function ComposeGoal() {
         {/* The "Working" pill (§4.2). `ink3`, no overlay, nothing disabled — the Member can
             keep typing, save, or leave while the model thinks. */}
         {sharpen.isPending ? (
-          <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.sm, textAlign: 'center' }}>
-            SHARPENING… YOU CAN CARRY ON
-          </Text>
+          <View
+            style={{
+              alignSelf: 'center',
+              marginTop: space.sm,
+              paddingHorizontal: space.md,
+              paddingVertical: space.xs,
+              borderRadius: radius.pill,
+              backgroundColor: color.paperSunk,
+            }}
+          >
+            <Text style={{ ...styles.label, color: color.ink3 }}>Sharpening…</Text>
+          </View>
         ) : null}
 
         {/* The "Answered" state. Two equal cards, nothing pre-selected. */}
         {suggestion === null ? null : (
           <SuggestionCards
             suggestion={suggestion}
-            mine={mine}
+            // The snapshot, so this card keeps saying what the Member wrote even after
+            // choosing SHARPENED has rewritten the fields above it.
+            mine={askedWith ?? mine}
             choice={choice}
-            onChoose={setChoice}
+            onChoose={choose}
           />
         )}
 
@@ -449,23 +554,21 @@ export default function ComposeGoal() {
           <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>{trouble}</Text>
         )}
 
+        {/* Never disabled by the Answered state, and never by the pre-save.
+            §4.2 is explicit — "Save stays enabled … no overlay, no disabled control" —
+            and both gates broke it. Disabling until a card was picked put a dead primary
+            control between a Member and their own text, with the cards undismissable; and
+            because the pre-save shares this mutation, the working state disabled Save for
+            the length of the request it was supposed to stay usable through.
+
+            Unpicked is not ambiguous: `resolved` reads the live fields, which are the
+            Member's own words until they choose otherwise. Saving does the obvious thing. */}
         <Button
-          label={
-            write.isPending
-              ? 'Saving…'
-              : suggestion !== null && choice === null
-                ? 'Pick one to save'
-                : 'Save this goal'
-          }
+          label={write.isPending && !presaving ? 'Saving…' : 'Save this goal'}
           variant="primary"
-          // Once two cards are on screen, saving means choosing between them. Left enabled
-          // and unpicked it would silently save one of the two, which is the pre-selection
-          // §4.2 rules out wearing a different hat.
-          disabled={
-            write.isPending || clear.isPending || (suggestion !== null && choice === null)
-          }
+          disabled={(write.isPending && !presaving) || clear.isPending}
           style={{ marginTop: space.xl }}
-          onPress={() => save()}
+          onPress={() => void save()}
         />
 
         {/* A failure does not spend the sharpen (§4.2), so offering it again is honest —
@@ -475,7 +578,7 @@ export default function ComposeGoal() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Try sharpening again"
-            onPress={askToSharpen}
+            onPress={() => void askToSharpen()}
             style={{ minHeight: size.minTouch, alignItems: 'center', justifyContent: 'center', marginTop: space.sm }}
           >
             <Text style={{ ...styles.label, color: color.ink2 }}>Try sharpening again</Text>

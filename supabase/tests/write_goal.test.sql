@@ -8,7 +8,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(36);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -149,6 +149,41 @@ select throws_ok($$select write_goal(tile_at(8, 'Alice'), 'Not mine', 1)$$,
   '42501', null, 'CROSS-FAMILY: an outsider cannot write onto someone else''s Board');
 select throws_ok($$select write_goal(tile_at(8, 'Theo'), 'Not mine either', 1)$$,
   '42501', null, 'CROSS-FAMILY: nor onto a Managed Member''s');
+
+-- ---------------------------------------------------------------------------------
+-- sharpened_at — the Goal's one sharpen (FRONTEND_DESIGN §4.2, migration 33)
+-- ---------------------------------------------------------------------------------
+
+select act_as('00000000-0000-4000-8000-0000000000a1');
+
+select is((select sharpened_at from write_goal(tile_at(20, 'Alice'), 'Unsharpened', 1)),
+  null, 'a Goal written without Sharpening carries no stamp');
+
+select isnt((select sharpened_at from
+    write_goal(tile_at(21, 'Alice'), 'Walk', 300, 'walks', 'walk', 'fitness',
+               'about six a week', true)),
+  null, 'a Goal written after a successful Sharpening is stamped');
+
+-- The reason this is a column and not an inference: BOTH of these leave `category` null,
+-- and the client used to read a null category as "never sharpened" and offer another.
+select isnt((select sharpened_at from
+    write_goal(tile_at(22, 'Alice'), 'Kept my own words', 1, null, null, null, null, true)),
+  null, 'stamped even when the Member kept their own words and no category came back');
+
+-- The stamp survives editing, which §4.2 explicitly invites ("both cards stay editable by
+-- hand afterwards"). Handing the sharpen back on an edit is the slot machine returning.
+select isnt((select sharpened_at from
+    write_goal(tile_at(21, 'Alice'), 'Walk the dog', 150, 'walks')),
+  null, 'editing a sharpened Goal by hand does NOT hand its sharpen back');
+
+select is(
+  (select sharpened_at from write_goal(tile_at(20, 'Alice'), 'Still unsharpened', 2)),
+  null, 'and an ordinary edit of an unsharpened Goal does not invent one');
+
+-- Clearing the Tile deletes the Goal, so a genuinely new Goal starts unstamped.
+select clear_goal(tile_at(21, 'Alice'));
+select is((select sharpened_at from write_goal(tile_at(21, 'Alice'), 'A new goal', 1)),
+  null, 'a Goal written into a cleared Tile starts fresh');
 
 -- ---------------------------------------------------------------------------------
 -- After Sealing, and after Freeze

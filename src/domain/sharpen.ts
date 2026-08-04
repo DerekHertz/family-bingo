@@ -263,7 +263,7 @@ export interface OwnWords {
   readonly unit: string | null;
 }
 
-/** The sharpened card, taken as offered — or as edited by hand afterwards (§4.2). */
+/** The sharpened card, taken exactly as offered. */
 export const acceptSuggestion = (suggestion: Suggestion): AuthoredGoal => ({
   text: suggestion.text,
   target: suggestion.target,
@@ -309,4 +309,46 @@ export const keepOwnWords = (
     category: suggestion?.category ?? null,
     paceHint: null,
   };
+};
+
+/**
+ * The Goal as the fields now stand — whichever card put them there.
+ *
+ * §4.2 says "both cards stay editable by hand afterwards, so refinement is manual, not
+ * another model call", and that is the case this exists for. Choosing SHARPENED copies
+ * the suggestion into the fields; from that moment the fields are the Goal, and the only
+ * open question is which of the model's inferences still describe them.
+ *
+ * Taken untouched, all of them do. Edited at all — even just the target nudged from 300
+ * to 150 — and the answer is the same field-by-field reckoning as keeping your own words:
+ * the category survives because the goal is still about the same thing, the pace hint
+ * does not because it describes a number that is no longer there.
+ *
+ * `suggestion` must be passed as `null` once the Member has typed something that is not
+ * the goal the suggestion was made for. This cannot tell from the text alone — "Walk" and
+ * "Run" are equally plausible edits of each other — so the caller holds that fact.
+ */
+export const authoredFrom = (
+  mine: OwnWords,
+  suggestion: Suggestion | null,
+): AuthoredGoal => {
+  if (suggestion === null) {
+    return {
+      text: mine.text,
+      target: mine.target,
+      unit: mine.unit,
+      unitCanonical: null,
+      category: null,
+      paceHint: null,
+    };
+  }
+
+  const sameText = mine.text.trim() === suggestion.text.trim();
+  const sameTarget = mine.target === suggestion.target;
+  const sameUnit =
+    (mine.unit ?? '').trim().toLowerCase() === (suggestion.unit ?? '').trim().toLowerCase();
+
+  return sameText && sameTarget && sameUnit
+    ? acceptSuggestion(suggestion)
+    : keepOwnWords(mine, suggestion);
 };

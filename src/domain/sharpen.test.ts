@@ -7,6 +7,7 @@ import {
   SHARPEN_SYSTEM_PROMPT,
   type Suggestion,
   acceptSuggestion,
+  authoredFrom,
   buildSharpenUserMessage,
   keepOwnWords,
   normalizeSuggestions,
@@ -311,5 +312,72 @@ describe('choosing between the two cards (§4.2, §6.1a, §7.5)', () => {
   it('never invents a target below one, on either branch (§6.2)', () => {
     expect(acceptSuggestion(walk).target).toBeGreaterThanOrEqual(1);
     expect(keepOwnWords({ text: 'x', target: 1, unit: null }, walk).target).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('authoredFrom — the fields as they now stand (§4.2)', () => {
+  const walk: Suggestion = {
+    text: 'Walk',
+    target: 300,
+    unit: 'walks',
+    unitCanonical: 'walk',
+    category: 'fitness',
+    paceHint: 'about six a week',
+  };
+
+  it('takes the suggestion whole when nothing was touched', () => {
+    expect(authoredFrom({ text: 'Walk', target: 300, unit: 'walks' }, walk))
+      .toEqual(acceptSuggestion(walk));
+  });
+
+  it('tolerates surrounding whitespace and unit casing as untouched', () => {
+    expect(authoredFrom({ text: '  Walk ', target: 300, unit: 'Walks' }, walk).paceHint)
+      .toBe('about six a week');
+  });
+
+  it('drops the pace hint the moment the target is edited', () => {
+    // §4.2 invites this edit. "about six a week" describes 300, not 150.
+    const edited = authoredFrom({ text: 'Walk', target: 150, unit: 'walks' }, walk);
+    expect(edited.target).toBe(150);
+    expect(edited.paceHint).toBeNull();
+    expect(edited.category).toBe('fitness');
+    expect(edited.unitCanonical).toBe('walk');
+  });
+
+  it('keeps the category when the wording is edited — it is still the same goal', () => {
+    const edited = authoredFrom({ text: 'Walk the dog', target: 300, unit: 'walks' }, walk);
+    expect(edited.category).toBe('fitness');
+    expect(edited.paceHint).toBeNull();
+  });
+
+  it('drops unit_canonical when the unit is edited to something else', () => {
+    expect(authoredFrom({ text: 'Walk', target: 300, unit: 'miles' }, walk).unitCanonical)
+      .toBeNull();
+  });
+
+  it('invents nothing when there is no suggestion at all (§6.1a)', () => {
+    expect(authoredFrom({ text: 'Read more', target: 1, unit: null }, null)).toEqual({
+      text: 'Read more',
+      target: 1,
+      unit: null,
+      unitCanonical: null,
+      category: null,
+      paceHint: null,
+    });
+  });
+
+  it('carries nothing across when the caller says the suggestion no longer applies', () => {
+    // The screen passes null once the Member has typed a different goal entirely —
+    // otherwise "Save money for a house" inherits `fitness` from the walking suggestion
+    // and lands in the wrong Wrapped bucket (§20.5).
+    const different = authoredFrom({ text: 'Save for a house', target: 1, unit: null }, null);
+    expect(different.category).toBeNull();
+    expect(different.unitCanonical).toBeNull();
+  });
+
+  it('never returns a target below one, however it was reached (§6.2)', () => {
+    for (const target of [1, 2, 300]) {
+      expect(authoredFrom({ text: 'x', target, unit: null }, walk).target).toBeGreaterThanOrEqual(1);
+    }
   });
 });

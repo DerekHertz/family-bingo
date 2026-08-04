@@ -42,7 +42,11 @@ function Chip({ label }: { label: string }) {
         backgroundColor: color.paperSunk,
       }}
     >
-      <Text style={{ ...styles.meta, color: color.ink2 }}>{label}</Text>
+      {/* `label`, not `meta`. `meta` carries textTransform: 'uppercase' and 1.2 of
+          letterSpacing — right for an eyebrow, wrong for the model's own sentence, which
+          it printed as ABOUT SIX A WEEK. §4's copy voice is "warm, brief, occasionally
+          funny", and shouting a pace at somebody is none of those. */}
+      <Text style={{ ...styles.label, color: color.ink2 }}>{label}</Text>
     </View>
   );
 }
