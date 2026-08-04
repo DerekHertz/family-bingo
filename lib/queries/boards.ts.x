@@ -23,8 +23,6 @@ export interface Goal {
   category: string | null;
   /** Display only (§6.3). Nothing in this codebase may branch on it. */
   pace_hint: string | null;
-  /** Set once when Sharpening produced this Goal — the Goal's one sharpen (§4.2). */
-  sharpened_at: string | null;
 }
 
 export interface DraftTile {
@@ -249,7 +247,7 @@ export function useBoard(boardId: string | undefined) {
     queryFn: async (): Promise<DraftTile[]> => {
       const { data, error } = await supabase
         .from('tiles')
-        .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint, sharpened_at), family_goal:family_goal_id (text)')
+        .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint), family_goal:family_goal_id (text)')
         .eq('board_id', boardId ?? '')
         .order('position', { ascending: true });
       if (error !== null) throw error;
@@ -276,14 +274,6 @@ export interface GoalDraft {
   unitCanonical?: string | null;
   category?: string | null;
   paceHint?: string | null;
-  /**
-   * True on the write that follows a successful Sharpening — it stamps `sharpened_at` and
-   * spends the Goal's one sharpen (§4.2, migration 33).
-   *
-   * The stamp is set once and never cleared, so this being `false` on a later edit does
-   * not hand the sharpen back. Editing a sharpened Goal by hand is what §4.2 invites.
-   */
-  sharpened?: boolean;
 }
 
 /**
@@ -309,7 +299,6 @@ export function useWriteGoal(boardId: string) {
         unit_canonical: draft.unitCanonical ?? null,
         category: draft.category ?? null,
         pace_hint: draft.paceHint ?? null,
-        sharpened: draft.sharpened ?? false,
       });
       if (error !== null) throw error;
       return data as Goal;

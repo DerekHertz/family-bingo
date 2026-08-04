@@ -82,6 +82,25 @@ Deno.serve(async (req) => {
   // as every other failure: an outsider learns nothing (api.md §9).
   if (year === null) return ok([], 'unavailable');
 
+  // Whether the caller may act as this Member — checked HERE, before the model is called.
+  //
+  // It used to be checked only by consume_sharpen(), which runs after. Everything in
+  // between trusted a `member_id` straight out of the request body, and
+  // sharpen_budget_remaining() is SECURITY DEFINER with no guard of its own — an unknown
+  // id simply reports the full 100. So an authenticated Member could loop with their own
+  // year_id and any other member_id: every request called Opus 5, the 42501 came back
+  // after the call and was swallowed as `budget_spent`, and §7.8's per-Member cap never
+  // engaged. The bill is the part that has no ceiling.
+  const { data: controlled } = await supabase.rpc('controlled_member_ids');
+  const mayActAs =
+    Array.isArray(controlled) &&
+    controlled.some((row: unknown) =>
+      typeof row === 'string' ? row === memberId : (row as { controlled_member_ids?: string })
+        ?.controlled_member_ids === memberId,
+    );
+  // Same empty answer as every other refusal: an outsider learns nothing (api.md §9).
+  if (!mayActAs) return ok([], 'unavailable');
+
   const { data: remainingBudget } = await supabase.rpc('sharpen_budget_remaining', {
     member_id: memberId,
     year_id: yearId,
@@ -163,13 +182,30 @@ Deno.serve(async (req) => {
 
   // Spent only on a successful response (FRONTEND_DESIGN §4.2). A failure above returns
   // before reaching this line, so a Member never loses a sharpen to a timeout.
+  //
+  // `target_`-prefixed, because that is what the migration declares. The unprefixed names
+  // were a silent total failure: PostgREST resolves an RPC by argument name, so the call
+  // came back PGRST202 "could not find the function", the branch below swallowed it as
+  // `budget_spent`, and the suggestion this function had just paid for was discarded. Every
+  // successful Sharpen returned nothing, and §7.8's limit never incremented. The pgTAP
+  // suite could not see it — it calls the function in SQL, where the names are right.
+  //
+  // `sharpen_budget_remaining` above is NOT prefixed, and that is correct: only
+  // `consume_sharpen` renamed its parameters, to stop ON CONFLICT binding bare column
+  // names to them.
   const { error: budgetError } = await supabase.rpc('consume_sharpen', {
-    member_id: memberId,
-    year_id: yearId,
+    target_member_id: memberId,
+    target_year_id: yearId,
   });
+  // The suggestion is returned either way, and that is the whole lesson of the bug above.
+  //
+  // This branch used to `return ok([], 'budget_spent')`, which threw away a suggestion the
+  // model had already been paid for — and that is exactly what kept the PGRST202 invisible
+  // for so long: a bookkeeping failure looked like an ordinary spent budget. The limit was
+  // already enforced before the call, so by this line the Member has earned the answer;
+  // a counter that failed to increment is this function's problem, not theirs (§7.5).
   if (budgetError !== null) {
-    console.warn('sharpen: budget refused after a successful call', budgetError.message);
-    return ok([], 'budget_spent');
+    console.warn('sharpen: budget not recorded after a successful call', budgetError.message);
   }
 
   return ok(suggestions);

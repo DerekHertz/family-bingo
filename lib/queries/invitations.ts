@@ -159,27 +159,38 @@ export function useRosterActions(familyId: string) {
     },
   };
 
-  const call = (fn: string, arg: Record<string, string>) => async () => {
-    const { error } = await supabase.rpc(fn, arg);
+  /**
+   * Each RPC is named as a literal at its own call site, rather than passed into a
+   * `call(fn, arg)` helper.
+   *
+   * The helper read better and hid all four from `lib/rpc-signatures.test.ts`, which can
+   * only check a name it can see. That guard exists because an RPC argument name is
+   * verified by nothing until runtime — and these four are the Organizer's entire roster
+   * surface, which is precisely the code that should not be the unchecked part.
+   */
+  const raise = ({ error }: { error: { message: string } | null }) => {
     if (error !== null) throw error;
   };
 
   return {
     approve: useMutation({
-      mutationFn: (memberId: string) => call('approve_member', { member_id: memberId })(),
+      mutationFn: async (memberId: string) =>
+        raise(await supabase.rpc('approve_member', { member_id: memberId })),
       ...after,
     }),
     reject: useMutation({
-      mutationFn: (memberId: string) => call('reject_member', { member_id: memberId })(),
+      mutationFn: async (memberId: string) =>
+        raise(await supabase.rpc('reject_member', { member_id: memberId })),
       ...after,
     }),
     remove: useMutation({
-      mutationFn: (memberId: string) => call('remove_member', { member_id: memberId })(),
+      mutationFn: async (memberId: string) =>
+        raise(await supabase.rpc('remove_member', { member_id: memberId })),
       ...after,
     }),
     revoke: useMutation({
-      mutationFn: (invitationId: string) =>
-        call('revoke_invitation', { invitation_id: invitationId })(),
+      mutationFn: async (invitationId: string) =>
+        raise(await supabase.rpc('revoke_invitation', { invitation_id: invitationId })),
       ...after,
     }),
   };
