@@ -25,7 +25,8 @@ verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 | 7 Sharpening | Merged. Save-then-ask, two equal cards, one sharpen per Goal |
 | 8–9 The Centre | Merged. Mode vote, Goal vote, proposals, Organizer tiebreak |
 | 10 Seal | Merged. The Board gets drawn, and has now been **looked at** in the Simulator |
-| 11–21 | **Not started** |
+| 11 Log an Increment | Merged. Tile sheet, optimistic one-tap, delete; sealed Boards get a readable goal list |
+| 12–21 | **Not started** |
 
 Suites: **411 Vitest · 794 pgTAP · 19 integration**, `tsc` clean. All three must pass
 before a merge.
@@ -234,6 +235,21 @@ back to the system font. `theme/fonts.test.ts` greps for the mistake.
 
 ## Open items, none blocking
 
+0. **Positions are never dealt at seal, and §4.1 says they are.** *"The list stays in the
+   order written; positions are dealt at seal, so no Member can place the easy one in a
+   corner."* No migration implements it — `write_goal()` writes to whichever Tile is open
+   and "Write another" fills the lowest empty position, so **the board is exactly write
+   order**, first Goal top-left. The rule against stacking a diagonal with the three
+   easiest Goals is simply absent. Fix belongs inside `seal_year()` so it is idempotent
+   and re-runnable (§10.4): shuffle the 24 authorable positions, leave the Centre at 12,
+   move `position` only — Increments follow the Tile, not the square. **This is the next
+   slice**, agreed with the user 2026-08-04.
+0a. **§3's increment verb is underdetermined.** It asks for a verb "phrased from the goal's
+   unit" and gives *"Walked one"*, *"Read one"*, *"Did it"* — but §7.10 makes
+   `unit_canonical` a singular **noun** (`"book"`), and nothing turns "book" into "read".
+   `src/domain/increment.ts` uses a short table of irregulars with a safe fallback, and
+   deliberately never puts the Member's own (usually plural) wording after "one". The
+   document should say what the rule is; this belongs with the §4.2 contradictions below.
 1. **`docs/api.md` §2.2 lists a `digest` Edge Function that does not exist.** The outbox
    made it redundant and `notify` sends digests. Worth deleting the row.
 1a. **Two spec contradictions worth settling**, both found while building §4.2/§4.3:
