@@ -20,6 +20,8 @@ import { Board } from '../../components/Board';
 import { Button } from '../../components/Button';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import { useSession } from '../../lib/session';
+import { isTileComplete } from '../../src/domain/growth';
+import { completedLines } from '../../src/domain/lines';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
@@ -107,11 +109,38 @@ export default function DraftingTable() {
    */
   if (sealed) {
     const tileCounts = counts.data ?? {};
+    const boardTiles = tiles.map((t) => ({
+      id: t.id,
+      position: t.position,
+      goal:
+        t.goal !== null
+          ? { text: t.goal.text, target: t.goal.target, unit: t.goal.unit }
+          : t.familyGoalText !== null
+            ? // The shared Centre is a Goal like any other once it is decided — one row
+              // referenced by every Board, completed for everyone at once (§12.3).
+              // Target 1: it is done when the Family says it is.
+              { text: t.familyGoalText, target: 1, unit: null }
+            : null,
+      count: tileCounts[t.id] ?? 0,
+    }));
+
+    // Derived here, on every render, from the counts already in hand — §13.1's Lines are
+    // never stored, and `milestones` records that a Line was *reached* rather than which
+    // Lines stand. Passing `[]` until slice 13 would have drawn twelve empty pips beneath
+    // a board with a finished row on it.
+    const lines = completedLines(
+      new Set(
+        boardTiles
+          .filter((t) => t.goal !== null && isTileComplete(t.count, t.goal.target))
+          .map((t) => t.position),
+      ),
+    );
+
     return (
-      <ScrollView
-        style={{ flex: 1, backgroundColor: color.paper }}
-        contentContainerStyle={{ paddingTop: size.screenTop, paddingBottom: space.xxl }}
-      >
+      // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
+      // never shrinks, never paginates. Header and board are outside the ScrollView; only
+      // the footer is inside it, which is what gives an SE somewhere to put the overflow.
+      <View style={{ flex: 1, backgroundColor: color.paper, paddingTop: size.screenTop }}>
         <View style={{ paddingHorizontal: space.xl }}>
           <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
             {title}
@@ -123,21 +152,9 @@ export default function DraftingTable() {
 
         <View style={{ marginTop: space.lg }}>
           <Board
-            tiles={tiles.map((t) => ({
-              id: t.id,
-              position: t.position,
-              goal:
-                t.goal !== null
-                  ? { text: t.goal.text, target: t.goal.target, unit: t.goal.unit }
-                  : t.familyGoalText !== null
-                    ? // The shared Centre is a Goal like any other once it is decided —
-                      // one row referenced by every Board, completed for everyone at once
-                      // (§12.3). Target 1: it is done when the Family says it is.
-                      { text: t.familyGoalText, target: 1, unit: null }
-                    : null,
-              count: tileCounts[t.id] ?? 0,
-            }))}
+            tiles={boardTiles}
             centreMode={head.data.year.centerMode}
+            completedLines={lines}
             // Logging is slice 11 and the tile sheet is where it lives (§3) — a mis-tap
             // on a 67pt target in a pocket must never write a row. Until that exists,
             // tapping a square does nothing rather than doing something surprising.
@@ -145,24 +162,26 @@ export default function DraftingTable() {
           />
         </View>
 
-        <Text
-          style={{
-            ...styles.label,
-            color: color.ink3,
-            marginTop: space.lg,
-            textAlign: 'center',
-          }}
-        >
-          This board has sealed. Changing a goal now costs a swap.
-        </Text>
+        <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}>
+          <Text
+            style={{
+              ...styles.label,
+              color: color.ink3,
+              marginTop: space.lg,
+              textAlign: 'center',
+            }}
+          >
+            This board has sealed. Changing a goal now costs a swap.
+          </Text>
 
-        <Button
-          label="Back"
-          variant="text"
-          style={{ marginTop: space.xl, marginHorizontal: space.xl, alignItems: 'flex-start' }}
-          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
-        />
-      </ScrollView>
+          <Button
+            label="Back"
+            variant="text"
+            style={{ marginTop: space.xl, marginHorizontal: space.xl, alignItems: 'flex-start' }}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
+          />
+        </ScrollView>
+      </View>
     );
   }
   // Hoisted out of head.data because the narrowing above does not survive into a closure.

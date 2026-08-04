@@ -54,6 +54,31 @@ export const rowOf = (position: number): number => Math.floor(position / BOARD_W
 export const columnOf = (position: number): number => position % BOARD_WIDTH;
 
 /**
+ * Anything carrying a `position`, grouped into the Board's five rows and sorted by column.
+ *
+ * The renderer needs rows because a 5×5 laid out as one wrapping strip cannot be made
+ * exact: five children of `100/5`% plus four gaps is wider than the row that holds them,
+ * so the fifth wraps and the board silently becomes 4×7. Five explicit rows of five
+ * `flex: 1` children need no percentage at all and land on §3's 66.8pt at 402pt.
+ *
+ * Rows are always `BOARD_WIDTH` long, and a position nobody supplied is a `null` hole
+ * rather than a shortened row — a Board missing a Tile must still be square, or every
+ * square after the gap shifts into the wrong column and the pip row beneath it describes
+ * lines that are not there.
+ */
+export const rowsOf = <T extends { position: number }>(
+  items: readonly T[],
+): (T | null)[][] => {
+  const byPosition = new Map(items.map((item) => [item.position, item]));
+  return Array.from({ length: BOARD_WIDTH }, (_, row) =>
+    Array.from(
+      { length: BOARD_WIDTH },
+      (_, column) => byPosition.get(row * BOARD_WIDTH + column) ?? null,
+    ),
+  );
+};
+
+/**
  * Line indices passing through a position. The Center Tile sits on 4 of them, which is
  * why completing a shared Family Goal advances every Member on four Lines at once.
  */

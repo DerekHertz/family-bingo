@@ -1,18 +1,12 @@
 /**
  * One square of the Board (FRONTEND_DESIGN §2, §3 `<Tile>`).
  *
- * The growth ladder is the most important piece of visual logic in the app, and every bit
- * of it is derived from `COUNT(increments) / target` on render — **never a stored flag**
- * (§12.1). A cached count and an append-only log drift; the log is the source of truth.
+ * The square: its ground, its border, its one accessibility label, and the tap target.
+ * The picture inside it is `<TileGrowth>`, which slice 11's `<TileSheet>` renders too.
  *
- * Five stages, and the transitions are the point:
- *
- *   - `dormant`   an empty well. Nothing else.
- *   - `seeded`    a seed resting on the soil line.
- *   - `sprouting` a stem with **one** leaf, always one.
- *   - `budding`   the head opens at the stem tip — the only warm mark on an unfinished
- *                 board, which is why `sun` exists and why it is used nowhere else.
- *   - `complete`  stem and leaf **fall away**; a wide-petalled flower on solid moss.
+ * Which stage a Tile is on is derived from `COUNT(increments) / target` on render and
+ * **never from a stored flag** (§12.1). A cached count and an append-only log drift; the
+ * log is the source of truth.
  *
  * Past 100% nothing happens: 160 of 150 renders exactly as 150. Overshoot is celebrated
  * once, in Wrapped, and never on the board — where it would quietly reintroduce the
@@ -22,11 +16,10 @@
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { progressOf, stageOf } from '../src/domain/growth';
-import { stemOf } from '../src/ui/sunflower';
-import { HEAD_SIZE, PETAL_SPREAD } from '../src/ui/sunflower';
+import { columnOf, rowOf } from '../src/domain/lines';
 import { styles } from '../theme/fonts';
 import { color, radius, space } from '../theme/tokens';
-import { Sunflower } from './Sunflower';
+import { TileGrowth } from './TileGrowth';
 
 export interface TileGoal {
   text: string;
@@ -44,26 +37,6 @@ interface Props {
   onPress: () => void;
 }
 
-/** §2's leaf glyph: two opposite corners rounded, tilted. No asset. */
-function Leaf({ size, bottom }: { size: number; bottom: number }) {
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        bottom,
-        left: '50%',
-        width: size,
-        height: size,
-        marginLeft: -9,
-        backgroundColor: color.moss,
-        borderTopLeftRadius: size,
-        borderBottomRightRadius: size,
-        transform: [{ rotate: '-15deg' }],
-      }}
-    />
-  );
-}
-
 export const Tile = memo(function Tile({
   position,
   goal,
@@ -72,19 +45,21 @@ export const Tile = memo(function Tile({
   centreMode,
   onPress,
 }: Props) {
-  const target = goal?.target ?? 1;
-  const stage = goal === null ? 'dormant' : stageOf(count, target);
-  const progress = goal === null ? 0 : progressOf(count, target);
-  const stem = stemOf(progress);
+  // An empty Tile has no target to measure against, so it is dormant by definition rather
+  // than by arithmetic — `stageOf(0, 1)` would agree, but only by coincidence.
+  const stage = goal === null ? 'dormant' : stageOf(count, goal.target);
+  const progress = goal === null ? 0 : progressOf(count, goal.target);
   const shared = isCentre && centreMode === 'shared';
 
   // §6: position, goal, progress, state — in that order, so a screen reader gives the
-  // same four facts about every square and they arrive in a predictable place.
-  const where = `Row ${Math.floor(position / 5) + 1}, column ${(position % 5) + 1}`;
+  // same four facts about every square and they arrive in a predictable place. Row and
+  // column come from the domain, where the row-major rule of §5.4 is defined and tested;
+  // recomputing them here is how the board and the line detector drift apart.
+  const where = `Row ${rowOf(position) + 1}, column ${columnOf(position) + 1}`;
   const label =
     goal === null
       ? `${where}. Empty${isCentre ? ', the centre' : ''}.`
-      : `${where}. ${goal.text}. ${count} of ${target}${
+      : `${where}. ${goal.text}. ${count} of ${goal.target}${
           goal.unit === null ? '' : ` ${goal.unit}`
         }. ${stage === 'complete' ? 'Complete' : 'In progress'}.`;
 
@@ -94,7 +69,7 @@ export const Tile = memo(function Tile({
       accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => ({
-        flex: 1,
+        width: '100%',
         aspectRatio: 1,
         overflow: 'hidden',
         borderRadius: radius.tile,
@@ -104,7 +79,7 @@ export const Tile = memo(function Tile({
         borderWidth: shared ? 1.5 : 1,
         // An unfilled Tile on a sealed Board is dashed — it is a Tile whose Goal has not
         // been written yet, not a mistake (§10.2, §3).
-        borderStyle: goal === null && stage === 'dormant' ? 'dashed' : 'solid',
+        borderStyle: goal === null ? 'dashed' : 'solid',
         borderColor: shared ? color.clay : color.hairline,
         alignItems: 'center',
         justifyContent: 'center',
@@ -125,88 +100,20 @@ export const Tile = memo(function Tile({
         />
       ) : null}
 
-      {stage === 'seeded' ? (
-        <>
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: `${progress * 100}%`,
-              backgroundColor: color.mossTint,
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 9,
-              width: 9,
-              height: 12,
-              borderRadius: 6,
-              backgroundColor: color.ink3,
-            }}
-          />
-        </>
-      ) : null}
-
-      {stage === 'sprouting' || stage === 'budding' ? (
-        <>
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: `${progress * 100}%`,
-              backgroundColor: color.mossTint,
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 9,
-              width: 2,
-              height: stem.stemHeight,
-              backgroundColor: color.moss,
-            }}
-          />
-          {/* One leaf. Always one — a second never reads as a pair at tile scale and it
-              competes with the head at 82% (§2). */}
-          <Leaf size={stem.leafSize} bottom={stem.leafBottom} />
-          {stage === 'budding' ? (
-            <View style={{ position: 'absolute', bottom: stem.headBottom }}>
-              <Sunflower
-                size={HEAD_SIZE.budding}
-                petalColor={color.sun}
-                petalSpread={PETAL_SPREAD.budding}
-              />
-            </View>
-          ) : null}
-        </>
-      ) : null}
+      <TileGrowth stage={stage} progress={progress} />
 
       {stage === 'complete' ? (
-        <>
-          {/* Stem and leaf fall away — leaves are for growing, the flower is for
-              arriving. Do not add a leaf back to "balance" it (§2). */}
-          <Sunflower
-            size={HEAD_SIZE.complete}
-            petalColor={color.paper}
-            petalSpread={PETAL_SPREAD.complete}
-          />
-          <Text
-            style={{
-              ...styles.label,
-              position: 'absolute',
-              top: 2,
-              right: 4,
-              color: color.paper,
-            }}
-          >
-            ✓
-          </Text>
-        </>
+        <Text
+          style={{
+            ...styles.label,
+            position: 'absolute',
+            top: 2,
+            right: 4,
+            color: color.paper,
+          }}
+        >
+          ✓
+        </Text>
       ) : null}
     </Pressable>
   );
