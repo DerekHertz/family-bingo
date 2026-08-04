@@ -16,9 +16,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
+import { Board } from '../../components/Board';
 import { Button } from '../../components/Button';
-import { useBoard, useBoardHead } from '../../lib/queries/boards';
+import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import { useSession } from '../../lib/session';
+import { isTileComplete } from '../../src/domain/growth';
+import { completedLines } from '../../src/domain/lines';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
@@ -30,6 +33,7 @@ export default function DraftingTable() {
   const session = useSession();
   const head = useBoardHead(id, session?.user.id);
   const board = useBoard(id);
+  const counts = useTileCounts((board.data ?? []).map((t) => t.id), session?.user.id);
 
   if (head.isPending || board.isPending) {
     return (
@@ -94,6 +98,132 @@ export default function DraftingTable() {
       : head.data.year.setupDeadline;
 
   const title = head.data.isSelf ? 'Your goals' : `${head.data.memberName}’s goals`;
+
+  /**
+   * Sealed Boards are drawn; drafts are listed.
+   *
+   * §4.1: "Authoring is a list, not a grid — a 66.8pt tile cannot hold a sentence, and
+   * the board isn't drawn until it seals." So the same route is two screens, and which
+   * one you get is a fact about the Board rather than a navigation choice. Sealing is
+   * the moment twenty-four sentences become a board.
+   */
+  if (sealed) {
+    // A Board rendered from counts that never arrived is a Board of 25 dormant Tiles and
+    // an empty pip strip — a confident, wrong answer of exactly the kind `board.isError`
+    // above exists to prevent. `isLoading` rather than `isPending`, because a disabled
+    // query is pending forever and the Tiles are not fetched yet on the first render.
+    if (counts.isLoading) {
+      return (
+        <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
+          <ActivityIndicator
+            color={color.ink3}
+            accessibilityRole="progressbar"
+            accessibilityLabel="Loading the board"
+          />
+        </View>
+      );
+    }
+    if (counts.isError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
+          <Text style={{ ...styles.body, color: color.ink2 }}>
+            Couldn&rsquo;t open that board just now. Try again in a moment.
+          </Text>
+          <Button
+            label="Back"
+            variant="text"
+            style={{ marginTop: space.lg, alignItems: 'flex-start' }}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
+          />
+        </View>
+      );
+    }
+
+    const tileCounts = counts.data ?? {};
+    const boardTiles = tiles.map((t) => ({
+      id: t.id,
+      position: t.position,
+      goal:
+        t.goal !== null
+          ? { text: t.goal.text, target: t.goal.target, unit: t.goal.unit }
+          : t.familyGoalText !== null
+            ? // The shared Centre is a Goal like any other once it is decided — one row
+              // referenced by every Board, completed for everyone at once (§12.3).
+              // Target 1: it is done when the Family says it is.
+              { text: t.familyGoalText, target: 1, unit: null }
+            : null,
+      // The shared Centre takes no Increments — `tile_is_loggable()` refuses them, because
+      // a Family Goal has no Target and is marked done rather than counted up (§12.3). Its
+      // count comes from `completed_at`, and counting Increments there would answer 0 for
+      // a Goal the whole Family has finished.
+      count:
+        t.familyGoalText !== null
+          ? t.familyGoalCompletedAt === null
+            ? 0
+            : 1
+          : (tileCounts[t.id] ?? 0),
+    }));
+
+    // Derived here, on every render, from the counts already in hand — §13.1's Lines are
+    // never stored, and `milestones` records that a Line was *reached* rather than which
+    // Lines stand. Passing `[]` until slice 13 would have drawn twelve empty pips beneath
+    // a board with a finished row on it.
+    const lines = completedLines(
+      new Set(
+        boardTiles
+          .filter((t) => t.goal !== null && isTileComplete(t.count, t.goal.target))
+          .map((t) => t.position),
+      ),
+    );
+
+    return (
+      // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
+      // never shrinks, never paginates. Header and board are outside the ScrollView; only
+      // the footer is inside it, which is what gives an SE somewhere to put the overflow.
+      <View style={{ flex: 1, backgroundColor: color.paper, paddingTop: size.screenTop }}>
+        <View style={{ paddingHorizontal: space.xl }}>
+          <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
+            {title}
+          </Text>
+          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
+            {head.data.year.calendarYear}
+          </Text>
+        </View>
+
+        <View style={{ marginTop: space.lg }}>
+          <Board
+            tiles={boardTiles}
+            centreMode={head.data.year.centerMode}
+            completedLines={lines}
+            // Logging is slice 11 and the tile sheet is where it lives (§3) — a mis-tap
+            // on a 67pt target in a pocket must never write a row. Until that exists,
+            // tapping a square does nothing rather than doing something surprising.
+            onPressTile={() => undefined}
+          />
+        </View>
+
+        <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}>
+          <Text
+            style={{
+              ...styles.label,
+              color: color.ink3,
+              marginTop: space.lg,
+              textAlign: 'center',
+            }}
+          >
+            This board has sealed. Changing a goal now costs a swap.
+          </Text>
+
+          <Button
+            label="Back"
+            variant="text"
+            style={{ marginTop: space.xl, marginHorizontal: space.xl, alignItems: 'flex-start' }}
+            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
+          />
+        </ScrollView>
+      </View>
+    );
+  }
   // Hoisted out of head.data because the narrowing above does not survive into a closure.
   const centreRoute = { yearId: head.data.year.id, familyId: head.data.familyId };
 

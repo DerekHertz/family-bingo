@@ -8,6 +8,7 @@ import {
   isBlackout,
   linesThrough,
   rowOf,
+  rowsOf,
 } from './lines';
 
 /**
@@ -185,5 +186,48 @@ describe('isBlackout', () => {
   it('is not fooled by out-of-range positions padding the count', () => {
     const done = new Set([...BOARD_POSITIONS.filter((p) => p !== 24), 99, 100]);
     expect(isBlackout(done)).toBe(false);
+  });
+});
+
+describe('rowsOf — the Board laid out as five rows (§5.4)', () => {
+  const tiles = BOARD_POSITIONS.map((position) => ({ position, id: `t${position}` }));
+
+  it('is always 5 rows of 5, even from an empty list', () => {
+    for (const input of [tiles, tiles.slice(0, 3), []]) {
+      const rows = rowsOf(input);
+      expect(rows).toHaveLength(5);
+      for (const row of rows) expect(row).toHaveLength(5);
+    }
+  });
+
+  it('puts every position in the row and column §5.4 gives it', () => {
+    const rows = rowsOf(tiles);
+    for (const p of BOARD_POSITIONS) {
+      expect(rows[rowOf(p)]![columnOf(p)]).toEqual({ position: p, id: `t${p}` });
+    }
+  });
+
+  it('reads the same whatever order the Tiles arrived in', () => {
+    const shuffled = [...tiles].reverse();
+    expect(rowsOf(shuffled)).toEqual(rowsOf(tiles));
+  });
+
+  it('puts the Center Tile in the middle of the middle row', () => {
+    expect(rowsOf(tiles)[2]![2]!.position).toBe(CENTER_POSITION);
+  });
+
+  // The reason rows exist rather than one wrapping strip: a missing Tile must leave a hole
+  // in its own place, not pull every later square one column to the left. A shifted board
+  // would render lines that are not there.
+  it('leaves a null hole where a Tile is missing, without shifting the rest', () => {
+    const rows = rowsOf(tiles.filter((t) => t.position !== 7));
+    expect(rows[1]![2]).toBeNull();
+    expect(rows[1]![3]!.position).toBe(8);
+    expect(rows[4]![4]!.position).toBe(24);
+  });
+
+  it('ignores positions that are not on a Board', () => {
+    const rows = rowsOf([...tiles, { position: 25, id: 'off' }, { position: -1, id: 'off' }]);
+    expect(rows.flat().map((t) => t!.id)).toEqual(tiles.map((t) => t.id));
   });
 });

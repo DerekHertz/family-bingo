@@ -33,6 +33,17 @@ export interface DraftTile {
   goal: Goal | null;
   /** The Centre, once the vote has resolved to `shared` (§9.4). Not authored here. */
   familyGoalText: string | null;
+  /**
+   * When the Family marked the shared Goal done (§12.3) — the Centre's *only* completion
+   * signal, and the reason this field has to exist.
+   *
+   * A Family Goal has no Target and takes no Increments: `tile_is_loggable()` refuses them
+   * on the shared Centre, because it "is marked done by any Member and completes for
+   * everyone at once". So counting Increments on that Tile answers 0 forever, and a
+   * completed Family Goal would render dormant, sit outside `completedLines()`, and make
+   * the four Lines through the Centre — and therefore Blackout (§13.3) — unreachable.
+   */
+  familyGoalCompletedAt: string | null;
 }
 
 /** One controlled Member's Board for a Year, with enough to render a row for it. */
@@ -249,20 +260,83 @@ export function useBoard(boardId: string | undefined) {
     queryFn: async (): Promise<DraftTile[]> => {
       const { data, error } = await supabase
         .from('tiles')
-        .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint, sharpened_at), family_goal:family_goal_id (text)')
+        .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint, sharpened_at), family_goal:family_goal_id (text, completed_at)')
         .eq('board_id', boardId ?? '')
         .order('position', { ascending: true });
       if (error !== null) throw error;
 
       return (data ?? []).map((row) => {
-        const familyGoal = row.family_goal as unknown as { text: string } | null;
+        const familyGoal = row.family_goal as unknown as {
+          text: string;
+          completed_at: string | null;
+        } | null;
         return {
           id: row.id as string,
           position: row.position as number,
           goal: (row.goal as unknown as Goal | null) ?? null,
           familyGoalText: familyGoal?.text ?? null,
+          familyGoalCompletedAt: familyGoal?.completed_at ?? null,
         };
       });
+    },
+  });
+}
+
+/**
+ * How many Increments each Tile on this Board has.
+ *
+ * Counted here rather than read from a column, because §11.4 is explicit: progress is
+ * `COUNT(increments)` and **must not be denormalised** — a cached counter and an
+ * append-only log drift, and the log is the source of truth.
+ *
+ * Keyed by `tile_id`, which is what `increments` actually references. A Goal is reachable
+ * only through its Tile, and a Swap replaces the Goal while the Tile stays put (§18.6) —
+ * so counting per Tile is also the only version that survives slice 18.
+ */
+export const tileCountsKey = (tileIds: readonly string[], accountId: string) =>
+  // Sorted so the key is stable: the same Board must not produce a different cache entry
+  // because two Tiles arrived in a different order.
+  ['tile-counts', [...tileIds].sort().join(','), accountId] as const;
+
+/** PostgREST's `max_rows`, from `supabase/config.toml`. A full page means there is more. */
+const PAGE = 1000;
+
+export function useTileCounts(tileIds: readonly string[], accountId: string | undefined) {
+  return useQuery({
+    // Carries the Account, like every other key here. `increments_family_read` filters on
+    // `visible_member_ids()`, so these rows are not the same for every caller — the same
+    // 25 Tile ids answer real counts for a Member of the Family and nothing at all for
+    // anyone else, which is exactly the shape of the cross-Account leak the handoff warns
+    // about twice.
+    queryKey: tileCountsKey(tileIds, accountId ?? 'anonymous'),
+    enabled: tileIds.length > 0 && accountId !== undefined,
+    queryFn: async (): Promise<Record<string, number>> => {
+      const counts: Record<string, number> = {};
+
+      // Paged, because PostgREST truncates at `max_rows = 1000` and reports no error when
+      // it does. `goals.target` has no upper bound, so one "read 2000 pages" Goal — or a
+      // busy Board in aggregate — silently loses Increments, and a complete Tile renders
+      // as `sprouting` with its Line missing from the pip strip. A count that quietly
+      // shrinks is worse than a slow one: §11.4 makes `COUNT(increments)` the source of
+      // truth precisely so it cannot drift.
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('increments')
+          .select('tile_id')
+          // An explicit order, or the pages are not a partition: without one PostgREST
+          // gives no stable row order and successive ranges may repeat and omit rows.
+          .order('id', { ascending: true })
+          .in('tile_id', [...tileIds])
+          .range(from, from + PAGE - 1);
+        if (error !== null) throw error;
+
+        const rows = data ?? [];
+        for (const row of rows) {
+          const id = row.tile_id as string;
+          counts[id] = (counts[id] ?? 0) + 1;
+        }
+        if (rows.length < PAGE) return counts;
+      }
     },
   });
 }
