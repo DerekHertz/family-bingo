@@ -24,7 +24,7 @@ verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 | 6 Write a Goal | Merged. Drafting table + compose screen; `sharpened_at` added in slice 7 |
 | 7 Sharpening | Merged. Save-then-ask, two equal cards, one sharpen per Goal |
 | 8–9 The Centre | Merged. Mode vote, Goal vote, proposals, Organizer tiebreak |
-| 10 Seal | **In progress** on `slice-10-seal` — see below |
+| 10 Seal | Merged. The Board gets drawn, and has now been **looked at** in the Simulator |
 | 11–21 | **Not started** |
 
 Suites: **411 Vitest · 794 pgTAP · 19 integration**, `tsc` clean. All three must pass
@@ -37,20 +37,38 @@ server. The client half is **the Board being drawn**, because §4.1 says authori
 list and "the board isn't drawn until it seals" — so sealing is the moment twenty-four
 sentences become a grid.
 
-Done and typechecking on the branch:
+What shipped:
 
 - `components/Sunflower.tsx` — 8 `View` petals + disc, memoised, all geometry from the
   already-tested `src/ui/sunflower.ts`
-- `components/Tile.tsx` — the five growth stages of §2, including the leaf positioned
-  against the *stem* rather than the tile
-- `components/Board.tsx` — 5×5, never scrolls, plus the 12-segment line pip row
+- `components/TileGrowth.tsx` — the five growth stages of §2 as a picture, taking a stage
+  and a progress, including the leaf positioned against the *stem* rather than the tile,
+  and completion's four cues (§6 A2: fill, silhouette, check, hatch). Slice 11's
+  `<TileSheet>` should render **this**, not a second copy of the arithmetic
+- `components/Tile.tsx` — the square: ground, border, one label, tap target
+- `components/LinePips.tsx` — the 12-segment row; §13 puts it on the Family screen too
+- `components/Board.tsx` — 5×5, never scrolls, from `rowsOf()` in the domain
 - `app/board/[id].tsx` branches: sealed renders the grid, a draft renders the list
-- `useTileCounts` — `COUNT(increments)` per Tile, never denormalised (§11.4)
+- `useTileCounts` — `COUNT(increments)` per Tile, never denormalised (§11.4), paged
 
-Not done: nobody has **looked at it**. No sealed Board exists in the dev data, so the
-growth ladder has never been rendered — that is the first thing to check, and it needs a
-Board with `sealed_at` set and some Increments. Tapping a Tile is deliberately inert;
-the TileSheet and one-tap logging are slice 11.
+Rendered and checked in the Simulator against a seeded Board (see *Looking at a screen*).
+Tapping a Tile is deliberately inert and the squares render **non-interactive** because of
+it — the TileSheet and one-tap logging are slice 11.
+
+Four things the review caught here are worth carrying forward, because three of them are
+shapes that will recur:
+
+- **The shared Centre takes no Increments.** `tile_is_loggable()` refuses them: a Family
+  Goal has no Target and is *marked done* (§12.3). Anything deriving Centre progress from
+  `COUNT(increments)` answers 0 forever — which silently made the four Lines through the
+  Centre, and Blackout (§13.3), unreachable. Read `family_goals.completed_at`.
+- **PostgREST truncates at `max_rows = 1000` and says nothing.** Any `select` that can
+  return more than a thousand rows has to page. `goals.target` has no upper bound.
+- **Percentage widths cannot lay out a 5-across grid.** React Native has no `calc()`, so
+  five children at `20%` plus four gaps overflow the row and the fifth wraps — the Board
+  rendered 4 across for two commits without anything failing. Use rows of `flex: 1`.
+- **A container `accessibilityLabel` without `accessible` never announces**, and adding
+  `accessible` collapses the subtree on iOS, taking every child label with it.
 
 ```sh
 npm test                  # pure layers — milliseconds, no Docker
@@ -98,10 +116,14 @@ against it.
   domain layer.
 - `.env` holds `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`; it is
   gitignored. `.env.example` is the template.
-- **No simulator on this machine** (Intel Mac, macOS 15.7, no Xcode). `npx expo start --web`
-  is one preview; **Expo Go on the user's iPhone 15 (iOS 26.6)** is the other. The
-  assistant **cannot see either** — the Chrome automation drives a different machine's
-  browser. The user is the eyes; ask them to look when a screen's type or spacing matters.
+- **The iOS Simulator works on this machine** as of 2026-08-04. Xcode 26.3 is installed at
+  `/Applications/Xcode.app` and the iOS 26.3 runtime still ships `x86_64`, so it runs on
+  this Intel Mac — check with
+  `xcrun simctl list runtimes -j | python3 -c "import json,sys; print(json.load(sys.stdin)['runtimes'][0]['supportedArchitectures'])"`
+  before assuming a future runtime does. `npx expo start --ios` boots Expo Go in it.
+  **The assistant can now see the app** via `xcrun simctl io booted screenshot`, which is a
+  change from every previous session — the user no longer has to be the eyes.
+  Expo Go on the user's iPhone 15 (iOS 26.6) and `--web` remain the other two previews.
 - **Expo Go must match the SDK exactly.** SDK 57 needs Expo Go **57.0.6** (iOS) /
   **57.0.3** (Android); an older client refuses with *"Project is incompatible with this
   version of Expo Go"*. An in-place App Store update can sit pending — deleting and
@@ -115,6 +137,44 @@ against it.
 - **Two duplicated-dependency traps have already bitten.** `react-native-screens` was
   installed twice at different versions, which Expo Go cannot load at all; `expo-doctor`
   catches this class and is worth running whenever the device build misbehaves.
+
+---
+
+## Looking at a screen, end to end
+
+The whole loop, with no email and no live data:
+
+1. `npx supabase start`, then `npx supabase functions serve --env-file supabase/.env`
+   (that file holds `DEV_LOGIN_SECRET`; **it must be ≥32 characters** or `dev-login`
+   answers a flat `not_found`, which is the same answer it gives a wrong secret).
+2. `.env.local` — gitignored, and Expo loads it *ahead of* `.env`, so it redirects the app
+   at the Docker stack without touching the live config. Delete it to go back.
+3. `node scripts/seed-sealed-board.mjs` — one sealed Board carrying all five growth stages,
+   two unfilled Tiles (§10.2), a shared Centre and one complete row. It prints the ids.
+   Idempotent, and **only ever run against local**: sealing is irreversible (§10.3), so
+   this must never be pointed at the live project.
+4. `npx expo start --ios`.
+5. Sign in with **no taps**: mint a session with the password grant and deep-link it into
+   `/auth/callback`. Use the **query string, not the fragment** — Expo Go drops the
+   fragment, and the callback then spins forever on a URL that never arrives, which looks
+   exactly like a hung network call.
+
+   ```sh
+   xcrun simctl openurl booted \
+     "exp://<lan-ip>:8081/--/auth/callback?access_token=$AT&refresh_token=$RT"
+   ```
+6. Navigate the same way: `exp://<lan-ip>:8081/--/board/<id>`.
+
+Two traps that cost time here:
+
+- **`npm run db:test` needs a clean database.** Several suites do
+  `select id from families limit 1`, so *any* seeded row makes them pick the wrong Family
+  and ~20 tests fail for reasons that have nothing to do with the change. Run
+  `npx supabase db reset` before pgTAP, and re-seed after.
+- **`simctl` cannot tap.** Screenshots are free, but synthesising a touch needs a `CGEvent`
+  post — System Events' `click at` answers `-25204` against the Simulator — and the host
+  process needs Accessibility permission. Prefer deep links over taps wherever a route
+  accepts one.
 
 ---
 
