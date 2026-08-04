@@ -23,6 +23,7 @@ import {
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import { SeatPips } from '../../components/SeatPips';
+import { failure } from '../../lib/failure';
 import { useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
 import {
@@ -269,7 +270,9 @@ export default function FamilyRoster() {
               // Three distinct refusals, none of which a retry fixes. One message for all
               // three was advice that could never work.
               onError: (e) => {
-                const raw = e instanceof Error ? e.message : '';
+                // PostgREST rejects with a plain object, so `instanceof Error` read '' and
+        // every branch below was unreachable — see lib/failure.ts.
+        const raw = failure(e).message;
                 say(
                   /organizer/i.test(raw)
                     ? 'Only the Organizer can open a Year.'
@@ -313,7 +316,7 @@ export default function FamilyRoster() {
               },
               onError: (e) =>
                 say(
-                  /full/i.test(e instanceof Error ? e.message : '')
+                  /full/i.test(failure(e).message)
                     ? 'This Family is full for now. Removing someone frees a seat.'
                     : 'That didn’t work. Have another go in a moment.',
                 ),

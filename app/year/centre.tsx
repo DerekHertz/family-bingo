@@ -19,7 +19,7 @@
  */
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -52,6 +52,7 @@ import {
   resolveModeVote,
   voteCountCopy,
 } from '../../src/domain/votes';
+import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -79,16 +80,22 @@ function CentreGlyph() {
 }
 
 /** Other people's votes as faces, right-aligned — never as a count (§4.3). */
-function Voters({ names }: { names: { name: string; isManaged: boolean }[] }) {
+function Voters({ names }: { names: { id: string; name: string; isManaged: boolean }[] }) {
   if (names.length === 0) return null;
   return (
     <View
-      accessible
-      accessibilityLabel={`Voted: ${names.map((n) => n.name).join(', ')}`}
+      // Not `accessible` — the card that owns this row already names the voters in its
+      // own label, and marking this a group would have merged it into that element
+      // anyway. Hidden here, said there, once.
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
       style={{ flexDirection: 'row', gap: space.xs, marginLeft: 'auto' }}
     >
+      {/* Keyed by Member id. Two people in one Family can share a display name — with
+          Managed Members that is ordinary, not a corner case — and a name key would
+          collide. */}
       {names.map((n) => (
-        <Avatar key={n.name} name={n.name} size={22} managed={n.isManaged} />
+        <Avatar key={n.id} name={n.name} size={22} managed={n.isManaged} />
       ))}
     </View>
   );
@@ -98,16 +105,27 @@ export default function Centre() {
   const { yearId, familyId } = useLocalSearchParams<{ yearId: string; familyId: string }>();
   const router = useRouter();
   const session = useSession();
-  const centre = useCentre(yearId, session?.user.id);
+  const centre = useCentre(yearId, session?.user.id, familyId);
   const families = useFamilies(session?.user.id);
   const castBallot = useCastBallot(yearId ?? '');
   const propose = useProposeGoal(yearId ?? '');
   const withdraw = useWithdrawProposal(yearId ?? '');
   const tiebreak = useSetTiebreak(yearId ?? '');
 
+  // Re-renders when the window closes. Without it a Member sitting on this screen at the
+  // deadline keeps being offered controls the server has already stopped accepting.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(tick);
+  }, []);
+
   const [votingAs, setVotingAs] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [trouble, setTrouble] = useState<string | null>(null);
+
+  /** Cleared on every success, so a refusal cannot outlive the thing it refused. */
+  const clearTrouble = () => setTrouble(null);
 
   const say = (message: string) => {
     setTrouble(message);
@@ -150,10 +168,23 @@ export default function Centre() {
   // Defaults to the caller's own Member. A Guardian casts their children's Ballots too —
   // one vote each, and a Guardian never gets two of their own (§4.3).
   const actingAs = votingAs ?? voters.find((v) => !v.isManaged)?.id ?? voters[0]?.id ?? null;
+  // Mirrors `resolve_center_vote`'s `greatest(mode_vote.closes_at, goal_vote.closes_at)`.
+  //
+  // Reading only the mode Vote's deadline happened to be right — `open_year()` gives both
+  // the same `closes_at` and `resolve_center_vote` flips both in one statement — but it
+  // was an invariant the client assumed and the server never promised. §21.1's personal
+  // deadline is exactly the shape that would break it, and the failure would be silent:
+  // a goal section still writable past its own close, every write refused PT403.
+  const closesAt = Math.max(
+    ...[modeVote, goalVote]
+      .filter((v): v is NonNullable<typeof v> => v !== null)
+      .map((v) => new Date(v.closesAt).getTime()),
+    0,
+  );
   const closed =
     modeVote === null ||
-    modeVote.status === 'resolved' ||
-    new Date(modeVote.closesAt).getTime() <= Date.now();
+    (modeVote.status === 'resolved' && (goalVote?.status ?? 'resolved') === 'resolved') ||
+    closesAt <= now;
 
   const myModeBallot = modeBallots.find((b) => b.memberId === actingAs)?.choiceMode ?? null;
   const myGoalBallot = goalBallots.find((b) => b.memberId === actingAs)?.proposalId ?? null;
@@ -161,30 +192,54 @@ export default function Centre() {
     .map((b) => b.choiceMode)
     .filter((c): c is CenterMode => c !== null);
 
-  // §9.1 runs only if the mode is heading for shared. Showing the Goal vote while the
-  // Family is heading for personal would be asking them to do work that gets discarded.
+  // Where the mode is heading — used to word the section, never to hide it.
+  //
+  // Hiding the Goal vote whenever the live tally said `personal` was a real trap, because
+  // `resolveModeVote([])` is `personal` (§8.3): the section was invisible until somebody
+  // voted, and it VANISHED again the moment a late `personal` ballot made it a tie —
+  // taking every Proposal and every goal Ballot with it. A Family could then no longer
+  // propose, vote, move a vote or withdraw, and if the blackout lasted to the deadline
+  // `resolve_center_vote` found no ballots and fell back to `personal` (§9.3). The UI
+  // would have caused the outcome. Nothing is hidden now.
   const headingShared = resolveModeVote(modeChoices) === 'shared';
 
   const mineCount = proposals.filter((p) => p.memberId === actingAs).length;
 
+  /**
+   * What actually went wrong, in words that help.
+   *
+   * Reads `code` first, because that is where the SQLSTATE lives — PostgREST puts it in
+   * its own field and never inside the message text, so the `/PT409/` this used to match
+   * against the message could not have fired once. And it reads through `failure()`
+   * rather than `instanceof Error`, because a PostgREST rejection is a plain object and
+   * the whole chain was dead (see lib/failure.ts).
+   *
+   * Three of these say "this cannot be retried" — a full slate of Proposals, a Proposal
+   * somebody has voted for, a closed window. Answering any of them with "have another go"
+   * is advice that is guaranteed to fail (§0.3).
+   */
   const refusal = (e: unknown): string => {
-    const raw = e instanceof Error ? e.message : '';
-    return /closed|PT403/i.test(raw)
-      ? 'The setup window has closed — the centre is decided now.'
-      : /at most 3|PT409/i.test(raw)
-        ? `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`
-        : /no longer be withdrawn/i.test(raw)
-          ? 'Somebody has voted for this one, so it stays.'
-          : /not your Member/i.test(raw)
-            ? 'That isn’t yours to vote with.'
-            : 'That didn’t go through. Have another go in a moment.';
+    const { message: raw, code } = failure(e);
+    if (code === 'PT403' || /closed/i.test(raw)) {
+      return 'The setup window has closed — the centre is decided now.';
+    }
+    if (/no longer be withdrawn/i.test(raw)) {
+      return 'Somebody has voted for this one, so it stays.';
+    }
+    if (code === 'PT409' || /at most 3/i.test(raw)) {
+      return `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`;
+    }
+    if (code === '42501' || /not your Member|no such Vote|only the Organizer/i.test(raw)) {
+      return 'That isn’t yours to vote with.';
+    }
+    return 'That didn’t go through. Have another go in a moment.';
   };
 
   const voteFor = (proposalId: string) => {
     if (actingAs === null || goalVote === null) return;
     castBallot.mutate(
       { voteId: goalVote.id, memberId: actingAs, proposalId },
-      { onError: (e) => say(refusal(e)) },
+      { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
     );
   };
 
@@ -225,7 +280,11 @@ export default function Centre() {
         {voters.length > 1 ? (
           <View style={{ marginTop: space.lg }}>
             <Text style={{ ...styles.meta, color: color.ink2 }}>Voting as</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm }}>
+            <View
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Voting as"
+              style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm }}
+            >
               {voters.map((v) => (
                 <Pressable
                   key={v.id}
@@ -258,7 +317,11 @@ export default function Centre() {
           Share the middle square?
         </Text>
 
-        <View style={{ gap: size.stack, marginTop: space.md }}>
+        <View
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Share the middle square?"
+          style={{ gap: size.stack, marginTop: space.md }}
+        >
           {(
             [
               ['shared', 'Yes — one goal, all of us'],
@@ -274,16 +337,21 @@ export default function Centre() {
                 key={mode}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: chosen, disabled: closed }}
-                accessibilityLabel={`${label}. ${voteCountCopy(
-                  modeBallots.filter((b) => b.choiceMode === mode).length,
-                )}`}
+                accessibilityLabel={`${label}. ${
+                  modeBallots.filter((b) => b.choiceMode === mode).length === 0
+                    ? voteCountCopy(0)
+                    : `Voted: ${modeBallots
+                        .filter((b) => b.choiceMode === mode)
+                        .map((b) => b.memberName)
+                        .join(', ')}`
+                }`}
                 disabled={closed || actingAs === null || modeVote === null}
                 onPress={() =>
                   modeVote !== null &&
                   actingAs !== null &&
                   castBallot.mutate(
                     { voteId: modeVote.id, memberId: actingAs, choiceMode: mode },
-                    { onError: (e) => say(refusal(e)) },
+                    { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
                   )
                 }
                 style={({ pressed }) => ({
@@ -314,77 +382,117 @@ export default function Centre() {
                   </View>
                 ) : null}
                 <Voters
-                  names={others.map((b) => ({ name: b.memberName, isManaged: b.isManaged }))}
+                  names={others.map((b) => ({
+                    id: b.memberId,
+                    name: b.memberName,
+                    isManaged: b.isManaged,
+                  }))}
                 />
               </Pressable>
             );
           })}
         </View>
 
-        {/* The standing outcome, as a fact. Never a count of what is still needed. */}
+        {/* Once it has resolved, say what it DECIDED — past tense, from the Vote's own
+            `outcome`, not from a tally recomputed after the fact.
+            §9.3 is why this matters rather than being a nicety: a Family can vote shared
+            and still get a personal centre because nobody proposed. Recomputing the tally
+            would have gone on saying "you'll share one goal in the middle" beside "the
+            centre is decided", which is two lines of the same screen disagreeing. The
+            migration keeps `voted_mode` and `resolved_mode` apart for exactly this. */}
         <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-          {modeStandingCopy(modeChoices)}
+          {closed && modeVote?.outcome != null
+            ? modeVote.outcome === 'shared'
+              ? 'You chose to share one goal in the middle.'
+              : 'You chose to each write your own middle square.'
+            : modeStandingCopy(modeChoices)}
         </Text>
 
         {/* ── Slice 9: the Goal, only while shared is where this is heading ──────── */}
-        {headingShared && goalVote !== null ? (
+        {goalVote !== null ? (
           <>
             <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>
               What should it be?
             </Text>
 
-            <View style={{ gap: size.stack, marginTop: space.md }}>
+            {/* Said once, quietly, and never as a shortfall — "these are here if that
+                changes" is a fact about the list, not a request for votes (§8.4). */}
+            {!headingShared ? (
+              <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
+                As it stands everyone writes their own. These are here if that changes.
+              </Text>
+            ) : null}
+
+            <View
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Goals put forward"
+              style={{ gap: size.stack, marginTop: space.md }}
+            >
               {proposals.map((p) => {
                 const votes = goalBallots.filter((b) => b.proposalId === p.id);
                 const chosen = myGoalBallot === p.id;
                 const isTiebreak = goalVote.organizerTiebreakProposalId === p.id;
                 return (
-                  <Pressable
-                    key={p.id}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: chosen, disabled: closed }}
-                    accessibilityLabel={`${p.text}, put forward by ${p.memberName}. ${voteCountCopy(
-                      votes.length,
-                    )}`}
-                    disabled={closed}
-                    onPress={() => voteFor(p.id)}
-                    style={({ pressed }) => ({
-                      padding: space.md,
-                      borderRadius: radius.card,
-                      backgroundColor: color.paperRaised,
-                      borderWidth: 1.5,
-                      borderColor: chosen ? color.clay : color.hairline,
-                      opacity: pressed ? 0.7 : 1,
-                    })}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                      <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>{p.text}</Text>
-                      {chosen ? (
-                        <View
-                          style={{
-                            paddingHorizontal: space.sm,
-                            paddingVertical: 2,
-                            borderRadius: radius.pill,
-                            backgroundColor: color.clayTint,
-                          }}
-                        >
-                          <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
-                        </View>
-                      ) : null}
-                    </View>
+                  <View key={p.id}>
+                    {/* The card holds NO interactive children. A Pressable is
+                        accessible by default, and an accessible container merges its
+                        whole subtree into one element on iOS — which made "Take it back"
+                        and the tiebreak row unreachable to VoiceOver entirely, and
+                        swallowed the voters' label with them. A Guardian could not
+                        withdraw their own Proposal; an Organizer could not record a
+                        tiebreak. The actions are siblings now, the same shape
+                        components/SuggestionCards.tsx already uses. */}
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: chosen, disabled: closed }}
+                      accessibilityLabel={`${p.text}, put forward by ${p.memberName}. ${
+                        votes.length === 0
+                          ? 'No votes yet'
+                          : `Voted: ${votes.map((b) => b.memberName).join(', ')}`
+                      }`}
+                      disabled={closed || actingAs === null}
+                      onPress={() => voteFor(p.id)}
+                      style={({ pressed }) => ({
+                        padding: space.md,
+                        borderRadius: radius.card,
+                        backgroundColor: color.paperRaised,
+                        borderWidth: 1.5,
+                        borderColor: chosen ? color.clay : color.hairline,
+                        opacity: pressed ? 0.7 : 1,
+                      })}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                        <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>{p.text}</Text>
+                        {chosen ? (
+                          <View
+                            style={{
+                              paddingHorizontal: space.sm,
+                              paddingVertical: 2,
+                              borderRadius: radius.pill,
+                              backgroundColor: color.clayTint,
+                            }}
+                          >
+                            <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
+                          </View>
+                        ) : null}
+                      </View>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.sm }}>
-                      <Text style={{ ...styles.meta, color: color.ink3 }}>
-                        {/* Zero reads "No votes yet", never "0" (§4.3). */}
-                        {voteCountCopy(votes.length)}
-                        {isTiebreak ? ' · organizer’s pick if it ties' : ''}
-                      </Text>
-                      <Voters
-                        names={votes
-                          .filter((b) => b.memberId !== actingAs)
-                          .map((b) => ({ name: b.memberName, isManaged: b.isManaged }))}
-                      />
-                    </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.sm }}>
+                        {/* §7 rule 9: never a vote count as a numeral. "4 votes" beside
+                            somebody's idea is the ranking rule 2 forbids, wearing a
+                            different hat — a Proposal has an author. Zero is the one case
+                            with nothing to draw, and §4.3 gives it words instead. */}
+                        <Text style={{ ...styles.meta, color: color.ink3 }}>
+                          {votes.length === 0 ? voteCountCopy(0) : ''}
+                          {isTiebreak ? (votes.length === 0 ? ' · ' : '') + 'organizer’s pick if it ties' : ''}
+                        </Text>
+                        <Voters
+                          names={votes
+                            .filter((b) => b.memberId !== actingAs)
+                            .map((b) => ({ id: b.memberId, name: b.memberName, isManaged: b.isManaged }))}
+                        />
+                      </View>
+                    </Pressable>
 
                     {/* Yours to take back, while nobody else has voted for it. */}
                     {p.memberId === actingAs && !closed ? (
@@ -397,11 +505,14 @@ export default function Centre() {
                             {
                               text: 'Take it back',
                               onPress: () =>
-                                withdraw.mutate(p.id, { onError: (e) => say(refusal(e)) }),
+                                withdraw.mutate(p.id, {
+                                  onSuccess: clearTrouble,
+                                  onError: (e) => say(refusal(e)),
+                                }),
                             },
                           ])
                         }
-                        style={{ minHeight: size.minTouch, justifyContent: 'center' }}
+                        style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
                       >
                         <Text style={{ ...styles.label, color: color.clayDeep }}>Take it back</Text>
                       </Pressable>
@@ -417,17 +528,17 @@ export default function Centre() {
                         onPress={() =>
                           tiebreak.mutate(
                             { voteId: goalVote.id, proposalId: p.id },
-                            { onError: (e) => say(refusal(e)) },
+                            { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
                           )
                         }
-                        style={{ minHeight: size.minTouch, justifyContent: 'center' }}
+                        style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
                       >
                         <Text style={{ ...styles.label, color: color.ink2 }}>
                           Pick this one if it ties
                         </Text>
                       </Pressable>
                     ) : null}
-                  </Pressable>
+                  </View>
                 );
               })}
 
@@ -440,7 +551,12 @@ export default function Centre() {
             </View>
 
             <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-              {goalStandingCopy(
+              {closed && goalVote.outcome != null
+                ? goalVote.outcome === 'personal'
+                  ? // §9.3 said plainly, and without blame. Nobody failed at anything.
+                    'Nobody put one forward, so everyone writes their own.'
+                  : 'This one went in the middle.'
+                : goalStandingCopy(
                 {
                   proposals: proposals.map((p, order) => ({ id: p.id, order })),
                   ballots: goalBallots
@@ -448,8 +564,8 @@ export default function Centre() {
                     .filter((id): id is string => id !== null),
                   organizerTiebreak: goalVote.organizerTiebreakProposalId ?? undefined,
                 },
-                (id) => proposals.find((p) => p.id === id)?.text,
-              )}
+                    (id) => proposals.find((p) => p.id === id)?.text,
+                  )}
             </Text>
 
             {/* Putting one forward. Max 3 each (§9.1), and the count is stated rather
@@ -494,7 +610,13 @@ export default function Centre() {
                     }
                     propose.mutate(
                       { voteId: goalVote.id, memberId: actingAs, text: draft },
-                      { onSuccess: () => setDraft(''), onError: (e) => say(refusal(e)) },
+                      {
+                        onSuccess: () => {
+                          setDraft('');
+                          clearTrouble();
+                        },
+                        onError: (e) => say(refusal(e)),
+                      },
                     );
                   }}
                 />

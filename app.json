@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "scheme": "familybingo",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.hertzell.familybingo"

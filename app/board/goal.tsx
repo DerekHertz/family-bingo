@@ -61,6 +61,7 @@ import {
   unitProblem,
 } from '../../src/domain/goal';
 import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
+import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -239,9 +240,11 @@ export default function ComposeGoal() {
       if (andLeave) router.back();
       return true;
     } catch (e) {
-      const raw = e instanceof Error ? e.message : '';
+      // `failure()`, not `instanceof Error` — PostgREST rejects with a plain object, so
+      // the old read was always '' and every branch below was unreachable.
+      const { message: raw, code } = failure(e);
       say(
-        /sealed/i.test(raw)
+        code === 'PT403' || /sealed/i.test(raw)
           ? 'This board has sealed. Changing a goal now costs a swap.'
           : /Center Tile|centre/i.test(raw)
             ? 'The centre square is the family’s, not yours to write.'

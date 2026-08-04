@@ -26,6 +26,7 @@ import {
   View,
 } from 'react-native';
 import { Button } from '../../components/Button';
+import { failure } from '../../lib/failure';
 import { useCreateManagedMember } from '../../lib/queries/managed';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
@@ -76,7 +77,9 @@ export default function AddChild() {
         router.back();
       },
       onError: (e) => {
-        const raw = e instanceof Error ? e.message : '';
+        // PostgREST rejects with a plain object, so `instanceof Error` read '' and
+        // every branch below was unreachable — see lib/failure.ts.
+        const raw = failure(e).message;
         const message = /full/i.test(raw)
           ? // A child takes a seat like anyone else (§4.5 of the PRD).
             'This Family is full for now. A child takes a seat like anyone else.'

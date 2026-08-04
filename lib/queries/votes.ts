@@ -27,6 +27,8 @@ export interface CentreVote {
   id: string;
   kind: 'mode' | 'goal';
   status: 'open' | 'resolved';
+  /** What the Vote decided, once it has. Null while it is still open. */
+  outcome: string | null;
   closesAt: string;
   organizerTiebreakProposalId: string | null;
 }
@@ -61,8 +63,8 @@ export interface Centre {
  * Carries the Account because `voters` is an answer about the caller, not about the Year.
  * The same trap `boardHeadKey` was fixed for.
  */
-export const centreKey = (yearId: string, accountId: string) =>
-  ['centre', yearId, accountId] as const;
+export const centreKey = (yearId: string, accountId: string, familyId: string) =>
+  ['centre', yearId, accountId, familyId] as const;
 
 /**
  * Everything the Centre screen needs, in four reads.
@@ -71,14 +73,18 @@ export const centreKey = (yearId: string, accountId: string) =>
  * votes as faces — "22pt voter avatars, right-aligned" — rather than as a count. A count
  * is a scoreboard; faces are a family.
  */
-export function useCentre(yearId: string | undefined, accountId: string | undefined) {
+export function useCentre(
+  yearId: string | undefined,
+  accountId: string | undefined,
+  familyId: string | undefined,
+) {
   return useQuery({
-    queryKey: centreKey(yearId ?? 'none', accountId ?? 'anonymous'),
-    enabled: yearId !== undefined && accountId !== undefined,
+    queryKey: centreKey(yearId ?? 'none', accountId ?? 'anonymous', familyId ?? 'none'),
+    enabled: yearId !== undefined && accountId !== undefined && familyId !== undefined,
     queryFn: async (): Promise<Centre> => {
       const { data: voteRows, error: voteError } = await supabase
         .from('votes')
-        .select('id, kind, status, closes_at, organizer_tiebreak_proposal_id')
+        .select('id, kind, status, outcome, closes_at, organizer_tiebreak_proposal_id')
         .eq('year_id', yearId ?? '');
       if (voteError !== null) throw voteError;
 
@@ -86,6 +92,7 @@ export function useCentre(yearId: string | undefined, accountId: string | undefi
         id: v.id as string,
         kind: v.kind as 'mode' | 'goal',
         status: v.status as 'open' | 'resolved',
+        outcome: v.outcome as string | null,
         closesAt: v.closes_at as string,
         organizerTiebreakProposalId: v.organizer_tiebreak_proposal_id as string | null,
       }));
@@ -107,7 +114,11 @@ export function useCentre(yearId: string | undefined, accountId: string | undefi
             // Arrival order, and never re-sorted by votes (§4.3) — a list that reshuffles
             // as votes land turns a family decision into a horse race.
             .in('vote_id', ids)
-            .order('created_at', { ascending: true }),
+            // `id` as the secondary key, matching `resolve_center_vote`'s
+            // `order by t.created_at asc, t.id asc` — two Proposals written in one
+            // transaction share a created_at, and the tiebreak has to agree with the SQL.
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true }),
           supabase
             .from('ballots')
             .select('vote_id, member_id, choice_mode, proposal_id, member:member_id (display_name, account_id)')
@@ -116,12 +127,25 @@ export function useCentre(yearId: string | undefined, accountId: string | undefi
       if (pErr !== null) throw pErr;
       if (bErr !== null) throw bErr;
 
-      // `members_read` is Family-wide, so this needs the caller's own filter — the trap
-      // the handoff names. Exactly `controlled_member_ids()`: self, plus guarded children.
+      // TWO filters, and the Family one is the half that is easy to miss.
+      //
+      // `members_read` is Family-wide, so the caller's own filter is needed — the trap
+      // the handoff names. But `controlled_member_ids()` is not Family-scoped either:
+      // somebody in two Families is two Members (CONTEXT.md), and both of them match
+      // `account_id = auth.uid()`. Without `.eq('family_id', …)` this Year's Centre could
+      // default to voting as the Member from the OTHER Family — every write then refused
+      // by `cast_ballot`'s `family_of_vote <> family_of_member` guard, forever, with
+      // nothing on screen to explain it. It also put two identically-named chips in the
+      // "Voting as" row of an Account with no children at all.
+      //
+      // `joined_at` so the default voter is stable rather than whatever order the rows
+      // happened to come back in.
       const { data: memberRows, error: mErr } = await supabase
         .from('members')
-        .select('id, display_name, account_id, guardian_account_id, family_id, status')
-        .eq('status', 'active');
+        .select('id, display_name, account_id, guardian_account_id, status')
+        .eq('family_id', familyId ?? '')
+        .eq('status', 'active')
+        .order('joined_at', { ascending: true });
       if (mErr !== null) throw mErr;
 
       const proposals: CentreProposal[] = (proposalRows ?? [])
