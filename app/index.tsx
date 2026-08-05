@@ -12,18 +12,12 @@
 
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { BoardMark } from '../components/BoardMark';
+import { Field } from '../components/Field';
+import { FormScreen, Loading, Trouble } from '../components/Screen';
+import { useAnnounce } from '../lib/announce';
 import {
   DevLoginUnavailable,
   NoSuchAccount,
@@ -37,7 +31,7 @@ import {
 } from '../lib/auth';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, size, space } from '../theme/tokens';
 
 export default function SignIn() {
   const session = useSession();
@@ -46,26 +40,16 @@ export default function SignIn() {
   const [busy, setBusy] = useState<Provider | 'email' | 'dev' | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
   // Never `red`, never the word "error" (§1.1, §0.3). Plain words in ink2.
-  const [trouble, setTrouble] = useState<string | null>(null);
+  const { trouble, say, clear } = useAnnounce();
 
   // `undefined` means the keychain is still being read. Rendering the screen during that
   // would flash it at every Member who is already signed in.
-  if (session === undefined) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Checking whether you are signed in"
-        />
-      </View>
-    );
-  }
+  if (session === undefined) return <Loading what="Checking whether you are signed in" />;
   if (session !== null) return <Redirect href="/home" />;
 
   const attempt = async (who: Provider | 'email' | 'dev', run: () => Promise<void>) => {
     setBusy(who);
-    setTrouble(null);
+    clear();
     try {
       await run();
     } catch (e) {
@@ -85,10 +69,9 @@ export default function SignIn() {
               : e instanceof Error && e.message.startsWith('that does not look')
                 ? 'That doesn’t look like an email address.'
                 : 'That didn’t go through. Have another go in a moment.';
-      setTrouble(message);
-      // accessibilityLiveRegion is Android-only; iOS needs to be told outright, or the
-      // one piece of feedback on this screen is silent for a VoiceOver user (§6 A6).
-      AccessibilityInfo.announceForAccessibility(message);
+      // `say`, not `setTrouble`: accessibilityLiveRegion is Android-only, so iOS has to be
+      // told outright or the one piece of feedback on this screen is silent (§6 A6).
+      say(message);
     } finally {
       setBusy(null);
     }
@@ -118,151 +101,123 @@ export default function SignIn() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: space.xl,
+    <FormScreen centred>
+      <BoardMark />
+
+      <Text
+        accessibilityRole="header"
+        style={{
+          ...styles.display,
+          ...size.wordmark,
+          color: color.ink,
+          marginTop: space.lg,
         }}
-        keyboardShouldPersistTaps="handled"
       >
-        <BoardMark />
+        Family Bingo
+      </Text>
 
-        <Text
-          accessibilityRole="header"
-          style={{
-            ...styles.display,
-            ...size.wordmark,
-            color: color.ink,
-            marginTop: space.lg,
-          }}
-        >
-          Family Bingo
-        </Text>
-
-        <View
-          style={{
-            width: '100%',
-            maxWidth: size.formWidth,
-            marginTop: space.xxl,
-            gap: size.stack,
-          }}
-        >
-          {showEmail ? (
-            <>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                placeholderTextColor={color.ink3}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="email"
-                keyboardType="email-address"
-                inputMode="email"
-                accessibilityLabel="Email address"
-                style={{
-                  ...styles.body,
-                  height: size.control,
-                  paddingHorizontal: space.md,
-                  color: color.ink,
-                  backgroundColor: color.paperRaised,
-                  borderWidth: 1,
-                  borderColor: color.hairline,
-                  borderRadius: radius.card,
-                }}
-              />
+      <View
+        style={{
+          width: '100%',
+          maxWidth: size.formWidth,
+          marginTop: space.xxl,
+          gap: size.stack,
+        }}
+      >
+        {showEmail ? (
+          <>
+            <Field
+              value={email}
+              onChangeText={setEmail}
+              placeholder="you@example.com"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              keyboardType="email-address"
+              inputMode="email"
+              accessibilityLabel="Email address"
+            />
+            <Button
+              label={busy === 'email' ? 'Sending…' : 'Send me a link'}
+              variant="filled"
+              disabled={busy !== null || email.trim().length === 0}
+              onPress={() =>
+                void attempt('email', async () => {
+                  await signInWithEmail(email);
+                  setSentTo(email.trim());
+                })
+              }
+            />
+            {/* The development route (lib/auth.ts). Absent entirely unless this build
+                was configured with EXPO_PUBLIC_DEV_LOGIN_SECRET, so it cannot appear in
+                a real one — and quiet even then, because it is scaffolding rather than
+                a fourth way to sign in. */}
+            {devLoginSecret === undefined ? null : (
               <Button
-                label={busy === 'email' ? 'Sending…' : 'Send me a link'}
-                variant="filled"
+                label={busy === 'dev' ? 'Signing in…' : 'Sign in without the email (dev)'}
+                variant="text"
                 disabled={busy !== null || email.trim().length === 0}
-                onPress={() =>
-                  void attempt('email', async () => {
-                    await signInWithEmail(email);
-                    setSentTo(email.trim());
-                  })
-                }
+                onPress={() => void attempt('dev', () => signInWithoutEmail(email))}
               />
-              {/* The development route (lib/auth.ts). Absent entirely unless this build
-                  was configured with EXPO_PUBLIC_DEV_LOGIN_SECRET, so it cannot appear in
-                  a real one — and quiet even then, because it is scaffolding rather than
-                  a fourth way to sign in. */}
-              {devLoginSecret === undefined ? null : (
-                <Button
-                  label={busy === 'dev' ? 'Signing in…' : 'Sign in without the email (dev)'}
-                  variant="text"
-                  disabled={busy !== null || email.trim().length === 0}
-                  onPress={() => void attempt('dev', () => signInWithoutEmail(email))}
-                />
-              )}
+            )}
 
-              {/* Choosing email was one tap; leaving has to be one too. Without this the
-                  only way out is to relaunch the app. */}
-              <Button
-                label="Other ways to sign in"
-                variant="text"
-                disabled={busy !== null}
-                onPress={() => {
-                  setShowEmail(false);
-                  setTrouble(null);
-                }}
-              />
-            </>
-          ) : (
-            <>
-              <Button
-                label="Continue with Apple"
-                variant="filled"
-                disabled={busy !== null}
-                onPress={() => void attempt('apple', () => signInWithProvider('apple'))}
-              />
-              <Button
-                label="Continue with Google"
-                disabled={busy !== null}
-                onPress={() => void attempt('google', () => signInWithProvider('google'))}
-              />
-              <Button
-                label="Email me a link instead"
-                variant="text"
-                disabled={busy !== null}
-                onPress={() => setShowEmail(true)}
-              />
-            </>
-          )}
-        </View>
-
-        {trouble === null ? null : (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={{
-              ...styles.body,
-              color: color.ink2,
-              marginTop: space.lg,
-              textAlign: 'center',
-              maxWidth: size.formWidth,
-            }}
-          >
-            {trouble}
-          </Text>
+            {/* Choosing email was one tap; leaving has to be one too. Without this the
+                only way out is to relaunch the app. */}
+            <Button
+              label="Other ways to sign in"
+              variant="text"
+              disabled={busy !== null}
+              onPress={() => {
+                setShowEmail(false);
+                clear();
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <Button
+              label="Continue with Apple"
+              variant="filled"
+              disabled={busy !== null}
+              onPress={() => void attempt('apple', () => signInWithProvider('apple'))}
+            />
+            <Button
+              label="Continue with Google"
+              disabled={busy !== null}
+              onPress={() => void attempt('google', () => signInWithProvider('google'))}
+            />
+            <Button
+              label="Email me a link instead"
+              variant="text"
+              disabled={busy !== null}
+              onPress={() => setShowEmail(true)}
+            />
+          </>
         )}
+      </View>
 
-        <Text
-          style={{
-            ...styles.label,
-            color: color.ink2,
-            marginTop: space.xxl,
-            textAlign: 'center',
-            maxWidth: size.proseWidth,
-          }}
-        >
-          No passwords. Not now, not later — there&rsquo;s nothing to forget.
-        </Text>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {/* A live region as well as `say()`: the copy above can be set by a provider
+          rejection nothing else announced, so this is the Android half of §6 A6. */}
+      <Trouble
+        message={trouble}
+        style={{
+          marginTop: space.lg,
+          textAlign: 'center',
+          maxWidth: size.formWidth,
+        }}
+      />
+
+      <Text
+        style={{
+          ...styles.label,
+          color: color.ink2,
+          marginTop: space.xxl,
+          textAlign: 'center',
+          maxWidth: size.proseWidth,
+        }}
+      >
+        No passwords. Not now, not later — there&rsquo;s nothing to forget.
+      </Text>
+    </FormScreen>
   );
 }

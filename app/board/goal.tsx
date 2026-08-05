@@ -35,21 +35,13 @@
 
 import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { AccessibilityInfo, Alert, Pressable, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
+import { Field } from '../../components/Field';
+import { FormScreen, Loading, Trouble } from '../../components/Screen';
 import { SuggestionCards, type Choice } from '../../components/SuggestionCards';
+import { useAnnounce } from '../../lib/announce';
 import {
   useBoard,
   useBoardHead,
@@ -127,7 +119,9 @@ export default function ComposeGoal() {
   const [text, setText] = useState('');
   const [unit, setUnit] = useState('');
   const [target, setTarget] = useState(1);
-  const [trouble, setTrouble] = useState<string | null>(null);
+  // Renamed on the way in: `clear` is already the `clear_goal()` mutation on this screen,
+  // and emptying a Tile is not the same act as taking a sentence off the screen.
+  const { trouble, say, clear: clearTrouble } = useAnnounce();
 
   // §4.2's three states, as two pieces of state. `suggestion` non-null is "answered";
   // `sharpen.isPending` is "working"; `sharpenFailed` is the third.
@@ -160,23 +154,7 @@ export default function ComposeGoal() {
     }
   }
 
-  const say = (message: string) => {
-    setTrouble(message);
-    // accessibilityLiveRegion is Android-only; iOS has to be told outright (§6 A6).
-    AccessibilityInfo.announceForAccessibility(message);
-  };
-
-  if (board.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading the goal"
-        />
-      </View>
-    );
-  }
+  if (board.isPending) return <Loading what="Loading the goal" />;
 
   const problem =
     goalTextProblem(text) ?? targetProblem(target) ?? unitProblem(unit);
@@ -266,7 +244,7 @@ export default function ComposeGoal() {
       say(problem);
       return;
     }
-    setTrouble(null);
+    clearTrouble();
     setSharpenFailed(false);
 
     // The save is AWAITED, and its outcome decides what the failure copy is allowed to
@@ -358,280 +336,245 @@ export default function ComposeGoal() {
   const canSharpen = head.data?.controlled === true && !alreadySharpened;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text accessibilityRole="header" style={{ ...styles.title, color: color.ink }}>
-          {existing === null ? 'Write a goal' : 'This goal'}
-        </Text>
+    <FormScreen>
+      <Text accessibilityRole="header" style={{ ...styles.title, color: color.ink }}>
+        {existing === null ? 'Write a goal' : 'This goal'}
+      </Text>
 
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          // No `maxLength`. Truncating mid-word as somebody types is the app deciding it
-          // knows better; goalTextProblem() says so in words instead, and only on save.
-          placeholder="Read more books"
-          placeholderTextColor={color.ink3}
-          multiline
-          autoFocus={existing === null}
-          accessibilityLabel="The goal"
-          accessibilityHint={`Up to ${GOAL_TEXT.max} characters`}
-          style={{
-            ...styles.compose,
+      <Field
+        value={text}
+        onChangeText={setText}
+        // No `maxLength`. Truncating mid-word as somebody types is the app deciding it
+        // knows better; goalTextProblem() says so in words instead, and only on save.
+        placeholder="Read more books"
+        // §4.1's 22pt compose face, and the taller box that goes with it.
+        tone="compose"
+        multiline
+        height={96}
+        autoFocus={existing === null}
+        accessibilityLabel="The goal"
+        accessibilityHint={`Up to ${GOAL_TEXT.max} characters`}
+        style={{ marginTop: space.lg }}
+      />
+
+      <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xl }}>
+        How many times
+      </Text>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.sm }}>
+        <Step
+          label="−"
+          hint="One fewer"
+          disabled={target <= 1}
+          onPress={() => setTarget((n) => Math.max(1, n - 1))}
+        />
+        <Field
+          value={String(target)}
+          onChangeText={(next) => {
+            // Digits only, and an empty field reads as 1 rather than as NaN — a Member
+            // clearing the box to type "12" must not see the screen refuse in between.
+            const digits = next.replace(/[^0-9]/g, '');
+            if (digits === '') {
+              setTarget(1);
+              return;
+            }
+            const wanted = Number(digits);
+            // The one place the screen changes what was typed, so it says so rather
+            // than silently swallowing the extra digits.
+            if (wanted > TARGET_CEILING) say(`Targets stop at ${TARGET_CEILING.toLocaleString()}.`);
+            setTarget(Math.min(TARGET_CEILING, wanted));
+          }}
+          keyboardType="number-pad"
+          inputMode="numeric"
+          accessibilityLabel="Target"
+          tone="compose"
+          // §6 A3's floor rather than the 52pt control, because it sits in a row between
+          // two 44pt steppers and a taller box would break the line.
+          height={size.minTouch}
+          style={{ minWidth: 72, textAlign: 'center' }}
+        />
+        <Step label="+" hint="One more" disabled={false} onPress={() => setTarget((n) => n + 1)} />
+
+        <Field
+          value={unit}
+          onChangeText={setUnit}
+          // The Member's own wording (§6.1). Nothing corrects it and nothing pluralises
+          // it — `unit_canonical` is Sharpening's job (§7.10) and is never typed here.
+          placeholder="books"
+          autoCapitalize="none"
+          maxLength={UNIT_MAX}
+          accessibilityLabel="What you are counting, if you like"
+          height={size.minTouch}
+          style={{ flex: 1 }}
+        />
+      </View>
+
+      {/* §4.1: the resulting increment verb, previewed beside the stepper.
+
+          The unit AND the existing Goal's `unit_canonical` both go in, because the
+          preview has to be the same function the tile sheet's button calls. Passing the
+          target alone reached a second rule that answered "+1" for anything above one,
+          so a Goal with unit "books" was promised "+1" here and shipped "Read one" for
+          the Year. `unit_canonical` is read from the saved Goal rather than the field:
+          it is Sharpening's (§7.10) and is never typed.
+
+          Deliberately NOT a live region. It was one, and on Android that meant the whole
+          sentence was announced on every keystroke in the unit field — "1 b · the button
+          will say Did it", "1 bo · …". The text sits directly under the controls that
+          change it and is read on focus like any other label. */}
+      <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
+        {stepperHint(
+          target,
+          unit.trim() === '' ? null : unit,
+          existing?.unit_canonical ?? null,
+        )}
+      </Text>
+
+      {/* §4.2, "Sharpen it". 46pt, and below the fields rather than beside them: it acts
+          on what is written above it, so it reads down. Absent once a suggestion has
+          been given — one sharpen per Goal, no reroll. */}
+      {headUnknown ? (
+        <Text style={{ ...styles.label, color: color.ink2, marginTop: space.lg }}>
+          Sharpening isn&rsquo;t available just now. Your goal saves as normal.
+        </Text>
+      ) : null}
+
+      {canSharpen ? (
+        <Pressable
+          accessibilityRole="button"
+          // Matches the visible text rather than staying fixed at "Sharpen it" — a
+          // label that says one thing while the button says another is §6 A1's exact
+          // failure, and it was also the only signal a screen-reader Member could have
+          // had that the call had started.
+          accessibilityLabel={sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
+          accessibilityHint="Suggests a countable version. Your own wording is always kept as an option."
+          // Never disabled while the call is out (§4.2, "no disabled control"). Tapping
+          // again during a call is harmless: the mutation replaces its own result.
+          onPress={() => void askToSharpen()}
+          style={({ pressed }) => ({
+            height: size.controlSharpen,
+            alignItems: 'center',
+            justifyContent: 'center',
             marginTop: space.lg,
-            minHeight: 96,
-            padding: space.md,
-            color: color.ink,
+            borderRadius: radius.card,
             backgroundColor: color.paperRaised,
             borderWidth: 1,
             borderColor: color.hairline,
-            borderRadius: radius.card,
-            textAlignVertical: 'top',
-          }}
-        />
-
-        <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xl }}>
-          How many times
-        </Text>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.sm }}>
-          <Step
-            label="−"
-            hint="One fewer"
-            disabled={target <= 1}
-            onPress={() => setTarget((n) => Math.max(1, n - 1))}
-          />
-          <TextInput
-            value={String(target)}
-            onChangeText={(next) => {
-              // Digits only, and an empty field reads as 1 rather than as NaN — a Member
-              // clearing the box to type "12" must not see the screen refuse in between.
-              const digits = next.replace(/[^0-9]/g, '');
-              if (digits === '') {
-                setTarget(1);
-                return;
-              }
-              const wanted = Number(digits);
-              // The one place the screen changes what was typed, so it says so rather
-              // than silently swallowing the extra digits.
-              if (wanted > TARGET_CEILING) say(`Targets stop at ${TARGET_CEILING.toLocaleString()}.`);
-              setTarget(Math.min(TARGET_CEILING, wanted));
-            }}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            accessibilityLabel="Target"
-            style={{
-              ...styles.compose,
-              minWidth: 72,
-              height: size.minTouch,
-              paddingHorizontal: space.md,
-              textAlign: 'center',
-              color: color.ink,
-              backgroundColor: color.paperRaised,
-              borderWidth: 1,
-              borderColor: color.hairline,
-              borderRadius: radius.card,
-            }}
-          />
-          <Step label="+" hint="One more" disabled={false} onPress={() => setTarget((n) => n + 1)} />
-
-          <TextInput
-            value={unit}
-            onChangeText={setUnit}
-            // The Member's own wording (§6.1). Nothing corrects it and nothing pluralises
-            // it — `unit_canonical` is Sharpening's job (§7.10) and is never typed here.
-            placeholder="books"
-            placeholderTextColor={color.ink3}
-            autoCapitalize="none"
-            maxLength={UNIT_MAX}
-            accessibilityLabel="What you are counting, if you like"
-            style={{
-              ...styles.body,
-              flex: 1,
-              height: size.minTouch,
-              paddingHorizontal: space.md,
-              color: color.ink,
-              backgroundColor: color.paperRaised,
-              borderWidth: 1,
-              borderColor: color.hairline,
-              borderRadius: radius.card,
-            }}
-          />
-        </View>
-
-        {/* §4.1: the resulting increment verb, previewed beside the stepper.
-
-            The unit AND the existing Goal's `unit_canonical` both go in, because the
-            preview has to be the same function the tile sheet's button calls. Passing the
-            target alone reached a second rule that answered "+1" for anything above one,
-            so a Goal with unit "books" was promised "+1" here and shipped "Read one" for
-            the Year. `unit_canonical` is read from the saved Goal rather than the field:
-            it is Sharpening's (§7.10) and is never typed.
-
-            Deliberately NOT a live region. It was one, and on Android that meant the whole
-            sentence was announced on every keystroke in the unit field — "1 b · the button
-            will say Did it", "1 bo · …". The text sits directly under the controls that
-            change it and is read on focus like any other label. */}
-        <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-          {stepperHint(
-            target,
-            unit.trim() === '' ? null : unit,
-            existing?.unit_canonical ?? null,
-          )}
-        </Text>
-
-        {/* §4.2, "Sharpen it". 46pt, and below the fields rather than beside them: it acts
-            on what is written above it, so it reads down. Absent once a suggestion has
-            been given — one sharpen per Goal, no reroll. */}
-        {headUnknown ? (
-          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.lg }}>
-            Sharpening isn&rsquo;t available just now. Your goal saves as normal.
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <Text style={{ ...styles.heading, fontSize: 17, color: color.ink }}>
+            {sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
           </Text>
-        ) : null}
+        </Pressable>
+      ) : null}
 
-        {canSharpen ? (
-          <Pressable
-            accessibilityRole="button"
-            // Matches the visible text rather than staying fixed at "Sharpen it" — a
-            // label that says one thing while the button says another is §6 A1's exact
-            // failure, and it was also the only signal a screen-reader Member could have
-            // had that the call had started.
-            accessibilityLabel={sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
-            accessibilityHint="Suggests a countable version. Your own wording is always kept as an option."
-            // Never disabled while the call is out (§4.2, "no disabled control"). Tapping
-            // again during a call is harmless: the mutation replaces its own result.
-            onPress={() => void askToSharpen()}
-            style={({ pressed }) => ({
-              height: size.controlSharpen,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: space.lg,
-              borderRadius: radius.card,
-              backgroundColor: color.paperRaised,
-              borderWidth: 1,
-              borderColor: color.hairline,
-              opacity: pressed ? 0.7 : 1,
-            })}
-          >
-            <Text style={{ ...styles.heading, fontSize: 17, color: color.ink }}>
-              {sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
-            </Text>
-          </Pressable>
-        ) : null}
+      {/* The "Working" pill (§4.2). `ink3`, no overlay, nothing disabled — the Member can
+          keep typing, save, or leave while the model thinks. */}
+      {sharpen.isPending ? (
+        <View
+          style={{
+            alignSelf: 'center',
+            marginTop: space.sm,
+            paddingHorizontal: space.md,
+            paddingVertical: space.xs,
+            borderRadius: radius.pill,
+            backgroundColor: color.paperSunk,
+          }}
+        >
+          <Text style={{ ...styles.label, color: color.ink3 }}>Sharpening…</Text>
+        </View>
+      ) : null}
 
-        {/* The "Working" pill (§4.2). `ink3`, no overlay, nothing disabled — the Member can
-            keep typing, save, or leave while the model thinks. */}
-        {sharpen.isPending ? (
-          <View
-            style={{
-              alignSelf: 'center',
-              marginTop: space.sm,
-              paddingHorizontal: space.md,
-              paddingVertical: space.xs,
-              borderRadius: radius.pill,
-              backgroundColor: color.paperSunk,
-            }}
-          >
-            <Text style={{ ...styles.label, color: color.ink3 }}>Sharpening…</Text>
-          </View>
-        ) : null}
-
-        {/* The "Answered" state. Two equal cards, nothing pre-selected. */}
-        {suggestion === null ? null : (
-          <SuggestionCards
-            suggestion={suggestion}
-            // The snapshot, so this card keeps saying what the Member wrote even after
-            // choosing SHARPENED has rewritten the fields above it.
-            mine={askedWith ?? mine}
-            choice={choice}
-            onChoose={choose}
-          />
-        )}
-
-        {/* `say()` already calls announceForAccessibility, which is the only one iOS
-            honours. Pairing it with a live region made Android say everything twice.
-
-            This is also where the "Refused / slow / malformed" state lands (§4.2): plain
-            words in `ink2`, no red, no retry modal, and the Goal already saved. */}
-        {trouble === null ? null : (
-          <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>{trouble}</Text>
-        )}
-
-        {/* Never disabled by the Answered state, and never by the pre-save.
-            §4.2 is explicit — "Save stays enabled … no overlay, no disabled control" —
-            and both gates broke it. Disabling until a card was picked put a dead primary
-            control between a Member and their own text, with the cards undismissable; and
-            because the pre-save shares this mutation, the working state disabled Save for
-            the length of the request it was supposed to stay usable through.
-
-            Unpicked is not ambiguous: `resolved` reads the live fields, which are the
-            Member's own words until they choose otherwise. Saving does the obvious thing. */}
-        <Button
-          label={write.isPending && !presaving ? 'Saving…' : 'Save this goal'}
-          variant="primary"
-          disabled={(write.isPending && !presaving) || clear.isPending}
-          style={{ marginTop: space.xl }}
-          onPress={() => void save()}
+      {/* The "Answered" state. Two equal cards, nothing pre-selected. */}
+      {suggestion === null ? null : (
+        <SuggestionCards
+          suggestion={suggestion}
+          // The snapshot, so this card keeps saying what the Member wrote even after
+          // choosing SHARPENED has rewritten the fields above it.
+          mine={askedWith ?? mine}
+          choice={choice}
+          onChoose={choose}
         />
+      )}
 
-        {/* A failure does not spend the sharpen (§4.2), so offering it again is honest —
-            and refusing to would be the dead end §7.9 rules out. Only after a failure:
-            there is no reroll on a suggestion that arrived. */}
-        {sharpenFailed && !sharpen.isPending ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Try sharpening again"
-            onPress={() => void askToSharpen()}
-            style={{ minHeight: size.minTouch, alignItems: 'center', justifyContent: 'center', marginTop: space.sm }}
-          >
-            <Text style={{ ...styles.label, color: color.ink2 }}>Try sharpening again</Text>
-          </Pressable>
-        ) : null}
+      {/* `live={false}`: every message here arrives through `say()`, which already calls
+          announceForAccessibility — the only one iOS honours. Pairing the two made
+          Android say everything twice.
 
-        {/* §6.4, §10.2 — emptying a Tile is legitimate right up to the deadline. clayDeep
-            on paper: there is no red in this palette (§1.1). */}
-        {existing === null ? null : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Clear this square"
-            disabled={clear.isPending || write.isPending}
-            onPress={() =>
-              Alert.alert('Clear this square?', 'The goal goes; the square stays empty.', [
-                { text: 'Keep it', style: 'cancel' },
-                {
-                  text: 'Clear it',
-                  onPress: () =>
-                    clear.mutate(tileId ?? '', {
-                      onSuccess: () => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } }),
-                      onError: () => say('That didn’t clear. Have another go in a moment.'),
-                    }),
-                },
-              ])
-            }
-            style={{
-              minHeight: size.control,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: space.sm,
-            }}
-          >
-            <Text style={{ ...styles.label, color: color.clayDeep }}>Clear this square</Text>
-          </Pressable>
-        )}
+          This is also where the "Refused / slow / malformed" state lands (§4.2): plain
+          words in `ink2`, no red, no retry modal, and the Goal already saved. */}
+      <Trouble message={trouble} live={false} style={{ marginTop: space.lg }} />
 
-        <Button
-          label="Not now"
-          variant="text"
-          disabled={write.isPending || clear.isPending}
-          style={{ marginTop: space.sm }}
-          onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
-        />
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {/* Never disabled by the Answered state, and never by the pre-save.
+          §4.2 is explicit — "Save stays enabled … no overlay, no disabled control" —
+          and both gates broke it. Disabling until a card was picked put a dead primary
+          control between a Member and their own text, with the cards undismissable; and
+          because the pre-save shares this mutation, the working state disabled Save for
+          the length of the request it was supposed to stay usable through.
+
+          Unpicked is not ambiguous: `resolved` reads the live fields, which are the
+          Member's own words until they choose otherwise. Saving does the obvious thing. */}
+      <Button
+        label={write.isPending && !presaving ? 'Saving…' : 'Save this goal'}
+        variant="primary"
+        disabled={(write.isPending && !presaving) || clear.isPending}
+        style={{ marginTop: space.xl }}
+        onPress={() => void save()}
+      />
+
+      {/* A failure does not spend the sharpen (§4.2), so offering it again is honest —
+          and refusing to would be the dead end §7.9 rules out. Only after a failure:
+          there is no reroll on a suggestion that arrived. */}
+      {sharpenFailed && !sharpen.isPending ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Try sharpening again"
+          onPress={() => void askToSharpen()}
+          style={{ minHeight: size.minTouch, alignItems: 'center', justifyContent: 'center', marginTop: space.sm }}
+        >
+          <Text style={{ ...styles.label, color: color.ink2 }}>Try sharpening again</Text>
+        </Pressable>
+      ) : null}
+
+      {/* §6.4, §10.2 — emptying a Tile is legitimate right up to the deadline. clayDeep
+          on paper: there is no red in this palette (§1.1). */}
+      {existing === null ? null : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear this square"
+          disabled={clear.isPending || write.isPending}
+          onPress={() =>
+            Alert.alert('Clear this square?', 'The goal goes; the square stays empty.', [
+              { text: 'Keep it', style: 'cancel' },
+              {
+                text: 'Clear it',
+                onPress: () =>
+                  clear.mutate(tileId ?? '', {
+                    onSuccess: () => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } }),
+                    onError: () => say('That didn’t clear. Have another go in a moment.'),
+                  }),
+              },
+            ])
+          }
+          style={{
+            minHeight: size.control,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginTop: space.sm,
+          }}
+        >
+          <Text style={{ ...styles.label, color: color.clayDeep }}>Clear this square</Text>
+        </Pressable>
+      )}
+
+      <Button
+        label="Not now"
+        variant="text"
+        disabled={write.isPending || clear.isPending}
+        style={{ marginTop: space.sm }}
+        onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
+      />
+    </FormScreen>
   );
 }

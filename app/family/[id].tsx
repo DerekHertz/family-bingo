@@ -10,20 +10,13 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  Share,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
+import { Loading, Trouble } from '../../components/Screen';
 import { SeatPips } from '../../components/SeatPips';
+import { useAnnounce } from '../../lib/announce';
 import { failure } from '../../lib/failure';
 import { useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
@@ -70,12 +63,7 @@ export default function FamilyRoster() {
   const years = useYears(id);
   const openYear = useOpenYear(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
-  const [trouble, setTrouble] = useState<string | null>(null);
-
-  const say = (message: string) => {
-    setTrouble(message);
-    AccessibilityInfo.announceForAccessibility(message);
-  };
+  const { trouble, say, clear } = useAnnounce();
 
   const family = families.data?.find((f) => f.id === id);
   const isOrganizer = family?.member.role === 'organizer';
@@ -115,17 +103,7 @@ export default function FamilyRoster() {
   // Boards write_goal() refuses.
   const myBoards = useMyBoards(current?.id, session?.user.id);
 
-  if (roster.isPending || families.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading the roster"
-        />
-      </View>
-    );
-  }
+  if (roster.isPending || families.isPending) return <Loading what="Loading the roster" />;
 
   return (
     <ScrollView
@@ -339,7 +317,7 @@ export default function FamilyRoster() {
           onPress={() =>
             invite.mutate(undefined, {
               onSuccess: (row) => {
-                setTrouble(null);
+                clear();
                 setCode({ code: row.code, expires_at: row.expires_at });
               },
               onError: (e) =>
@@ -353,14 +331,7 @@ export default function FamilyRoster() {
         />
       ) : null}
 
-      {trouble === null ? null : (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={{ ...styles.body, color: color.ink2, marginTop: space.md }}
-        >
-          {trouble}
-        </Text>
-      )}
+      <Trouble message={trouble} />
 
       {roster.isError ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>

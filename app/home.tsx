@@ -10,8 +10,9 @@
  */
 
 import { Redirect, useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
+import { Loading } from '../components/Screen';
 import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
 import { usePendingMemberships } from '../lib/queries/invitations';
@@ -40,13 +41,10 @@ export default function Home() {
         {list.length === 0 && waiting.length === 0 ? 'Welcome' : 'Your families'}
       </Text>
 
+      {/* `inline`, because the header above this is already real and stays put — the
+          spinner sits in the flow of the page rather than replacing it. */}
       {families.isPending ? (
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading your families"
-          style={{ marginTop: space.xl, alignSelf: 'flex-start' }}
-        />
+        <Loading what="Loading your families" inline />
       ) : families.isError ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           Couldn’t reach your families just now. Pull down in a moment.

@@ -15,11 +15,12 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { celebrate } from '../../lib/celebrate';
 import { leaveTo } from '../../lib/leave';
 import { Board, type LineCelebration } from '../../components/Board';
 import { Button } from '../../components/Button';
+import { ErrorState, Loading } from '../../components/Screen';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import {
@@ -136,17 +137,7 @@ export default function DraftingTable() {
     return cancel;
   }, [milestones.data, id]);
 
-  if (head.isPending || board.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading the board"
-        />
-      </View>
-    );
-  }
+  if (head.isPending || board.isPending) return <Loading what="Loading the board" />;
 
   // `board.isError` matters as much as `head`'s. Without it a failed Tiles read after
   // `retry: 2` leaves `tiles = []` and the screen states four confident falsehoods —
@@ -154,17 +145,12 @@ export default function DraftingTable() {
   // "All twenty-four written" directly above "24 still empty."
   if (head.data === null || head.data === undefined || board.isError) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
-        <Text style={{ ...styles.body, color: color.ink2 }}>
-          Couldn&rsquo;t open that board just now. Try again in a moment.
-        </Text>
-        <Button
-          label="Back"
-          variant="text"
-          style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
-        />
-      </View>
+      <ErrorState
+        message="Couldn’t open that board just now. Try again in a moment."
+        // Empty when the head is what failed, which `leaveTo` handles: a Family route with
+        // no id still unwinds to whatever is behind this screen if anything is.
+        backTo={{ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } }}
+      />
     );
   }
 
@@ -223,30 +209,13 @@ export default function DraftingTable() {
     // an empty pip strip — a confident, wrong answer of exactly the kind `board.isError`
     // above exists to prevent. `isLoading` rather than `isPending`, because a disabled
     // query is pending forever and the Tiles are not fetched yet on the first render.
-    if (counts.isLoading) {
-      return (
-        <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-          <ActivityIndicator
-            color={color.ink3}
-            accessibilityRole="progressbar"
-            accessibilityLabel="Loading the board"
-          />
-        </View>
-      );
-    }
+    if (counts.isLoading) return <Loading what="Loading the board" />;
     if (counts.isError) {
       return (
-        <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
-          <Text style={{ ...styles.body, color: color.ink2 }}>
-            Couldn&rsquo;t open that board just now. Try again in a moment.
-          </Text>
-          <Button
-            label="Back"
-            variant="text"
-            style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-            onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
-          />
-        </View>
+        <ErrorState
+          message="Couldn’t open that board just now. Try again in a moment."
+          backTo={{ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } }}
+        />
       );
     }
 

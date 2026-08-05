@@ -18,33 +18,23 @@
 
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import {
-  AccessibilityInfo,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
+import { Field } from '../../components/Field';
+import { FormScreen, Trouble } from '../../components/Screen';
+import { useAnnounce } from '../../lib/announce';
 import { codeProblem, normalizeCode, useRedeemInvitation } from '../../lib/queries/invitations';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, size, space } from '../../theme/tokens';
 
 export default function JoinFamily() {
   const router = useRouter();
   const [code, setCode] = useState('');
-  const [trouble, setTrouble] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const { trouble, say, clear } = useAnnounce();
   const redeem = useRedeemInvitation();
-
-  const say = (message: string) => {
-    setTrouble(message);
-    AccessibilityInfo.announceForAccessibility(message);
-  };
 
   const submit = () => {
     const problem = codeProblem(code);
@@ -52,7 +42,7 @@ export default function JoinFamily() {
       say(problem);
       return;
     }
-    setTrouble(null);
+    clear();
     redeem.mutate(code, {
       onSuccess: () => setWaiting(true),
       // One message for every rejection. See the note at the top of this file.
@@ -93,96 +83,61 @@ export default function JoinFamily() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: space.xl,
-        }}
-        keyboardShouldPersistTaps="handled"
+    <FormScreen centred>
+      <BoardMark />
+
+      <Text
+        accessibilityRole="header"
+        style={{ ...styles.display, color: color.ink, marginTop: space.lg }}
       >
-        <BoardMark />
+        Join a Family
+      </Text>
+      <Text
+        style={{
+          ...styles.body,
+          color: color.ink2,
+          marginTop: space.sm,
+          textAlign: 'center',
+          maxWidth: size.proseWidth,
+        }}
+      >
+        Type the code you were given. Eight characters, and it doesn&rsquo;t matter how you
+        space them.
+      </Text>
 
-        <Text
-          accessibilityRole="header"
-          style={{ ...styles.display, color: color.ink, marginTop: space.lg }}
-        >
-          Join a Family
-        </Text>
-        <Text
-          style={{
-            ...styles.body,
-            color: color.ink2,
-            marginTop: space.sm,
-            textAlign: 'center',
-            maxWidth: size.proseWidth,
-          }}
-        >
-          Type the code you were given. Eight characters, and it doesn&rsquo;t matter how you
-          space them.
-        </Text>
+      <View style={{ width: '100%', maxWidth: size.formWidth, marginTop: space.xl, gap: size.stack }}>
+        <Field
+          value={code}
+          onChangeText={(next) => setCode(normalizeCode(next))}
+          onSubmitEditing={submit}
+          placeholder="ABCD2345"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          // No maxLength: RN truncates BEFORE onChangeText, so pasting "ABCD-2345" —
+          // which the copy above explicitly invites — arrived as seven characters and
+          // was rejected for being the wrong length. normalizeCode strips the dash.
+          returnKeyType="done"
+          accessibilityLabel="Invitation code"
+          style={{ textAlign: 'center', letterSpacing: 4.8 }}
+        />
+        <Button
+          label={redeem.isPending ? 'Checking…' : 'Join'}
+          variant="primary"
+          disabled={redeem.isPending}
+          onPress={submit}
+        />
+        <Button
+          label="Not now"
+          variant="text"
+          disabled={redeem.isPending}
+          onPress={() => leaveTo('/home')}
+        />
+      </View>
 
-        <View style={{ width: '100%', maxWidth: size.formWidth, marginTop: space.xl, gap: size.stack }}>
-          <TextInput
-            value={code}
-            onChangeText={(next) => setCode(normalizeCode(next))}
-            onSubmitEditing={submit}
-            placeholder="ABCD2345"
-            placeholderTextColor={color.ink3}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            // No maxLength: RN truncates BEFORE onChangeText, so pasting "ABCD-2345" —
-            // which the copy above explicitly invites — arrived as seven characters and
-            // was rejected for being the wrong length. normalizeCode strips the dash.
-            returnKeyType="done"
-            accessibilityLabel="Invitation code"
-            style={{
-              ...styles.body,
-              height: size.control,
-              paddingHorizontal: space.md,
-              textAlign: 'center',
-              letterSpacing: 4.8,
-              color: color.ink,
-              backgroundColor: color.paperRaised,
-              borderWidth: 1,
-              borderColor: color.hairline,
-              borderRadius: radius.card,
-            }}
-          />
-          <Button
-            label={redeem.isPending ? 'Checking…' : 'Join'}
-            variant="primary"
-            disabled={redeem.isPending}
-            onPress={submit}
-          />
-          <Button
-            label="Not now"
-            variant="text"
-            disabled={redeem.isPending}
-            onPress={() => leaveTo('/home')}
-          />
-        </View>
-
-        {trouble === null ? null : (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={{
-              ...styles.body,
-              color: color.ink2,
-              marginTop: space.lg,
-              textAlign: 'center',
-              maxWidth: size.formWidth,
-            }}
-          >
-            {trouble}
-          </Text>
-        )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <Trouble
+        message={trouble}
+        style={{ marginTop: space.lg, textAlign: 'center', maxWidth: size.formWidth }}
+      />
+    </FormScreen>
   );
 }
