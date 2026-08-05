@@ -20,7 +20,7 @@
  */
 
 import { memo } from 'react';
-import { Image, Text, View } from 'react-native';
+import { Image, Text, View, type ViewStyle } from 'react-native';
 import { feedCopy, feedLabel, toneOf, type FeedEvent } from '../src/domain/feed';
 import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
@@ -210,27 +210,40 @@ export const FeedRow = memo(function FeedRow({
  * the frame's width, rotated -45° and stepped down the box, so the ends are always outside
  * the `overflow: hidden` frame and the stripes reach every corner.
  *
- * Rendered once and memoised: it is identical in every row that has one, and it is the
- * cheapest thing on screen that is also the most repeated.
+ * **This is thirty `<View>`s in every Feed row that has a photo, and `memo` does not change
+ * that.** The comment here used to say "rendered once and memoised", which is not what
+ * either word does: `memo` skips a *re-render* of a component whose props have not changed,
+ * and this one takes none, so it renders once **per mounting** — and it mounts once per
+ * row. Thirty rows with photos is nine hundred views behind nine hundred images that are
+ * about to cover them.
+ *
+ * It is kept anyway, because §3 asks for this placeholder by name and rules out both
+ * cheaper answers — "never a spinner, never a blur-up of a cached child's face" — and
+ * because a `FlatList` only mounts the rows near the viewport. What the note is for is the
+ * next person, who should know the cost is per row before they put a hatch anywhere denser
+ * than a 150pt frame. The style objects at least are built once at module scope rather than
+ * thirty times per row.
  */
 const HATCH_STEP = 10;
+
+const HATCH_BARS: ViewStyle[] = Array.from(
+  { length: Math.ceil((PHOTO * 2) / HATCH_STEP) },
+  (_, i) => ({
+    position: 'absolute',
+    left: -PHOTO / 2,
+    top: i * HATCH_STEP - PHOTO / 2,
+    width: PHOTO * 2,
+    height: 1,
+    backgroundColor: color.hairline,
+    transform: [{ rotate: '-45deg' }],
+  }),
+);
 
 const Hatch = memo(function Hatch() {
   return (
     <View style={{ position: 'absolute', inset: 0 }}>
-      {Array.from({ length: Math.ceil((PHOTO * 2) / HATCH_STEP) }, (_, i) => (
-        <View
-          key={i}
-          style={{
-            position: 'absolute',
-            left: -PHOTO / 2,
-            top: i * HATCH_STEP - PHOTO / 2,
-            width: PHOTO * 2,
-            height: 1,
-            backgroundColor: color.hairline,
-            transform: [{ rotate: '-45deg' }],
-          }}
-        />
+      {HATCH_BARS.map((bar, i) => (
+        <View key={i} style={bar} />
       ))}
     </View>
   );
