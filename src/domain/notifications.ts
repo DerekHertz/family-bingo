@@ -3,7 +3,7 @@
  *
  * The list lives here rather than in the screen because it is a product decision with a
  * server behind it, not a layout: each entry names a column on `notification_preferences`
- * (20260801000035), and every column there governs a `notifications.kind` that something
+ * (20260801000036), and every column there governs a `notifications.kind` that something
  * actually writes. §4.8 asks for five switches; two of them — the Centre moving and a Swap
  * — have no notification kind behind them at all, so they are absent rather than inert. A
  * preference that silently does nothing is worse than one that is missing: the Member who

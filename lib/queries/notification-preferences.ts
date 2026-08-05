@@ -11,7 +11,7 @@
  *
  * Nothing here decides who is notified or when. The trigger on `notifications` decides
  * whether a row is written and `pending_notifications()` decides when it is sent, both in
- * the database with pgTAP around them (20260801000035, §15.5).
+ * the database with pgTAP around them (20260801000036, §15.5).
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

@@ -12,7 +12,7 @@
  * filter in a Deno file. All this does is drain, render and send.
  *
  * It decides nothing about WHEN either, for the same reason. `pending_notifications()`
- * (20260801000035) is the drain query, and quiet hours — a wall-clock window in the
+ * (20260801000036) is the drain query, and quiet hours — a wall-clock window in the
  * FAMILY's timezone (FRONTEND_DESIGN §4.8, §8.3 T1) — are applied there. What this file
  * owes quiet hours is the other half of §4.8's sentence: everything held overnight goes
  * out "batched into one line at 07:00", which is a rendering job and belongs here.
@@ -196,7 +196,7 @@ Deno.serve(async (req) => {
   // Not a select on `notifications` any more. Quiet hours are a send-time decision that
   // needs the Family's timezone, and the route a tap follows is two joins away from the
   // `milestone_id` this row stores — both belong in one query the database can be tested
-  // on (20260801000035).
+  // on (20260801000036).
   const { data: pending, error } = await db.rpc('pending_notifications', {
     batch_size: EXPO_BATCH,
     max_attempts: MAX_ATTEMPTS,
