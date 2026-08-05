@@ -84,6 +84,42 @@ const permitted = async (): Promise<boolean> => {
 };
 
 /**
+ * Android only: ask for a result the picker finished producing while the app was not there
+ * to receive it.
+ *
+ * `expo-image-picker` documents this and the branch shipped without it: *"Android system
+ * sometimes kills the `MainActivity` after the `ImagePicker` finishes. When this happens,
+ * we lose the data selected using the `ImagePicker`. However, you can retrieve the lost
+ * data by calling `getPendingResultAsync`."* It is reproducible on demand with **Don't
+ * keep activities** in developer options, which is to say it happens for real on a phone
+ * under memory pressure — the exact phone that is also least able to hold a 190 MB bitmap.
+ *
+ * Without it, the recreated activity answers the relaunched pick with a plain `canceled`
+ * and the Member is told nothing at all, having just chosen a photo. This asks before
+ * believing the cancellation.
+ *
+ * **What it cannot recover** is a full process death, where the sheet's own state — which
+ * Tile, which note — went with it, so there is nothing left to attach a photo *to*. That
+ * case degrades to no photo, which §11.1 makes survivable and this function does not
+ * pretend to fix.
+ */
+const pendingIfCancelled = async (
+  picked: ImagePicker.ImagePickerResult,
+): Promise<ImagePicker.ImagePickerResult> => {
+  if (Platform.OS !== 'android' || !picked.canceled) return picked;
+  try {
+    // `null` on every other platform, and an `ImagePickerErrorResult` — which has no
+    // `canceled` at all — when the picker itself failed. Both read as "nothing recovered".
+    const pending = await ImagePicker.getPendingResultAsync();
+    if (pending !== null && 'canceled' in pending && !pending.canceled) return pending;
+  } catch {
+    // A best-effort second ask. Whatever went wrong here, the answer is still the
+    // cancellation we already have.
+  }
+  return picked;
+};
+
+/**
  * Pick one photo, downscale it, and hand back the bytes.
  *
  * The order matters and is not the obvious one: **the manipulator runs before anything
@@ -94,7 +130,7 @@ const permitted = async (): Promise<boolean> => {
 export const pickPhoto = async (): Promise<PickOutcome> => {
   if (!(await permitted())) return { kind: 'denied' };
 
-  const picked = await ImagePicker.launchImageLibraryAsync({
+  const launched = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     allowsMultipleSelection: false,
     // §16.1 — one Attachment per Increment, so there is nothing to crop *for*. Editing
@@ -108,6 +144,10 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
     // at a size we chose. Compressing twice only loses detail to no smaller a file.
     quality: 1,
   });
+
+  // A cancellation on Android may be the activity having been killed rather than the
+  // Member having changed their mind — see `pendingIfCancelled`.
+  const picked = await pendingIfCancelled(launched);
 
   if (picked.canceled) return { kind: 'cancelled' };
   const asset = picked.assets[0];
