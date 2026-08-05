@@ -12,7 +12,7 @@
 
 import { Text, View } from 'react-native';
 import { styles } from '../theme/fonts';
-import { color, radius } from '../theme/tokens';
+import { color, radius, stroke } from '../theme/tokens';
 
 interface Props {
   name: string;
@@ -47,7 +47,7 @@ export function Avatar({ name, size = 44, pending = false, managed = false }: Pr
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: pending ? 'transparent' : color.paperSunk,
-          borderWidth: pending ? 1 : 0,
+          borderWidth: pending ? stroke.hairline : 0,
           borderColor: color.hairline,
         }}
       >
@@ -67,7 +67,7 @@ export function Avatar({ name, size = 44, pending = false, managed = false }: Pr
             height: 11,
             borderRadius: radius.pill,
             backgroundColor: color.clay,
-            borderWidth: 1.5,
+            borderWidth: stroke.selected,
             borderColor: color.paper,
           }}
         />

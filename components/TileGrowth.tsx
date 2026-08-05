@@ -107,7 +107,9 @@ function Hatch() {
             top: -HATCH_PITCH * HATCH_BARS,
             bottom: -HATCH_PITCH * HATCH_BARS,
             width: 1,
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            // A token, not a literal `rgba()`: tokens.ts owns every colour, and one
+            // written here is a light-mode value that can never flip (§1.2).
+            backgroundColor: color.completionHatch,
             transform: [{ rotate: '45deg' }],
           }}
         />

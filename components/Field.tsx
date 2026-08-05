@@ -20,7 +20,7 @@
 import type { TextInputProps, TextStyle } from 'react-native';
 import { TextInput } from 'react-native';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 
 interface Props extends Omit<TextInputProps, 'style' | 'placeholderTextColor'> {
   /** §4.1's 22pt compose field, or `body` for everything else. Never Shippori (§1.1). */
@@ -61,7 +61,7 @@ export function Field({
           : { height, paddingHorizontal: space.md }),
         color: color.ink,
         backgroundColor: color.paperRaised,
-        borderWidth: 1,
+        borderWidth: stroke.hairline,
         borderColor: color.hairline,
         borderRadius: radius.card,
         ...style,

@@ -18,7 +18,7 @@ import { useFamilies } from '../lib/queries/families';
 import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 
 export default function Home() {
   const session = useSession();
@@ -71,7 +71,7 @@ export default function Home() {
                 padding: space.md,
                 backgroundColor: color.paperRaised,
                 borderRadius: radius.card,
-                borderWidth: 1,
+                borderWidth: stroke.hairline,
                 borderColor: color.hairline,
                 opacity: pressed ? 0.7 : 1,
               })}
@@ -100,7 +100,7 @@ export default function Home() {
                 minHeight: size.minTouch,
                 padding: space.md,
                 borderRadius: radius.card,
-                borderWidth: 1,
+                borderWidth: stroke.hairline,
                 borderColor: color.hairline,
               }}
             >

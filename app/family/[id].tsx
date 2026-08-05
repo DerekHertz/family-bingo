@@ -38,7 +38,7 @@ import {
 import { draftProgress } from '../../src/domain/goal';
 import { joinedMarkerInline } from '../../src/domain/joining';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 /** One phrase, used by both the visible text and the accessibility label. */
 const yearSays = (year: {
@@ -129,7 +129,7 @@ export default function FamilyRoster() {
             padding: space.lg,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
             alignItems: 'center',
           }}
@@ -184,7 +184,7 @@ export default function FamilyRoster() {
             padding: space.md,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
           }}
         >
@@ -244,7 +244,7 @@ export default function FamilyRoster() {
             minHeight: size.minTouch,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
             opacity: pressed ? 0.7 : 1,
           })}

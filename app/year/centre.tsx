@@ -47,7 +47,7 @@ import {
   voteCountCopy,
 } from '../../src/domain/votes';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 /** The centre-tile glyph §4.3 asks for: a 5×5 with only the middle square filled. */
 function CentreGlyph() {
@@ -231,7 +231,7 @@ export default function Centre() {
                   minHeight: size.minTouch,
                   paddingHorizontal: space.md,
                   borderRadius: radius.pill,
-                  borderWidth: 1.5,
+                  borderWidth: stroke.selected,
                   borderColor: v.id === actingAs ? color.clay : color.hairline,
                   backgroundColor: color.paperRaised,
                 }}
@@ -295,7 +295,7 @@ export default function Centre() {
                 borderRadius: radius.card,
                 backgroundColor: color.paperRaised,
                 // 1.5px clay inset when it is your vote (§4.3).
-                borderWidth: 1.5,
+                borderWidth: stroke.selected,
                 borderColor: chosen ? color.clay : color.hairline,
                 opacity: pressed ? 0.7 : 1,
               })}
@@ -388,7 +388,7 @@ export default function Centre() {
                       padding: space.md,
                       borderRadius: radius.card,
                       backgroundColor: color.paperRaised,
-                      borderWidth: 1.5,
+                      borderWidth: stroke.selected,
                       borderColor: chosen ? color.clay : color.hairline,
                       opacity: pressed ? 0.7 : 1,
                     })}

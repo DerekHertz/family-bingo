@@ -19,7 +19,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { Suggestion } from '../src/domain/sharpen';
 import { targetSummary } from '../src/domain/goal';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 
 /** Which card the Member has picked. `null` until they pick one — §4.2. */
 export type Choice = 'sharpened' | 'mine' | null;
@@ -76,7 +76,7 @@ function Card({
         backgroundColor: color.paperRaised,
         // 1.5px inset when chosen, hairline when not (§4.2). The border width does not
         // change with selection — a card that grows a thicker edge shifts its own text.
-        borderWidth: 1.5,
+        borderWidth: stroke.selected,
         borderColor: chosen ? color.moss : color.hairline,
         minHeight: size.minTouch,
         opacity: pressed ? 0.7 : 1,

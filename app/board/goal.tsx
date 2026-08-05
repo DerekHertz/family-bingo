@@ -61,7 +61,7 @@ import {
 import { stepperHint } from '../../src/domain/increment';
 import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 /**
  * A ceiling on the typed target. Not a domain rule — `write_goal()` accepts any positive
@@ -91,7 +91,7 @@ function Step({ label, hint, onPress, disabled }: {
         justifyContent: 'center',
         borderRadius: radius.card,
         backgroundColor: color.paperRaised,
-        borderWidth: 1,
+        borderWidth: stroke.hairline,
         borderColor: color.hairline,
         opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
       })}

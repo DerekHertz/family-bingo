@@ -52,7 +52,7 @@ import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 export default function DraftingTable() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -339,7 +339,7 @@ export default function DraftingTable() {
                 padding: space.lg,
                 backgroundColor: color.paperRaised,
                 borderRadius: radius.card,
-                borderWidth: 1,
+                borderWidth: stroke.hairline,
                 borderColor: color.hairline,
               }}
             >

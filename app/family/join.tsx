@@ -27,7 +27,7 @@ import { FormScreen, Trouble } from '../../components/Screen';
 import { useAnnounce } from '../../lib/announce';
 import { codeProblem, normalizeCode, useRedeemInvitation } from '../../lib/queries/invitations';
 import { styles } from '../../theme/fonts';
-import { color, size, space } from '../../theme/tokens';
+import { color, size, space, type } from '../../theme/tokens';
 
 export default function JoinFamily() {
   const router = useRouter();
@@ -118,7 +118,11 @@ export default function JoinFamily() {
           // was rejected for being the wrong length. normalizeCode strips the dash.
           returnKeyType="done"
           accessibilityLabel="Invitation code"
-          style={{ textAlign: 'center', letterSpacing: 4.8 }}
+          // The same tracking §4.5 gives the code when it is *displayed* (`type.code`), so
+          // what is typed and what was read out across a room look like the same eight
+          // characters. The face stays `body`: this is a control, and DM Mono at 30pt is
+          // the display treatment, not the input one.
+          style={{ textAlign: 'center', letterSpacing: type.code.letterSpacing }}
         />
         <Button
           label={redeem.isPending ? 'Checking…' : 'Join'}

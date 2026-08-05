@@ -16,7 +16,7 @@
 
 import { Pressable, Text, type ViewStyle } from 'react-native';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 
 interface Props {
   label: string;
@@ -105,7 +105,7 @@ export function Button({
             : filled
               ? color.ink
               : color.paperRaised,
-        borderWidth: plain || filled ? 0 : 1,
+        borderWidth: plain || filled ? 0 : stroke.hairline,
         borderColor: color.hairline,
         // No pressed colour of its own: the palette has no state colours, so press is
         // opacity (§1.1).

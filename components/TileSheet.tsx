@@ -27,7 +27,7 @@ import { incrementVerb } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { ProgressRing } from './ProgressRing';
@@ -259,7 +259,7 @@ export function TileSheet({
                     marginTop: space.md,
                     padding: space.md,
                     minHeight: size.controlSharpen,
-                    borderWidth: 1,
+                    borderWidth: stroke.hairline,
                     borderColor: color.hairline,
                     borderRadius: radius.card,
                   }}

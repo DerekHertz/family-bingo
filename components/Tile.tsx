@@ -18,7 +18,7 @@ import { Pressable, Text, View } from 'react-native';
 import { progressOf, stageOf } from '../src/domain/growth';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { styles } from '../theme/fonts';
-import { color, radius, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 import { TileGrowth } from './TileGrowth';
 
 export interface TileGoal {
@@ -82,7 +82,7 @@ export const Tile = memo(function Tile({
         // A completed Tile is solid moss; everything else is the sunk well it grew from.
         backgroundColor:
           stage === 'complete' ? color.moss : shared ? color.clayTint : color.paperSunk,
-        borderWidth: shared ? 1.5 : 1,
+        borderWidth: shared ? stroke.selected : stroke.hairline,
         // An unfilled Tile on a sealed Board is dashed — it is a Tile whose Goal has not
         // been written yet, not a mistake (§10.2, §3).
         borderStyle: goal === null ? 'dashed' : 'solid',
@@ -97,14 +97,16 @@ export const Tile = memo(function Tile({
         opacity: pressed ? 0.9 : 1,
       })}
     >
-      {/* The shared centre's clay dot, top-centre (§3). Clay means family, nothing else. */}
+      {/* The shared centre's clay dot, top-centre (§3). Clay means family, nothing else.
+          `size.dot` is the same 7pt as the Managed-Member dot and §4.7's clay bullets —
+          "One dot size, not three" (tokens.ts). */}
       {shared ? (
         <View
           style={{
             position: 'absolute',
             top: space.xs,
-            width: 7,
-            height: 7,
+            width: size.dot,
+            height: size.dot,
             borderRadius: radius.pill,
             backgroundColor: color.clay,
           }}
