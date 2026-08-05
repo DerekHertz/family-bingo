@@ -11,6 +11,17 @@
  * notify the Member who caused it" is a rule worth having pgTAP around rather than a
  * filter in a Deno file. All this does is drain, render and send.
  *
+ * It decides nothing about WHEN either, for the same reason. `pending_notifications()`
+ * (20260801000036) is the drain query, and quiet hours — a wall-clock window in the
+ * ACCOUNT's own timezone, because a handset has one notification tray (FRONTEND_DESIGN
+ * §4.8) — are applied there. What this file owes quiet hours is the other half of §4.8's
+ * sentence: everything held overnight goes out "batched into one line at 07:00", which is
+ * a rendering job and belongs here.
+ *
+ * That same query carries the Board and the Tile a tap has to open. §4.8: "A tap opens the
+ * Tile the notification is about, not the app." A message with no `data` payload has
+ * nothing to route with, so the app could only ever open its own front door.
+ *
  * Invocation is a Supabase Database Webhook on `notifications` insert — that is what
  * makes the acceptance test's "within 30 seconds" true, and it is configured in project
  * settings rather than in a migration. This endpoint is idempotent and takes no
@@ -26,13 +37,33 @@ const EXPO_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 /** Give up on a row after this many attempts rather than retrying it forever. */
 const MAX_ATTEMPTS = 5;
 
+/**
+ * One row of `pending_notifications()`. The column names are the function's, and they are
+ * prefixed rather than named after the columns they carry — a RETURNS TABLE name that
+ * collides with a column in its own FROM list is ambiguous in Postgres.
+ */
 interface PendingRow {
-  id: string;
-  account_id: string;
-  kind: string;
-  attempts: number;
-  year_id: string | null;
-  subject: { display_name: string } | null;
+  notification_id: string;
+  recipient_account: string;
+  notification_kind: string;
+  attempt_count: number;
+  about_year: string | null;
+  subject_name: string | null;
+  route_board: string | null;
+  route_tile: string | null;
+  was_held: boolean;
+}
+
+/**
+ * Where a tap lands (§4.8).
+ *
+ * `tileId` is absent on a Bingo and a Blackout, which carry no Tile (§13.1) — the app
+ * opens the Board and shows it whole, which is the true answer rather than a square picked
+ * to fill the field.
+ */
+interface Route {
+  boardId: string;
+  tileId?: string;
 }
 
 /** The week a `digest` row is about (§19.2). Built once per Family, read once per Member. */
@@ -75,10 +106,84 @@ const render = (
       return { title: 'Boards seal tomorrow', body: 'Last chance to finish your 24 Goals.' };
     case 'digest':
       return { title: 'Your week', body: summarise(digest) };
+    // The Almanac (§8: "Wrapped" is the codebase's word and nobody else's product's).
+    // generate_wrapped() has written this kind since slice 20 and nothing rendered it, so
+    // the one notification a Family gets at the end of a Year read "Something happened."
+    case 'wrapped':
+      return { title: 'The Almanac', body: 'The Year is finished. Every board is in it.' };
     default:
       return { title: 'Family Bingo', body: 'Something happened.' };
   }
 };
+
+/** How many of a held night's events are named before the line stops naming them. */
+const HELD_NAMES = 3;
+
+/**
+ * One held event, as a phrase rather than as a sentence.
+ *
+ * Its own table, and not `render(...).body` with the full stop shaved off, which is what it
+ * used to be. Two of those bodies are two sentences — `join_approved` gave "Your Family
+ * approved you. Time to write your Goals", which is not a phrase and which the ` · ` join
+ * then ran into whatever came next. `setup_closing` was the same shape.
+ *
+ * Every phrase names the Member and the thing, which is §4.8's rule and the reason this
+ * exists separately at all. Where no Member can be named, the phrase names the reader's own
+ * Family or Year instead — `join_approved` and `setup_closing` are about the reader, and
+ * `wrapped` and `digest` are about the whole Family, so there is no third party to name and
+ * inventing one would be the "someone in your family" §4.8 forbids.
+ *
+ * Capitalised, because any one of them can lead the line.
+ */
+const heldPhrase = (kind: string, who: string): string => {
+  switch (kind) {
+    case 'tile_completed':
+      return `${who} completed a Tile`;
+    case 'bingo':
+      return `${who} completed a Line`;
+    case 'blackout':
+      return `${who} completed all 25 Tiles`;
+    case 'join_requested':
+      return `${who} is waiting for you to approve them`;
+    case 'join_approved':
+      return 'Your Family approved you';
+    case 'setup_closing':
+      return 'Boards seal tomorrow';
+    case 'digest':
+      return 'Your week is ready';
+    case 'wrapped':
+      return 'The Almanac is ready';
+    default:
+      return 'Something happened';
+  }
+};
+
+/**
+ * The night, as one line (§4.8: "batched into one line at 07:00").
+ *
+ * The alternative — sending eight held pushes the moment the window closes — is the
+ * failure quiet hours exist to prevent, moved by ten hours. §15.3's one-way door does not
+ * care what time it was.
+ *
+ * Beyond three, the count is of other people's news and never of anything the reader has or
+ * has not done (§4.8).
+ */
+const summariseHeld = (rows: PendingRow[]): { title: string; body: string } => {
+  const phrases = rows
+    .slice(0, HELD_NAMES)
+    .map((row) => heldPhrase(row.notification_kind, row.subject_name ?? 'Someone'));
+  const rest = rows.length - phrases.length;
+  return {
+    title: 'Overnight',
+    body: `${[...phrases, ...(rest > 0 ? [`and ${rest} more`] : [])].join(' · ')}.`,
+  };
+};
+
+/** The Board and, where there is one, the square (§4.8). */
+const routeOf = (row: PendingRow): Route | undefined =>
+  row.route_board === null
+    ? undefined
+    : { boardId: row.route_board, ...(row.route_tile === null ? {} : { tileId: row.route_tile }) };
 
 /**
  * The Digest's one sentence.
@@ -127,14 +232,14 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   );
 
-  const { data: pending, error } = await db
-    .from('notifications')
-    .select('id, account_id, kind, attempts, year_id, subject:subject_member_id (display_name)')
-    .is('sent_at', null)
-    .is('failed_at', null)
-    .lt('attempts', MAX_ATTEMPTS)
-    .order('created_at', { ascending: true })
-    .limit(EXPO_BATCH);
+  // Not a select on `notifications` any more. Quiet hours are a send-time decision that
+  // needs the Family's timezone, and the route a tap follows is two joins away from the
+  // `milestone_id` this row stores — both belong in one query the database can be tested
+  // on (20260801000036).
+  const { data: pending, error } = await db.rpc('pending_notifications', {
+    batch_size: EXPO_BATCH,
+    max_attempts: MAX_ATTEMPTS,
+  });
 
   if (error !== null) {
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });
@@ -148,7 +253,9 @@ Deno.serve(async (req) => {
   // Digests carry content, unlike every other kind. Fetched per Year rather than per row,
   // because a Family's week is one Digest read by however many Members opted in (§19.1).
   const digestYears = [...new Set(
-    rows.filter((r) => r.kind === 'digest' && r.year_id !== null).map((r) => r.year_id!),
+    rows
+      .filter((r) => r.notification_kind === 'digest' && r.about_year !== null)
+      .map((r) => r.about_year!),
   )];
   const digestFor = new Map<string, Digest>();
   if (digestYears.length > 0) {
@@ -165,32 +272,83 @@ Deno.serve(async (req) => {
   const { data: tokenRows } = await db
     .from('device_tokens')
     .select('account_id, token')
-    .in('account_id', [...new Set(rows.map((r) => r.account_id))]);
+    .in('account_id', [...new Set(rows.map((r) => r.recipient_account))]);
 
   const tokensFor = new Map<string, string[]>();
   for (const { account_id, token } of tokenRows ?? []) {
     tokensFor.set(account_id, [...(tokensFor.get(account_id) ?? []), token]);
   }
 
+  // Held rows are grouped by Account so the night can go out as one line (§4.8). Everything
+  // else stays one message per row, which is what it has always been: a Tile completing at
+  // three in the afternoon is one event and is not batched with anything.
+  const byAccount = new Map<string, PendingRow[]>();
+  for (const row of rows) {
+    byAccount.set(row.recipient_account, [...(byAccount.get(row.recipient_account) ?? []), row]);
+  }
+
   // One message per device. A row addressed to an Account with no registered device is
   // not a failure — they have not granted permission, or have no app installed — so it is
   // marked sent rather than retried. §15.3: notification permission is a one-way door,
   // and nothing here is allowed to treat declining it as an error.
-  const messages: { to: string; title: string; body: string; rowId: string }[] = [];
+  //
+  // `rowIds` is a list rather than an id because a batched line covers a whole night: the
+  // rows it summarises are all delivered by it, and all stamped by it.
+  const messages: { to: string; title: string; body: string; data?: Route; rowIds: string[] }[] = [];
   const noDevice: string[] = [];
 
-  for (const row of rows) {
-    const tokens = tokensFor.get(row.account_id) ?? [];
+  for (const [account, queued] of byAccount) {
+    const tokens = tokensFor.get(account) ?? [];
     if (tokens.length === 0) {
-      noDevice.push(row.id);
+      for (const row of queued) noDevice.push(row.notification_id);
       continue;
     }
-    const { title, body } = render(
-      row.kind,
-      row.subject?.display_name ?? 'Someone',
-      row.year_id === null ? undefined : digestFor.get(row.year_id),
-    );
-    for (const to of tokens) messages.push({ to, title, body, rowId: row.id });
+
+    const held = queued.filter((row) => row.was_held);
+    // One held row is its own sentence — "Bob completed a Tile" is better than a summary
+    // of it — so batching starts at two.
+    //
+    // Known and not fixed: an Account with more than EXPO_BATCH rows held overnight is
+    // split across drains and gets one Overnight line per drain, each with its own "and N
+    // more". Reaching it takes a hundred Milestones in one Family in one night; the honest
+    // fix is a per-Account limit in pending_notifications(), which changes how the drain is
+    // paced rather than what this line says.
+    const batched = held.length > 1 ? held : [];
+    const single = held.length > 1 ? queued.filter((row) => !row.was_held) : queued;
+
+    if (batched.length > 0) {
+      const { title, body } = summariseHeld(batched);
+      // The night's first route. A single tap cannot open four Tiles, and the oldest is the
+      // one the line leads with.
+      const route = batched.map(routeOf).find((r) => r !== undefined);
+      for (const to of tokens) {
+        messages.push({
+          to,
+          title,
+          body,
+          ...(route === undefined ? {} : { data: route }),
+          rowIds: batched.map((row) => row.notification_id),
+        });
+      }
+    }
+
+    for (const row of single) {
+      const { title, body } = render(
+        row.notification_kind,
+        row.subject_name ?? 'Someone',
+        row.about_year === null ? undefined : digestFor.get(row.about_year),
+      );
+      const route = routeOf(row);
+      for (const to of tokens) {
+        messages.push({
+          to,
+          title,
+          body,
+          ...(route === undefined ? {} : { data: route }),
+          rowIds: [row.notification_id],
+        });
+      }
+    }
   }
 
   const stamped = new Set<string>(noDevice);
@@ -203,24 +361,28 @@ Deno.serve(async (req) => {
       const response = await fetch(EXPO_ENDPOINT, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(batch.map(({ to, title, body }) => ({ to, title, body }))),
+        body: JSON.stringify(
+          batch.map(({ to, title, body, data }) => ({ to, title, body, ...(data === undefined ? {} : { data }) })),
+        ),
       });
       const tickets = ((await response.json())?.data ?? []) as ExpoTicket[];
 
       batch.forEach((message, index) => {
         const ticket = tickets[index];
         if (ticket?.status === 'ok') {
-          stamped.add(message.rowId);
+          for (const id of message.rowIds) stamped.add(id);
           return;
         }
-        failed.add(message.rowId);
+        for (const id of message.rowIds) failed.add(id);
         // §15.4. The app is gone; the token is not coming back.
         if (ticket?.details?.error === 'DeviceNotRegistered') deadTokens.push(message.to);
       });
     } catch {
       // Network trouble is transient. Leave the rows pending and let the next drain
       // retry them — that is what `attempts` bounds.
-      batch.forEach((message) => failed.add(message.rowId));
+      batch.forEach((message) => {
+        for (const id of message.rowIds) failed.add(id);
+      });
     }
   }
 
@@ -237,8 +399,8 @@ Deno.serve(async (req) => {
   }
 
   for (const id of failed) {
-    const row = rows.find((r) => r.id === id);
-    const attempts = (row?.attempts ?? 0) + 1;
+    const row = rows.find((r) => r.notification_id === id);
+    const attempts = (row?.attempt_count ?? 0) + 1;
     await db.from('notifications')
       .update({ attempts, failed_at: attempts >= MAX_ATTEMPTS ? new Date().toISOString() : null })
       .eq('id', id);

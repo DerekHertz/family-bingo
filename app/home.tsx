@@ -122,10 +122,21 @@ export default function Home() {
         <Button label="Join a Family" onPress={() => router.push('/family/join')} />
       </View>
 
+      {/* §4.6 puts this under an Account screen ("Families → people you look after → this
+          handset"), which is not built yet and belongs to another slice. Until it is, the
+          notifications screen needs a door, and this is the only screen in the app that is
+          about the Account rather than about one Family. */}
+      <Button
+        label="Notifications"
+        variant="text"
+        style={{ marginTop: space.xl, alignItems: 'flex-start' }}
+        onPress={() => router.push('/account/notifications')}
+      />
+
       <Button
         label="Sign out"
         variant="text"
-        style={{ marginTop: space.xl, alignItems: 'flex-start' }}
+        style={{ marginTop: space.sm, alignItems: 'flex-start' }}
         onPress={() => void signOut().then(() => router.replace('/'))}
       />
     </ScrollView>
