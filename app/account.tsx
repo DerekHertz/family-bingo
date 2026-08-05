@@ -19,17 +19,17 @@
 
 import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { Loading, Trouble } from '../components/Screen';
 import { signOut } from '../lib/auth';
+import { leaveTo } from '../lib/leave';
 import {
   renameFailureCopy,
   useDeleteAccount,
   useManagedByMe,
   useRenameMember,
-  useSetDigestOptIn,
 } from '../lib/queries/account';
 import { useFamilies } from '../lib/queries/families';
 import { useAnnounce } from '../lib/announce';
@@ -43,18 +43,28 @@ export default function Account() {
   const families = useFamilies(session?.user.id);
   const managed = useManagedByMe(session?.user.id);
   const rename = useRenameMember();
-  const digest = useSetDigestOptIn();
   const remove = useDeleteAccount();
-  const { trouble, say } = useAnnounce();
+  const { trouble, say, clear } = useAnnounce();
   // Which Membership's name is open for editing, and what it currently reads. One at a
   // time: a screen of live fields is a screen where a mistyped name saves itself.
   const [editing, setEditing] = useState<{ memberId: string; name: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   if (session === null) return <Redirect href="/" />;
-  if (session === undefined || families.isPending) {
+  // `managed.isPending` is in this gate, not just around the list below it. The delete
+  // paragraph's Managed-Member clause reads `(managed.data ?? []).length === 0` — so
+  // `undefined` data says *no children*, and a Guardian on a slow connection could have
+  // read a consequence that never mentioned their children and then tapped it. §4.6's one
+  // hard requirement is that the consequence is stated above the tap.
+  if (session === undefined || families.isPending || managed.isPending) {
     return <Loading what="Loading your account" />;
   }
+
+  // And a *failed* read is never "no children" either. Without the answer there is no
+  // honest consequence to state, so the control does not exist rather than existing with
+  // a sentence that might be missing its most important clause.
+  const childrenKnown = !managed.isError && managed.data !== undefined;
+  const children = managed.data ?? [];
 
   const list = families.data ?? [];
 
@@ -98,15 +108,16 @@ export default function Account() {
                     variant="outlined"
                     disabled={rename.isPending || editing.name.trim() === ''}
                     style={{ flex: 1 }}
-                    onPress={() =>
+                    onPress={() => {
+                      clear();
                       rename.mutate(
                         { memberId: family.member.id, name: editing.name },
                         {
                           onSuccess: () => setEditing(null),
                           onError: (e) => say(renameFailureCopy(e)),
                         },
-                      )
-                    }
+                      );
+                    }}
                   />
                   <Button
                     label="Cancel"
@@ -120,9 +131,10 @@ export default function Account() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Your name in ${family.name} is ${family.member.display_name}. Change it.`}
-                onPress={() =>
-                  setEditing({ memberId: family.member.id, name: family.member.display_name })
-                }
+                onPress={() => {
+                  setConfirmingDelete(false);
+                  setEditing({ memberId: family.member.id, name: family.member.display_name });
+                }}
                 style={({ pressed }) => ({
                   minHeight: size.minTouch,
                   justifyContent: 'center',
@@ -136,33 +148,24 @@ export default function Account() {
               </Pressable>
             )}
 
-            {/* §19.1 — opt-in, default off, and per Family because a Digest is one
-                Family's week. Never a nag: there is nothing here that asks a Member to
-                turn it on, and nothing that says what they will miss (§7.11). */}
-            <SwitchRow
-              label="Weekly summary"
-              hint={`A quiet round-up of ${family.name}’s week, on Sundays.`}
-              value={family.member.digest_opt_in}
-              onChange={(optIn) =>
-                digest.mutate(
-                  { memberId: family.member.id, optIn },
-                  { onError: () => say('That didn’t save. Have another go in a moment.') },
-                )
-              }
-            />
           </View>
         ))
       )}
 
       <Section title="People you look after" />
-      {managed.isPending ? (
-        <Loading what="Loading the people you look after" inline />
-      ) : (managed.data ?? []).length === 0 ? (
+      {managed.isError ? (
+        // Never "Nobody yet." A failed read presented as a fact tells a Guardian they look
+        // after nobody, which is the confident-wrong-answer shape §0.3 rules out.
+        <Trouble
+          live={false}
+          message="Couldn’t load the people you look after just now."
+        />
+      ) : children.length === 0 ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           Nobody yet. You can add a child profile from a family’s screen.
         </Text>
       ) : (
-        (managed.data ?? []).map((child) => (
+        children.map((child) => (
           <View key={child.id} style={row}>
             <Text style={{ ...styles.body, color: color.ink }}>{child.displayName}</Text>
             <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
@@ -177,7 +180,13 @@ export default function Account() {
         accessibilityRole="button"
         accessibilityLabel="Notifications"
         accessibilityHint="What this handset is allowed to interrupt you for"
-        onPress={() => router.push('/account/notifications')}
+        onPress={() => {
+          // Disarms the delete guard. It is two taps rather than two screens, and a
+          // Member who armed it, went to look at something else and came back would
+          // otherwise return to what reads as an unarmed button and is not.
+          setConfirmingDelete(false);
+          router.push('/account/notifications');
+        }}
         style={({ pressed }) => ({ ...row, opacity: pressed ? 0.7 : 1 })}
       >
         <Text style={{ ...styles.body, color: color.ink }}>Notifications</Text>
@@ -186,14 +195,20 @@ export default function Account() {
       <Pressable
         accessibilityRole="button"
         onPress={() => {
-          void signOut();
+          setConfirmingDelete(false);
+          // A failed sign-out is a row that visibly does nothing; say so rather than
+          // leaving an unhandled rejection.
+          void signOut().catch(() => say('Couldn’t sign out just now. Try again in a moment.'));
         }}
         style={({ pressed }) => ({ ...row, opacity: pressed ? 0.7 : 1 })}
       >
         <Text style={{ ...styles.body, color: color.ink }}>Sign out</Text>
       </Pressable>
 
-      {trouble === null ? null : <Trouble message={trouble} />}
+      {/* `live={false}`: `say()` is the only way this appears, and
+          `accessibilityLiveRegion` is Android-only while `announceForAccessibility` fires
+          on both — together they read the sentence twice on TalkBack. */}
+      <Trouble message={trouble} live={false} />
 
       {/* §4.6's delete. The consequence is stated **above** the tap and there is no modal
           that says it again — a second screen repeating the same sentence is a screen that
@@ -210,11 +225,11 @@ export default function Account() {
         Deleting
       </Text>
       <Text style={{ ...styles.body, color: color.ink2, marginTop: space.sm }}>
-        Your boards leave every year, including the frozen ones. Each family keeps its own.
-        {(managed.data ?? []).length === 0
+        Your boards leave every Year, including the frozen ones. Each family keeps its own.
+        {children.length === 0
           ? ''
-          : ` The ${(managed.data ?? []).length === 1 ? 'profile' : 'profiles'} you look after ${
-              (managed.data ?? []).length === 1 ? 'goes' : 'go'
+          : ` The ${children.length === 1 ? 'profile' : 'profiles'} you look after ${
+              children.length === 1 ? 'goes' : 'go'
             } too, with their boards.`}{' '}
         This cannot be undone.
       </Text>
@@ -224,13 +239,19 @@ export default function Account() {
         accessibilityLabel={
           confirmingDelete ? 'Yes, delete my account' : 'Delete my account'
         }
-        disabled={remove.isPending}
+        // Never offered without the answer the consequence above depends on.
+        disabled={remove.isPending || !childrenKnown}
         onPress={() => {
           // Two taps, not two screens. The second tap is the confirmation §4.6 wants
           // without the modal it forbids: the button restates itself in place, so the
           // consequence above stays on screen while the Member decides.
           if (!confirmingDelete) {
             setConfirmingDelete(true);
+            // Neither VoiceOver nor TalkBack re-announces a changed label on an element
+            // that already has focus, so without this the first tap is completely silent —
+            // and the natural reading of silence is "that did not register", followed by a
+            // second tap. §4.6 forbids a modal, not feedback.
+            say('Tap again to delete your account. This cannot be undone.');
             return;
           }
           remove.mutate(undefined, {
@@ -271,7 +292,9 @@ export default function Account() {
         label="Back"
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-        onPress={() => router.back()}
+        // Not `router.back()`: `/account` is deep-linkable and can be first on the stack,
+        // and on an empty history that row does nothing at all.
+        onPress={() => leaveTo('/home')}
       />
     </ScrollView>
   );
@@ -294,49 +317,5 @@ function Section({ title }: { title: string }) {
     >
       {title}
     </Text>
-  );
-}
-
-/**
- * A preference, said as a sentence.
- *
- * The track is `ink` and never `moss`: moss is the growth ladder, and a settings screen
- * full of it would make a toggle look like progress (§1.1, §4.1's argument about the
- * drafting table's pips).
- */
-function SwitchRow({
-  label,
-  hint,
-  value,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.md,
-        marginTop: space.md,
-      }}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={{ ...styles.body, color: color.ink }}>{label}</Text>
-        <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>{hint}</Text>
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        accessibilityLabel={label}
-        accessibilityHint={hint}
-        trackColor={{ false: color.paperSunk, true: color.ink }}
-        thumbColor={color.paperRaised}
-        ios_backgroundColor={color.paperSunk}
-      />
-    </View>
   );
 }

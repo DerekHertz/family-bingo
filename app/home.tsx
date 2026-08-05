@@ -13,7 +13,6 @@ import { Redirect, useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { Loading } from '../components/Screen';
-import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
 import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
@@ -132,13 +131,6 @@ export default function Home() {
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
         onPress={() => router.push('/account')}
-      />
-
-      <Button
-        label="Sign out"
-        variant="text"
-        style={{ marginTop: space.sm, alignItems: 'flex-start' }}
-        onPress={() => void signOut().then(() => router.replace('/'))}
       />
     </ScrollView>
   );

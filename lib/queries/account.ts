@@ -92,7 +92,14 @@ export function useRenameMember() {
         .eq('id', rename.memberId)
         .select('id');
       if (error !== null) throw error;
-      if ((data ?? []).length === 0) throw new Error('that name could not be changed');
+      // Thrown with a `code` rather than as an `Error`, so `renameFailureCopy` reads it
+      // through the same SQLSTATE branch as a real refusal. Zero rows here **is** 42501 —
+      // `members_self_update` is a `using` policy, so a refusal matches nothing and
+      // PostgREST answers 204 with no error object. A codeless `Error` fell through to
+      // "have another go in a moment", which is advice that can never work (§0.3).
+      if ((data ?? []).length === 0) {
+        throw { code: '42501', message: 'that name is not yours to change' };
+      }
     },
     onSuccess: () => {
       // Everything that renders a Member's name: the Family list, the roster, the Boards
@@ -100,41 +107,11 @@ export function useRenameMember() {
       void queryClient.invalidateQueries({ queryKey: ['families'] });
       void queryClient.invalidateQueries({ queryKey: ['roster'] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
+      // `['boards']` does not prefix-match `['board-head', …]`, and the head is where the
+      // drafting table's title comes from — so without this a Member renamed themselves
+      // and their own Board still greeted them by the old name.
+      void queryClient.invalidateQueries({ queryKey: ['board-head'] });
       void queryClient.invalidateQueries({ queryKey: ['managed-by-me'] });
-    },
-  });
-}
-
-/**
- * §19.1 — the weekly Digest. **Opt-in, default off**, and the default is the point: §19 is
- * a pull back into the game for Members who want one, and §7.11 forbids anything that
- * reaches for a Member who did not ask.
- *
- * Per Member, so somebody in two Families chooses twice. That is not an oversight: a
- * Digest is one Family's week (§19.2), and the Family is the unit of privacy.
- *
- * Distinct from the Almanac switch on the notifications screen, which decides whether the
- * *push* is delivered to this Account. This decides whether a Digest is built for this
- * Member at all — `build_and_send_digest()` reads it directly. One says "send me this
- * Family's week"; the other says "let this handset buzz for it".
- *
- * `20260801000011_managed_members.sql` constrains a Managed Member's `digest_opt_in` to
- * false, so this is never offered for one — §4.7: they receive no notifications.
- */
-export function useSetDigestOptIn() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (change: { memberId: string; optIn: boolean }): Promise<void> => {
-      const { data, error } = await supabase
-        .from('members')
-        .update({ digest_opt_in: change.optIn })
-        .eq('id', change.memberId)
-        .select('id');
-      if (error !== null) throw error;
-      if ((data ?? []).length === 0) throw new Error('that preference could not be saved');
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['families'] });
     },
   });
 }
