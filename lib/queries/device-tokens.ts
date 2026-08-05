@@ -16,18 +16,38 @@ import { supabase } from '../supabase';
 import { currentPushToken, type PushRegistration } from '../notifications';
 
 /**
+ * The token this process actually wrote a row for, so sign-out can delete the right one.
+ *
+ * Not derived again at sign-out, and that is the fix to a real breach rather than a
+ * micro-optimisation. `forgetThisDevice` used to call `currentPushToken()`, which answers
+ * `null` on a simulator, when permission is not *currently* granted, and when Expo's token
+ * service is unreachable — and in all three it deleted nothing. The middle one is ordinary:
+ * Alice registers token T, turns notifications off in iOS Settings months later, signs out,
+ * and the row survives. See `device_tokens_token_key` (20260801000036) for the other half.
+ *
+ * Module scope, so it dies with the process — which is correct. A launch that could not
+ * mint a token has no row to forget either, and the globally-unique token means the next
+ * Account to sign in on this handset takes the row over rather than sitting beside it.
+ */
+let registeredToken: string | null = null;
+
+/**
  * §15.4 — "refreshed on launch".
  *
- * `onConflict: 'account_id,token'` is the UNIQUE constraint the table was built with
- * (20260801000001), and the refresh is the point: `last_seen_at` moving is how a live
- * handset is told apart from one that was reinstalled onto a new token months ago. Without
- * the conflict target PostgREST resolves on the primary key instead, which is a `gen_random_uuid()`
- * that never collides — so every launch would insert a duplicate row and the Member would
- * get one push per launch they had ever made.
+ * `onConflict: 'token'`, because a push token addresses one notification tray and a tray
+ * belongs to whoever is signed in now (20260801000036). The conflict target has to name a
+ * unique constraint: without one PostgREST resolves on the primary key instead, which is a
+ * `gen_random_uuid()` that never collides — so every launch would insert a duplicate row
+ * and the Member would get one push per launch they had ever made.
+ *
+ * `account_id` is in the payload rather than only in the insert, so the conflict path
+ * MOVES the handset. It used to conflict on `(account_id, token)`, which meant a stale row
+ * from the previous Account stayed put and this one was added beside it — both live, one
+ * phone, and every notification for the previous Account's Family landing on it (§8.1).
  *
  * `last_seen_at` is sent rather than defaulted, because the DEFAULT only applies to an
  * INSERT and this is an upsert: on the conflict path the column would keep whatever it said
- * the first time.
+ * the first time. It is how a live handset is told apart from one reinstalled months ago.
  */
 export const registerDevice = async (
   accountId: string,
@@ -40,9 +60,10 @@ export const registerDevice = async (
       platform: registration.platform,
       last_seen_at: new Date().toISOString(),
     },
-    { onConflict: 'account_id,token' },
+    { onConflict: 'token' },
   );
   if (error !== null) throw error;
+  registeredToken = registration.token;
 };
 
 /** Mint whatever this handset already has permission for, and record it. */
@@ -66,18 +87,26 @@ export const registerThisDevice = async (accountId: string): Promise<void> => {
  * Only THIS handset's token goes. A Member with a phone and a tablet is one Account with
  * two rows, and signing out of one must not silence the other.
  *
+ * **The token comes from what was registered, not from minting one again.** Re-deriving it
+ * was the defect: `currentPushToken()` answers `null` on a simulator, when permission is not
+ * currently granted, and when Expo's service is unreachable, and in all three this deleted
+ * nothing at all. The permission case is the ordinary one — turn notifications off in
+ * Settings, sign out, and the row lived on for the next person to sign in on that phone.
+ *
+ * `currentPushToken()` remains as a fallback for the launch that never registered anything
+ * in this process. It is best-effort, and it is no longer the only chance: `device_tokens`
+ * makes the token itself unique now, so the next sign-in takes the row over rather than
+ * adding a second one against the same handset (20260801000036).
+ *
  * Failure is swallowed: signing out must not be blocked by a network call, and a token
  * that outlives its Account is pruned the first time Expo answers `DeviceNotRegistered`.
  */
 export const forgetThisDevice = async (accountId: string): Promise<void> => {
   try {
-    const registration = await currentPushToken();
-    if (registration === null) return;
-    await supabase
-      .from('device_tokens')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('token', registration.token);
+    const token = registeredToken ?? (await currentPushToken())?.token ?? null;
+    if (token === null) return;
+    await supabase.from('device_tokens').delete().eq('account_id', accountId).eq('token', token);
+    registeredToken = null;
   } catch {
     // Nothing here is worth keeping a Member signed in for.
   }

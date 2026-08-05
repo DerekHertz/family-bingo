@@ -21,11 +21,27 @@
  *     following a months-old notification would land on a Board it cannot read and see an
  *     error rather than the front door. `undefined` means the keychain is still being read
  *     and the tap waits; `null` means there is nobody to route for and it is dropped.
+ *
+ * ---------------------------------------------------------------------------------
+ * The two paths share one guard, and it is the response's own identifier
+ * ---------------------------------------------------------------------------------
+ *
+ * Both can fire for the same tap. `ready` and `signedIn` resolve independently, so a launch
+ * response can reach the listener and navigate, and then `ready` arrives and the first
+ * effect reads that same response — still uncleared — and navigates again: two
+ * `/board/[id]` screens stacked on one tap. A `handled` boolean did not close that, because
+ * only the first path ever set it.
+ *
+ * So the guard is `request.identifier`, held in a ref and checked by both. (The comment
+ * this replaces claimed the listener was "registered once and must not close over the
+ * session". It was never registered once — `signedIn` is in its dependency array, so it
+ * re-registers on every session change, which is exactly what opens the window above.)
  */
 
 import * as Notifications from 'expo-notifications';
 import { useRootNavigationState, useRouter } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { pushRoute } from '../src/domain/notifications';
 import { useSession } from './session';
 
@@ -35,46 +51,61 @@ export function useNotificationTaps(): void {
   const session = useSession();
 
   const ready = navigationState?.key !== undefined && session !== undefined;
-  // A live copy for the listener, which is registered once and must not close over the
-  // session as it was at registration.
   const signedIn = session !== null && session !== undefined;
 
-  // Whichever cold-start response is waiting, held until the two conditions above are met.
-  // The effect below can run before the navigator exists, and dropping the response then
-  // would mean the tap that launched the app is the one tap that does nothing.
-  const handled = useRef(false);
+  /**
+   * The identifier of the response already acted on, shared by both paths.
+   *
+   * Remembered rather than merely counted, because the cold-start response survives the app
+   * being killed: without both this and the clear below, every launch would re-open the
+   * Tile from whenever the Member last tapped one.
+   */
+  const handled = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!ready || !signedIn || handled.current) return;
+  const follow = useCallback(
+    (response: Notifications.NotificationResponse | null) => {
+      if (response === null) return;
+      const { identifier } = response.notification.request;
+      if (handled.current === identifier) return;
+      handled.current = identifier;
 
-    const response = Notifications.getLastNotificationResponse();
-    // Once, ever. This value survives the app being killed, so without clearing it every
-    // subsequent launch would re-open the Tile from whenever the Member last tapped one.
-    handled.current = true;
-    Notifications.clearLastNotificationResponse();
-
-    const route = pushRoute(response?.notification.request.content.data);
-    if (route === null) return;
-
-    router.push({
-      pathname: '/board/[id]',
-      params: { id: route.boardId, ...(route.tileId === undefined ? {} : { tile: route.tileId }) },
-    });
-  }, [ready, signedIn, router]);
-
-  useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      // The running app has a navigator by definition, but not necessarily a session — a
-      // tap arriving on the sign-in screen has nowhere to go, and pushing a Board there
-      // would replace the screen the Member needs with one that cannot load.
-      if (!signedIn) return;
       const route = pushRoute(response.notification.request.content.data);
       if (route === null) return;
+
       router.push({
         pathname: '/board/[id]',
         params: { id: route.boardId, ...(route.tileId === undefined ? {} : { tile: route.tileId }) },
       });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    // `getLastNotificationResponse` and `clearLastNotificationResponse` both throw
+    // `UnavailabilityError` on web, and this hook runs from the root layout — so unguarded
+    // they fire on every signed-in web session. `expo start --web` is a surface this repo
+    // keeps working on purpose (`lib/supabase.ts` and `lib/leave.ts` both reason about it),
+    // and a push tap is something web cannot deliver at all.
+    if (Platform.OS === 'web') return;
+    if (!ready || !signedIn) return;
+
+    follow(Notifications.getLastNotificationResponse());
+    // Once, ever. This value survives the app being killed, so leaving it would mean every
+    // subsequent launch re-opening the same Tile.
+    Notifications.clearLastNotificationResponse();
+  }, [ready, signedIn, follow]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      // The running app has a navigator by definition, but not necessarily a session — a
+      // tap arriving on the sign-in screen has nowhere to go, and pushing a Board there
+      // would replace the screen the Member needs with one that cannot load. This is why
+      // the listener re-registers on every session change.
+      if (!signedIn) return;
+      follow(response);
     });
     return () => subscription.remove();
-  }, [router, signedIn]);
+  }, [signedIn, follow]);
 }

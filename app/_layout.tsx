@@ -85,8 +85,16 @@ export default function RootLayout() {
       // This never prompts. `registerThisDevice` reads a permission that already exists
       // and mints a token only if it was granted — §15.3's one-way door is opened from the
       // notifications screen and nowhere else.
+      //
+      // Deferred out of the callback with a zero timeout, which supabase-js asks for
+      // explicitly: this handler runs inside the client's own auth lock, and a Supabase
+      // call made from within it can wait on a lock the callback is holding. The symptom is
+      // not an error, it is a launch that hangs — so it is worth the odd-looking line.
       if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session !== null) {
-        void registerThisDevice(session.user.id).catch(() => undefined);
+        const accountId = session.user.id;
+        setTimeout(() => {
+          void registerThisDevice(accountId).catch(() => undefined);
+        }, 0);
       }
     });
     return () => data.subscription.unsubscribe();

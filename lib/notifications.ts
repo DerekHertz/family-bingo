@@ -48,6 +48,33 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+/**
+ * A push that arrives while the app is open still has to be seen.
+ *
+ * `expo-notifications` documents the default plainly: **with no handler set, an incoming
+ * notification is not shown.** Nothing called `setNotificationHandler`, so PRD §15's
+ * acceptance test — "they receive a push notification within 30 seconds" — failed outright
+ * for any recipient who happened to have the app open. That is the common case for a family
+ * playing together and the first thing anybody testing this would try.
+ *
+ * Module scope on purpose: the handler has to be registered before a notification can
+ * arrive, and this module is imported by the launch registration in `app/_layout.tsx`.
+ *
+ * `shouldPlaySound: false` keeps the same promise the Android channel makes with
+ * `AndroidImportance.DEFAULT`: everything here is somebody else's good news (§15.1), which
+ * is worth a banner and is not worth interrupting whatever the Member is doing. No badge
+ * either — a count of unread family news would be counting, and §4.8 forbids the app
+ * counting anything at somebody.
+ */
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
 /** A registered handset, in the shape `device_tokens` stores. */
 export interface PushRegistration {
   token: string;
