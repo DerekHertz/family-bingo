@@ -175,6 +175,22 @@ export const type = {
   /** "of 144" beneath it (§3): 11pt, and deliberately not `meta` — no caps, no tracking. */
   ringOf: { fontFamily: font.ui, fontSize: 11, lineHeight: 15, fontWeight: '500' },
   /**
+   * Wrapped's one big number (§3 `<WrappedCard>`): Shippori at 118pt on a .9 line height.
+   *
+   * The largest thing in the app by a factor of four, and it is allowed to be exactly
+   * because of *when* it appears. A number this size on a live screen would be a score, and
+   * §13.5 forbids one; a number this size on a card revealed once, after the Year is already
+   * decided, only describes what happened (ADR-0006). One per card, on a Member's own stats
+   * and never on a comparison — do not reuse this token anywhere else.
+   *
+   * The line height is below the size on purpose: at 118pt the font's own leading opens a
+   * gap wide enough to push the supporting grid off a small handset.
+   */
+  wrappedNumeral: {
+    fontFamily: font.display, fontSize: 118, lineHeight: 106.2, fontWeight: '500',
+    letterSpacing: -2,
+  },
+  /**
    * The tile sheet's primary action (§3): 17pt/700 on a 56pt `moss` button.
    *
    * Not `heading`, which is 19pt — close enough to look deliberate and wrong by two

@@ -219,6 +219,30 @@ export default function FamilyRoster() {
         />
       )}
 
+      {/* And the way into Wrapped (§20), which is the same Year seen from the other end.
+          Gated on the Freeze rather than on the status word, because `frozen_at` is the
+          fact `generate_wrapped()` itself requires — it refuses a Year that has not frozen
+          with PT403, and `wrapped` has no row until it runs. A button offered a moment
+          early would open a screen with nothing in it.
+
+          §20.10 keeps this here forever: a frozen Year and its Wrapped stay browsable as
+          family history, so this is not a notification that expires. Both buttons stand
+          together on a frozen Year — the Feed is what happened, Wrapped is what it added
+          up to, and a Family looking back wants either. */}
+      {current !== undefined && current !== null && current.frozen_at !== null ? (
+        <Button
+          label={`${current.calendar_year} wrapped`}
+          accessibilityHint="Your year, the family's year, and the awards"
+          style={{ marginTop: space.md }}
+          onPress={() =>
+            router.push({
+              pathname: '/year/wrapped',
+              params: { yearId: current.id, familyId: id ?? '' },
+            })
+          }
+        />
+      ) : null}
+
       {/* The way onto a Board (§6). One row per Member the caller may author for, which is
           themselves plus any child they guard — a Guardian authoring for a Managed Member
           is the normal case, not an administrative one (§4.2). */}
