@@ -12,14 +12,18 @@ import {
   ZenKakuGothicNew_500Medium,
   ZenKakuGothicNew_700Bold,
 } from '@expo-google-fonts/zen-kaku-gothic-new';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { useNotificationTaps } from '../lib/notification-routing';
+import { persistOptions, persister } from '../lib/persist';
+import { clearQueue, useQueueDrain } from '../lib/queue';
 import { registerThisDevice } from '../lib/queries/device-tokens';
+import { useSession } from '../lib/session';
 import { supabase } from '../lib/supabase';
 import { color } from '../theme/tokens';
 
@@ -66,14 +70,33 @@ export default function RootLayout() {
   // Members' names, eventually a Board. Keys carry the Account id as well; this is the
   // belt to that pair of braces, and it is the one that catches a key someone forgets.
   //
-  // The device token is **not** removed here, and that is deliberate. `SIGNED_OUT` fires
-  // after the session is gone, and `device_tokens_self_all` is `account_id = auth.uid()` —
-  // so a delete issued from this handler matches nothing, answers 204, and leaves the row
-  // behind for the next Account on this handset to receive news from. It is removed in
-  // `signOut()` instead, before the session is torn down; see lib/queries/device-tokens.ts.
+  // Signing out is a four-part job, and every part of it is somebody else's data.
+  //
+  //   - `clear()` empties the QueryClient in memory, as it always did.
+  //   - `removeClient()` deletes the persisted copy (§17.5). Without it the file survives
+  //     the sign-out and is restored on the next launch: keyed by the previous Account, so
+  //     unreadable by the new one and undeletable by anyone — a Family's Board sitting on a
+  //     handset that has been handed to somebody else. "Keyed so it cannot be read" was a
+  //     sufficient control while the cache lived in a heap that died with the process. It
+  //     is not a sufficient control for a file.
+  //   - `clearQueue()` drops taps that have not drained. They belong to a Member the
+  //     signed-out Account acted for, and there is no session left to send them under;
+  //     replaying them under the next Account's token is the one thing they must never do.
+  //     RLS would refuse it, but a queue that depends on RLS to refuse it is a queue that
+  //     is trying.
+  //   - The device token is **not** removed here, and that is deliberate. `SIGNED_OUT`
+  //     fires after the session is gone, and `device_tokens_self_all` is
+  //     `account_id = auth.uid()` — so a delete issued from this handler matches nothing,
+  //     answers 204, and leaves the row behind for the next Account on this handset to
+  //     receive news from. It is removed in `signOut()` instead, before the session is torn
+  //     down; see lib/queries/device-tokens.ts.
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') queryClient.clear();
+      if (event === 'SIGNED_OUT') {
+        queryClient.clear();
+        void persister.removeClient();
+        void clearQueue();
+      }
 
       // §15.4 — "device tokens refreshed on launch". `INITIAL_SESSION` is launch: it fires
       // once, with whatever was in the keychain. `SIGNED_IN` covers the magic link landing
@@ -114,14 +137,44 @@ export default function RootLayout() {
   if (!ready) return null;
 
   return (
-    <QueryClientProvider client={queryClient}>
+    /**
+     * §17.5 — "Board and Feed cached read-only so the app opens to content rather than a
+     * spinner."
+     *
+     * react-query's first-party persistence, restoring from AsyncStorage before the first
+     * render and writing back as queries settle. **What is allowed on the disk is an
+     * allowlist**, not the whole cache — `lib/persist-policy.ts` holds it and says why,
+     * and the line that matters most is that a signed URL for a photograph of a child is
+     * never one of them (§7.6).
+     *
+     * Everything restored is still refetched: `staleTime` is a minute, so a Board from
+     * this morning is what the Member sees for the moment before the server answers, and
+     * never instead of the answer.
+     */
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
       {/* Not "auto": every ground in this app is `paper`, whatever the handset's scheme
           is set to, so auto puts white glyphs on cream on a dark phone. Dark mode is
           §1.2's job and is not wired up yet. */}
       <StatusBar style="dark" />
+      <Drain />
       <Stack
         screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.paper } }}
       />
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
+}
+
+/**
+ * The offline queue's two triggers (§17.3), mounted where they can reach the QueryClient.
+ *
+ * Renders nothing. It exists because `useQueueDrain` invalidates the four keys an
+ * Increment moves once a drain lands anything, and `useQueryClient` only works inside the
+ * provider — putting the hook in `RootLayout` would read the client from outside its own
+ * tree. `useQueueDrain` itself explains why launch and foreground are the two moments, and
+ * why this is not a connectivity listener.
+ */
+function Drain() {
+  const session = useSession();
+  useQueueDrain(session != null);
+  return null;
 }
