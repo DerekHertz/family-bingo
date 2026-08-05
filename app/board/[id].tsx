@@ -46,6 +46,7 @@ import {
 } from '../../src/domain/celebration';
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
+import { countCompact, countSummary } from '../../src/domain/increment';
 import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
@@ -391,7 +392,9 @@ export default function DraftingTable() {
                     }. ${t.goal?.text ?? ''}. ${
                       isCentre
                         ? `The centre.${done ? ' Done.' : ''}`
-                        : `${t.count} of ${t.goal?.target ?? 1}.${done ? ' Complete.' : ''}`
+                        : `${countSummary(t.count, t.goal?.target ?? 1)}.${
+                            done ? ' Complete.' : ''
+                          }`
                     }`}
                     onPress={() => setOpenTileId(t.id)}
                     style={({ pressed }) => ({
@@ -422,7 +425,9 @@ export default function DraftingTable() {
                         color: done ? color.moss : isCentre ? color.clayDeep : color.ink2,
                       }}
                     >
-                      {isCentre ? 'The centre' : `${t.count}/${t.goal?.target ?? 1}`}
+                      {/* `countCompact`, so the column and the label above it cannot
+                          disagree about which number comes first. */}
+                      {isCentre ? 'The centre' : countCompact(t.count, t.goal?.target ?? 1)}
                     </Text>
                   </Pressable>
                 );

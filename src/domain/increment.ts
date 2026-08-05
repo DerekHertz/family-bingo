@@ -114,7 +114,11 @@ export const stepperHint = (
   `${targetSummary(target, unit)} · the button will say “${incrementVerb(unit, unitCanonical)}”`;
 
 /**
- * "3 of 144", and the one place §3 allows the exact number to appear large.
+ * "3 of 144" — progress in words, for anything read aloud or read as a sentence.
+ *
+ * §3's ring label, and every accessibility label that states progress (§6 A1's *"96 of
+ * 150"*). It was also written by hand in three more places, which is three chances for a
+ * screen reader to hear "3 of 144" on one square and something else on the next.
  *
  * Not clamped, unlike `progressOf`. The ring stops at full but the count is a fact, and a
  * Member who logged 160 of 150 should read 160 — overshoot is only hidden on the *board*,
@@ -122,3 +126,17 @@ export const stepperHint = (
  */
 export const countSummary = (count: number, target: number): string =>
   `${count} of ${target}`;
+
+/**
+ * "3/144" — the same fact in a column.
+ *
+ * The sealed Board's goal list puts progress at the end of each row, where "3 of 144"
+ * would be three words of a sentence pretending to be a figure. It is deliberately a
+ * *second rendering of one function's job* rather than a second hand-written string:
+ * `countSummary` is what the same row's accessibility label says, and the two must agree
+ * about which number comes first.
+ *
+ * Never larger than `label` (§3): the one place an exact number appears large is the tile
+ * sheet's ring, because there a Member is looking at their own Goal and nobody else's.
+ */
+export const countCompact = (count: number, target: number): string => `${count}/${target}`;

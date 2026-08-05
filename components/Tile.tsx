@@ -16,6 +16,7 @@
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { progressOf, stageOf } from '../src/domain/growth';
+import { countSummary } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space, stroke } from '../theme/tokens';
@@ -60,7 +61,10 @@ export const Tile = memo(function Tile({
   const label =
     goal === null
       ? `${where}. Empty${isCentre ? ', the centre' : ''}.`
-      : `${where}. ${goal.text}. ${count} of ${goal.target}${
+      : // `countSummary`, not `${count} of ${target}` again — §6 A1's *"96 of 150"* is the
+        // same sentence the sheet's ring says, and two squares announcing it two ways is
+        // the sort of drift a screen reader hears and a screenshot never shows.
+        `${where}. ${goal.text}. ${countSummary(count, goal.target)}${
           goal.unit === null ? '' : ` ${goal.unit}`
         }. ${stage === 'complete' ? 'Complete' : 'In progress'}.`;
 

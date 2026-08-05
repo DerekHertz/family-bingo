@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { RECENT_INCREMENTS, countSummary, incrementVerb, stepperHint } from './increment';
+import {
+  RECENT_INCREMENTS,
+  countCompact,
+  countSummary,
+  incrementVerb,
+  stepperHint,
+} from './increment';
 
 describe('incrementVerb (§3, §4.1)', () => {
   it('says "Did it" when there is no unit', () => {
@@ -95,6 +101,26 @@ describe('countSummary', () => {
   it('does not clamp overshoot — the ring stops at full, the count does not', () => {
     // §13.5 hides overshoot on the *board*; the sheet is where the real number lives.
     expect(countSummary(160, 150)).toBe('160 of 150');
+  });
+});
+
+describe('countCompact', () => {
+  it('reads as a column entry rather than a sentence', () => {
+    expect(countCompact(3, 144)).toBe('3/144');
+  });
+
+  it('puts the numbers in the same order countSummary does', () => {
+    // The sealed Board's goal list shows one and says the other in the same row's
+    // accessibility label. A row reading "3/144" while announcing "144 of 3" is two apps.
+    for (const [count, target] of [
+      [0, 1],
+      [3, 144],
+      [160, 150],
+    ] as const) {
+      expect(countCompact(count, target)).toBe(
+        countSummary(count, target).replace(' of ', '/'),
+      );
+    }
   });
 });
 
