@@ -294,7 +294,6 @@ returns table (
   subject_name      text,
   route_board       uuid,
   route_tile        uuid,
-  route_position    int,
   was_held          boolean
 )
 language sql
@@ -313,7 +312,6 @@ as $$
          -- and Year instead, and the tap still lands somewhere true.
          coalesce(t.board_id, b.id),
          ms.tile_id,
-         t.position,
          -- Written while this Account was asleep, so the function knows what to batch into
          -- one line at 07:00 (§4.8). A row that arrived at noon is never batched, however
          -- many of them there are.
