@@ -27,8 +27,7 @@ import {
 } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
-import { failure } from '../../lib/failure';
-import { useCreateManagedMember } from '../../lib/queries/managed';
+import { managedMemberFailureCopy, useCreateManagedMember } from '../../lib/queries/managed';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -77,16 +76,9 @@ export default function AddChild() {
         leaveTo({ pathname: '/family/[id]', params: { id: id ?? '' } });
       },
       onError: (e) => {
-        // PostgREST rejects with a plain object, so `instanceof Error` read '' and
-        // every branch below was unreachable — see lib/failure.ts.
-        const raw = failure(e).message;
-        const message = /full/i.test(raw)
-          ? // A child takes a seat like anyone else (§4.5 of the PRD).
-            'This Family is full for now. A child takes a seat like anyone else.'
-          : /not a member|only|permission|denied/i.test(raw)
-            ? // A permanent refusal. "Have another go" would be advice that never works.
-              'Only someone already in this Family can add a child.'
-            : 'That didn’t save. Have another go in a moment.';
+        // The copy lives beside the mutation, so it is read against the migration rather
+        // than against this screen (`managedMemberFailureCopy`).
+        const message = managedMemberFailureCopy(e);
         setTrouble(message);
         AccessibilityInfo.announceForAccessibility(message);
       },

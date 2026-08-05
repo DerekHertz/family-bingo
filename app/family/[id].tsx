@@ -34,7 +34,7 @@ import {
   useRosterActions,
 } from '../../lib/queries/invitations';
 import { useRemoveManagedMember } from '../../lib/queries/managed';
-import { useOpenYear, useYears } from '../../lib/queries/years';
+import { openYearFailureCopy, useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
 import {
   hasOpenSetupWindow,
@@ -308,22 +308,9 @@ export default function FamilyRoster() {
           style={{ marginTop: space.lg }}
           onPress={() =>
             openYear.mutate(openable, {
-              // Three distinct refusals, none of which a retry fixes. One message for all
-              // three was advice that could never work.
-              onError: (e) => {
-                // PostgREST rejects with a plain object, so `instanceof Error` read '' and
-        // every branch below was unreachable — see lib/failure.ts.
-        const raw = failure(e).message;
-                say(
-                  /organizer/i.test(raw)
-                    ? 'Only the Organizer can open a Year.'
-                    : /already|exists/i.test(raw)
-                      ? `${openable} is already open.`
-                      : /past|ended/i.test(raw)
-                        ? 'That Year has already ended.'
-                        : 'That didn’t open. Have another go in a moment.',
-                );
-              },
+              // Three distinct refusals, none of which a retry fixes, and the copy for all
+              // three lives beside the mutation (`openYearFailureCopy`).
+              onError: (e) => say(openYearFailureCopy(e, openable)),
             })
           }
         />

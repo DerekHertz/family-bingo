@@ -50,7 +50,13 @@ import {
 import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
 import { SuggestionCards, type Choice } from '../../components/SuggestionCards';
-import { useBoard, useBoardHead, useClearGoal, useWriteGoal } from '../../lib/queries/boards';
+import {
+  useBoard,
+  useBoardHead,
+  useClearGoal,
+  useWriteGoal,
+  writeGoalFailureCopy,
+} from '../../lib/queries/boards';
 import { useSharpen } from '../../lib/queries/sharpen';
 import { useSession } from '../../lib/session';
 import {
@@ -62,7 +68,6 @@ import {
 } from '../../src/domain/goal';
 import { stepperHint } from '../../src/domain/increment';
 import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
-import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -240,20 +245,9 @@ export default function ComposeGoal() {
       if (andLeave) leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } });
       return true;
     } catch (e) {
-      // `failure()`, not `instanceof Error` — PostgREST rejects with a plain object, so
-      // the old read was always '' and every branch below was unreachable.
-      const { message: raw, code } = failure(e);
-      say(
-        code === 'PT403' || /sealed/i.test(raw)
-          ? 'This board has sealed. Changing a goal now costs a swap.'
-          : /Center Tile|centre/i.test(raw)
-            ? 'The centre square is the family’s, not yours to write.'
-            : /not your Board/i.test(raw)
-              ? 'That board isn’t yours to write on.'
-              : /frozen/i.test(raw)
-                ? 'This year has finished.'
-                : 'That didn’t save. Have another go in a moment.',
-      );
+      // The copy for every `write_goal()` refusal lives beside the mutation that makes
+      // the call, so it is read against the migration rather than against this screen.
+      say(writeGoalFailureCopy(e));
       return false;
     }
   };

@@ -20,10 +20,50 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isManaged, votersFor, type Voter } from '../../src/domain/member';
+import { failedWith, failure } from '../failure';
 import { supabase } from '../supabase';
 import { useRoster } from './invitations';
 
 export const MAX_PROPOSALS_PER_MEMBER = 3;
+
+/**
+ * Why a Ballot, Proposal or tiebreak was refused, in words that help.
+ *
+ * Here rather than on `app/year/centre.tsx`, for the reason `incrementFailureCopy` is in
+ * `increments.ts`: the module that owns the RPC owns the sentence for its refusals. A
+ * screen that grows its own chain is a screen that has to be kept in step with a migration
+ * it does not import.
+ *
+ * Three of these say "this cannot be retried" — a full slate of Proposals, a Proposal
+ * somebody has voted for, a closed window. Answering any of them with "have another go" is
+ * advice that is guaranteed to fail (§0.3).
+ *
+ * Matched on `code` through `lib/failure.ts`, because that is where the SQLSTATE lives:
+ * PostgREST puts it in its own field and never inside the message text, so the `/PT409/`
+ * this once tested against the message could not have fired once. The message patterns are
+ * kept beside the codes as a second key rather than as the only one.
+ */
+export const voteFailureCopy = (thrown: unknown): string => {
+  // `cast_ballot` and `enforce_proposal_rules`, both 'the Setup Window has closed'.
+  if (failedWith(thrown, 'PT403', /closed/i)) {
+    return 'The setup window has closed — the centre is decided now.';
+  }
+  // **Matched on the message on purpose, and it has to stay above the branch below.**
+  // `enforce_proposal_rules` raises PT409 for two different things — "others have voted
+  // for this Proposal" and "at most 3 Proposals" — so here the SQLSTATE is the ambiguous
+  // key and the sentence is the specific one. Migration 15 is where both live.
+  if (/no longer be withdrawn/i.test(failure(thrown).message)) {
+    return 'Somebody has voted for this one, so it stays.';
+  }
+  if (failedWith(thrown, 'PT409', /at most 3/i)) {
+    return `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`;
+  }
+  // 'that is not your Member', 'no such Vote', 'only the Organizer may break a tie'.
+  if (failedWith(thrown, '42501', /not your Member|no such Vote|only the Organizer/i)) {
+    return 'That isn’t yours to vote with.';
+  }
+  return 'That didn’t go through. Have another go in a moment.';
+};
 
 export interface CentreVote {
   id: string;

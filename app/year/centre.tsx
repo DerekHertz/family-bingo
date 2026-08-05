@@ -42,6 +42,7 @@ import {
   useProposeGoal,
   useSetTiebreak,
   useWithdrawProposal,
+  voteFailureCopy,
 } from '../../lib/queries/votes';
 import { useFamilies } from '../../lib/queries/families';
 import { useSession } from '../../lib/session';
@@ -53,7 +54,6 @@ import {
   resolveModeVote,
   voteCountCopy,
 } from '../../src/domain/votes';
-import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -205,41 +205,11 @@ export default function Centre() {
 
   const mineCount = proposals.filter((p) => p.memberId === actingAs).length;
 
-  /**
-   * What actually went wrong, in words that help.
-   *
-   * Reads `code` first, because that is where the SQLSTATE lives — PostgREST puts it in
-   * its own field and never inside the message text, so the `/PT409/` this used to match
-   * against the message could not have fired once. And it reads through `failure()`
-   * rather than `instanceof Error`, because a PostgREST rejection is a plain object and
-   * the whole chain was dead (see lib/failure.ts).
-   *
-   * Three of these say "this cannot be retried" — a full slate of Proposals, a Proposal
-   * somebody has voted for, a closed window. Answering any of them with "have another go"
-   * is advice that is guaranteed to fail (§0.3).
-   */
-  const refusal = (e: unknown): string => {
-    const { message: raw, code } = failure(e);
-    if (code === 'PT403' || /closed/i.test(raw)) {
-      return 'The setup window has closed — the centre is decided now.';
-    }
-    if (/no longer be withdrawn/i.test(raw)) {
-      return 'Somebody has voted for this one, so it stays.';
-    }
-    if (code === 'PT409' || /at most 3/i.test(raw)) {
-      return `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`;
-    }
-    if (code === '42501' || /not your Member|no such Vote|only the Organizer/i.test(raw)) {
-      return 'That isn’t yours to vote with.';
-    }
-    return 'That didn’t go through. Have another go in a moment.';
-  };
-
   const voteFor = (proposalId: string) => {
     if (actingAs === null || goalVote === null) return;
     castBallot.mutate(
       { voteId: goalVote.id, memberId: actingAs, proposalId },
-      { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
+      { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
     );
   };
 
@@ -351,7 +321,7 @@ export default function Centre() {
                   actingAs !== null &&
                   castBallot.mutate(
                     { voteId: modeVote.id, memberId: actingAs, choiceMode: mode },
-                    { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
+                    { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
                   )
                 }
                 style={({ pressed }) => ({
@@ -507,7 +477,7 @@ export default function Centre() {
                               onPress: () =>
                                 withdraw.mutate(p.id, {
                                   onSuccess: clearTrouble,
-                                  onError: (e) => say(refusal(e)),
+                                  onError: (e) => say(voteFailureCopy(e)),
                                 }),
                             },
                           ])
@@ -528,7 +498,7 @@ export default function Centre() {
                         onPress={() =>
                           tiebreak.mutate(
                             { voteId: goalVote.id, proposalId: p.id },
-                            { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
+                            { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
                           )
                         }
                         style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
@@ -615,7 +585,7 @@ export default function Centre() {
                           setDraft('');
                           clearTrouble();
                         },
-                        onError: (e) => say(refusal(e)),
+                        onError: (e) => say(voteFailureCopy(e)),
                       },
                     );
                   }}

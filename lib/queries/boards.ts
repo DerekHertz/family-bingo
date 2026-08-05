@@ -12,7 +12,43 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CENTER_POSITION } from '../../src/domain/goal';
 import { isControlledBy, isManaged } from '../../src/domain/member';
+import { failure } from '../failure';
 import { supabase } from '../supabase';
+
+/**
+ * Why `write_goal()` would not take this Goal, phrased for the Member who wrote it.
+ *
+ * Here rather than on `app/board/goal.tsx`, for the reason `incrementFailureCopy` is in
+ * `increments.ts`: the module that owns the RPC owns the sentence for its refusals, so
+ * the copy and the argument names are checked against the same migration by the same
+ * reader. Migration 17 (`personal_center_tile`) is the one that last replaced the function
+ * and holds every `raise` below.
+ *
+ * Read through `failure()` rather than `instanceof Error`, because a PostgREST rejection
+ * is a plain object and the whole chain read `''` before that existed (see lib/failure.ts).
+ *
+ * **Known defect, carried over unchanged: the centre branch cannot fire.** `write_goal()`
+ * raises PT403 twice — 'this Board is sealed' and 'the Center Tile is decided by the
+ * Family, not authored' — and the first branch below claims every PT403, so a Member who
+ * somehow reaches the Centre while the mode is `shared` is told their board has sealed.
+ * The order is preserved deliberately rather than quietly corrected: it is a copy
+ * decision (§0.3) and the two sentences say different things about what to do next.
+ * Fixing it means testing the message before the code, or the migration raising a
+ * distinguishable SQLSTATE.
+ */
+export const writeGoalFailureCopy = (thrown: unknown): string => {
+  const { message: raw, code } = failure(thrown);
+  if (code === 'PT403' || /sealed/i.test(raw)) {
+    return 'This board has sealed. Changing a goal now costs a swap.';
+  }
+  if (/Center Tile|centre/i.test(raw)) {
+    return 'The centre square is the family’s, not yours to write.';
+  }
+  // Both 42501: `controlled_member_ids()` said no, or the Year is frozen.
+  if (/not your Board/i.test(raw)) return 'That board isn’t yours to write on.';
+  if (/frozen/i.test(raw)) return 'This year has finished.';
+  return 'That didn’t save. Have another go in a moment.';
+};
 
 export interface Goal {
   id: string;
