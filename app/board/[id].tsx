@@ -544,6 +544,8 @@ export default function DraftingTable() {
           tile={sheetTile}
           memberId={head.data.memberId}
           familyId={head.data.familyId}
+          // The floor under every `occurred_at` the sheet mints (§11.5, `occurredAtFor`).
+          sealedAt={head.data.sealedAt}
           ownerName={head.data.isSelf ? null : head.data.memberName}
           recent={recent.data ?? []}
           recentPending={recent.isLoading}

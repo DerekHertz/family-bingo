@@ -40,7 +40,7 @@ import {
   photoUnreadableCopy,
 } from '../src/domain/attachment';
 import { progressOf, stageOf } from '../src/domain/growth';
-import { incrementVerb } from '../src/domain/increment';
+import { incrementVerb, occurredAtFor } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { queuedCopy } from '../src/domain/queue';
 import { shortDate } from '../src/domain/when';
@@ -86,6 +86,14 @@ interface Props {
   memberId: string;
   /** The Family this Board belongs to — the first segment of an Attachment's key (§16.2). */
   familyId: string;
+  /**
+   * When this Board sealed, and the floor under every `occurred_at` this sheet mints.
+   *
+   * Passed in because the sheet is the only place a tap's timestamp is decided and
+   * `stamp_increment()` refuses anything below the seal with `PT403` — see `occurredAtFor`
+   * for what a handset with a wrong clock does without it.
+   */
+  sealedAt: string | null;
   /** Whose Board this is, for the header — "Your goal" reads wrong on a child's Board. */
   ownerName: string | null;
   recent: Increment[];
@@ -150,6 +158,7 @@ export function TileSheet({
   tile,
   memberId,
   familyId,
+  sealedAt,
   ownerName,
   recent,
   recentPending,
@@ -193,7 +202,13 @@ export function TileSheet({
       // happened, and a tap held in the queue for three days must still carry Monday
       // (§17.3). Everything downstream — the optimistic row, the queued row, the replay —
       // uses this one value.
-      occurredAt: new Date().toISOString(),
+      //
+      // Through `occurredAtFor`, not raw, and that is not defensive tidying: sending this
+      // column at all is new in slice 17, and `stamp_increment()` refuses anything below
+      // `least(sealed_at, now())` with `PT403` — which `classifyDelivery` drops. A handset
+      // whose clock has reset to the factory date would fail every tap for the rest of the
+      // Year, online with an unhelpable message and offline in silence.
+      occurredAt: occurredAtFor(new Date().toISOString(), sealedAt),
       photo,
     });
     setNote('');

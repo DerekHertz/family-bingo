@@ -4,6 +4,7 @@ import {
   countCompact,
   countSummary,
   incrementVerb,
+  occurredAtFor,
   stepperHint,
 } from './increment';
 
@@ -127,5 +128,60 @@ describe('countCompact', () => {
 describe('RECENT_INCREMENTS', () => {
   it('is the three §3 asks for', () => {
     expect(RECENT_INCREMENTS).toBe(3);
+  });
+});
+
+/**
+ * The clamp exists for one failure, and it is a bad one: `stamp_increment()` raises
+ * `PT403` for anything below `least(sealed_at, now())`, `classifyDelivery` drops a `PT403`,
+ * and so a handset whose clock has reset can log nothing at all for the rest of the Year —
+ * online with an unhelpable message, offline by silently discarding at the next drain.
+ */
+describe('occurredAtFor — §17.3 without letting a clock end the game', () => {
+  const SEALED = '2027-01-01T09:00:00.000Z';
+
+  it('sends the device clock when the device clock is after the seal', () => {
+    // The ordinary case, and §17.3's whole point: a tap held for three days still carries
+    // the day it happened.
+    expect(occurredAtFor('2027-03-04T10:00:00.000Z', SEALED)).toBe('2027-03-04T10:00:00.000Z');
+  });
+
+  it('clamps a clock that reads before the seal up to the seal', () => {
+    // A handset reset to the factory date. Every tap would otherwise be PT403 and dropped.
+    expect(occurredAtFor('1970-01-01T00:00:00.000Z', SEALED)).toBe(SEALED);
+  });
+
+  it('clamps a clock a few seconds behind, which is the common case on a fresh seal', () => {
+    expect(occurredAtFor('2027-01-01T08:59:57.000Z', SEALED)).toBe(SEALED);
+  });
+
+  it('never answers earlier than the seal, for any clock', () => {
+    for (const device of [
+      '1970-01-01T00:00:00.000Z',
+      '2026-12-31T23:59:59.999Z',
+      '2027-01-01T08:59:59.999Z',
+    ]) {
+      expect(Date.parse(occurredAtFor(device, SEALED))).toBeGreaterThanOrEqual(Date.parse(SEALED));
+    }
+  });
+
+  it('leaves a clock that runs fast alone, because the server pulls it back itself', () => {
+    // `stamp_increment()` is asymmetric on purpose: a future value is benign and is pulled
+    // back to now(). Clamping it here as well would be a second rule for one fact.
+    const ahead = '2099-01-01T00:00:00.000Z';
+    expect(occurredAtFor(ahead, SEALED)).toBe(ahead);
+  });
+
+  it('has nothing to clamp to on a Board that has not sealed', () => {
+    // `tile_is_loggable()` refuses an Increment until `sealed_at is not null`, so there is
+    // no bound and nothing to protect.
+    expect(occurredAtFor('1970-01-01T00:00:00.000Z', null)).toBe('1970-01-01T00:00:00.000Z');
+  });
+
+  it('leaves an unreadable timestamp alone rather than inventing one', () => {
+    expect(occurredAtFor('not a date', SEALED)).toBe('not a date');
+    expect(occurredAtFor('2027-03-04T10:00:00.000Z', 'not a date')).toBe(
+      '2027-03-04T10:00:00.000Z',
+    );
   });
 });
