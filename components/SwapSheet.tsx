@@ -68,7 +68,7 @@ export function SwapSheet({ tile, swapsUsed, onClose, onConfirm }: Props) {
     <Modal visible transparent animationType="slide" onRequestClose={onClose} accessibilityViewIsModal>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Keep it"
+        accessibilityLabel="Close"
         onPress={onClose}
         style={{ flex: 1, backgroundColor: color.scrim }}
       />
@@ -176,8 +176,12 @@ export function SwapSheet({ tile, swapsUsed, onClose, onConfirm }: Props) {
                 />
               ))}
             </View>
+            {/* No numeral. The comment above is the argument — "nobody should have to
+                read a fraction to feel a limit" — and §4.4 asks for the pip row and
+                nothing else. The count is in the row's accessibility label, where it is
+                read once instead of sitting on the screen as a score. */}
             <Text style={{ ...styles.meta, color: color.ink2 }}>
-              {remaining === 1 ? '1 swap left' : `${remaining} swaps left`}
+              {remaining === 0 ? 'None left' : 'Swaps left'}
             </Text>
           </View>
 
@@ -190,7 +194,9 @@ export function SwapSheet({ tile, swapsUsed, onClose, onConfirm }: Props) {
             accessibilityLabel={
               tile.text === null
                 ? 'Write a goal here. It costs one of your swaps.'
-                : `Swap this goal. It costs one of your ${remaining === 1 ? 'last swap' : 'swaps'}.`
+                : remaining === 1
+                  ? 'Swap this goal. It costs your last swap.'
+                  : 'Swap this goal. It costs one of your swaps.'
             }
             onPress={onConfirm}
             style={({ pressed }) => ({

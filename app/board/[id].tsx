@@ -49,7 +49,7 @@ import {
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
 import { countCompact, countSummary } from '../../src/domain/increment';
-import { evaluateGoalRewrite } from '../../src/domain/swaps';
+import { SWAP_BUDGET, evaluateGoalRewrite } from '../../src/domain/swaps';
 import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
@@ -302,7 +302,7 @@ export default function DraftingTable() {
         {
           sealed: true,
           frozen: head.data.year.status === 'frozen',
-          swapsUsed: swapBudget.data ?? 0,
+          swapsUsed: swapBudget.data ?? SWAP_BUDGET,
           isSharedCenter: sheetTile.isCentre,
           isComplete: isTileComplete(sheetTile.count, sheetTile.target),
         },
@@ -310,6 +310,24 @@ export default function DraftingTable() {
         // A rewrite that would cost a swap, so the budget check is exercised. Anything
         // free would answer "allowed" on a Board with none left.
         { text: `${sheetTile.text} `.trim() + '.', target: sheetTile.target },
+      ).allowed;
+
+    // §10.2's empty square, and whether this caller may fill it. Same four refusals as
+    // above minus the two that cannot apply — an empty Tile is never the shared Centre and
+    // never complete — so what is left is the Year, the Board and the budget.
+    const emptyFillable =
+      blocked === null &&
+      head.data.sealedAt !== null &&
+      evaluateGoalRewrite(
+        {
+          sealed: true,
+          frozen: head.data.year.status === 'frozen',
+          swapsUsed: swapBudget.data ?? SWAP_BUDGET,
+          isSharedCenter: false,
+          isComplete: false,
+        },
+        null,
+        { text: 'anything', target: 1 },
       ).allowed;
 
     // Whichever write failed last. Both mutations feed one line, because only one of them
@@ -349,10 +367,26 @@ export default function DraftingTable() {
             // §3: the square opens the sheet and never logs directly — a mis-tap on a
             // 67pt target in a pocket must not write a row.
             onPressTile={(t) => {
-              // An empty Tile opens nothing (§10.2): no Goal to show, and Increments are
-              // refused there. Setting the id anyway left the sheet resolving to `null`
-              // and the state quietly stale.
-              if (t.goal !== null) setOpenTileId(t.id);
+              // A Tile with a Goal opens the sheet. An **empty** one on a sealed Board
+              // goes straight to the Swap confirm: it has no progress to show and takes no
+              // Increments, so a tile sheet there would be a sheet about nothing — but
+              // §10.2 is explicit that "an unfinished Board seals with empty Tiles" and
+              // that "those Tiles can be filled using Swaps", and §18.5 says the same.
+              // Swallowing the tap left those squares inert for the whole Year and put
+              // Blackout out of reach by construction.
+              if (t.goal !== null) {
+                setOpenTileId(t.id);
+                return;
+              }
+              if (emptyFillable) {
+                setSwapping({
+                  tileId: t.id,
+                  position: t.position,
+                  text: null,
+                  target: 1,
+                  count: 0,
+                });
+              }
             }}
           />
         </View>
@@ -518,16 +552,20 @@ export default function DraftingTable() {
           onSwap={
             swapAllowed && sheetTile !== null
               ? () => {
-                  // The tile sheet closes as the confirm sheet opens: two stacked modals
-                  // is one too many to dismiss, and the Member is being asked one question.
-                  setSwapping({
+                  // The tile sheet closes, **then** the confirm sheet opens — a frame
+                  // apart, not in one commit. React batches both `setState`s, so on iOS
+                  // the present would be issued while the dismiss was still in flight and
+                  // UIKit drops it: the Member taps "Swap this goal" and nothing happens.
+                  // Android is unaffected, which is exactly why this is easy to miss.
+                  const candidate: SwapCandidate = {
                     tileId: sheetTile.id,
                     position: sheetTile.position,
                     text: sheetTile.text,
                     target: sheetTile.target,
                     count: sheetTile.count,
-                  });
+                  };
                   setOpenTileId(null);
+                  requestAnimationFrame(() => setSwapping(candidate));
                 }
               : undefined
           }
@@ -535,16 +573,20 @@ export default function DraftingTable() {
 
         <SwapSheet
           tile={swapping}
-          swapsUsed={swapBudget.data ?? 0}
+          swapsUsed={swapBudget.data ?? SWAP_BUDGET}
           onClose={() => setSwapping(null)}
           onConfirm={() => {
             const target = swapping;
-            setSwapping(null);
             if (target === null) return;
-            router.push({
-              pathname: '/board/swap',
-              params: { boardId: id ?? '', tileId: target.tileId },
-            });
+            // Same reason as above, one layer up: dismissing the modal and pushing a route
+            // in one tick races the presentation controller.
+            setSwapping(null);
+            requestAnimationFrame(() =>
+              router.push({
+                pathname: '/board/swap',
+                params: { boardId: id ?? '', tileId: target.tileId },
+              }),
+            );
           }}
         />
       </View>

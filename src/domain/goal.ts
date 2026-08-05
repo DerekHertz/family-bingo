@@ -20,6 +20,18 @@ import { BOARD_SIZE, CENTER_POSITION } from './lines';
 
 /** §6.1. The database checks the same numbers in `write_goal()`. */
 export const GOAL_TEXT = { min: 1, max: 200 } as const;
+
+/**
+ * A ceiling on a typed Target. Not a database rule — `write_goal()` and `swap_tile()` both
+ * accept any positive int — but a field that reads a pasted phone number as a Target of
+ * nine billion produces a Tile nobody can ever complete, and no keystroke gets you here by
+ * accident.
+ *
+ * Here rather than in a screen because two screens now enforce it: authoring a Goal and
+ * swapping one. A ceiling that differed between them would be a Goal a Member could write
+ * and then not repair.
+ */
+export const TARGET_CEILING = 100_000;
 export const UNIT_MAX = 30;
 export const TARGET_MIN = 1;
 

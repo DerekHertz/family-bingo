@@ -205,10 +205,11 @@ describe('swapRefusalCopy (§0.3, §18.5, §20.1)', () => {
   });
 });
 
-describe('swapConsequenceCopy (§4.4, §7.10)', () => {
-  // The counter-intuitive part, and the whole reason §4.4 asks for a paragraph: the
-  // obvious reading of "swap" is "delete", and it is wrong. The retired Goal keeps its
-  // Increments and they still count for the year.
+describe('swapConsequenceCopy (§18.6, §7.10)', () => {
+  // The paragraph §4.4 asks for, saying what §18.6 actually does — and the two documents
+  // disagree. §4.4 claims the Tile resets because `COUNT(increments)` on the new Goal is
+  // zero; there is no new Goal (`swap_tile()` updates in place), `increments` references
+  // `tile_id`, and §18.6 says progress carries over. These tests pin §18.6.
   it('leads with the fact that nothing is deleted, at every count', () => {
     for (const n of [0, 1, 2, 47]) {
       expect(swapConsequenceCopy(n)).toContain('Nothing is deleted');
@@ -219,9 +220,35 @@ describe('swapConsequenceCopy (§4.4, §7.10)', () => {
     expect(swapConsequenceCopy(0)).not.toMatch(/\d/);
   });
 
-  it('counts them when there are some, and reads correctly for one', () => {
-    expect(swapConsequenceCopy(1)).toContain('The one you logged');
-    expect(swapConsequenceCopy(9)).toContain('The 9 you logged');
+  it('says the Increments stay on this square and count towards the new goal', () => {
+    const said = swapConsequenceCopy(9);
+    expect(said).toContain('The 9 you have logged stay on this square');
+    expect(said).toContain('count towards the new goal');
+  });
+
+  it('reads correctly for one', () => {
+    const said = swapConsequenceCopy(1);
+    expect(said).toContain('The one you have logged stays');
+    expect(said).not.toContain('stay on this square and count');
+  });
+
+  // The version this replaced said the square "starts again from zero", which was false
+  // in the one direction that matters: a Member at 100 of 144 lowering the Target to 90
+  // finishes the Tile on save, closes a Line, and pushes a Bingo to the whole Family.
+  it('never claims the square restarts when something has been logged', () => {
+    for (const n of [1, 100]) {
+      expect(swapConsequenceCopy(n).toLowerCase()).not.toMatch(/from zero|starts again/);
+    }
+  });
+
+  it('warns, once asked, that the square finishes on save', () => {
+    const said = swapConsequenceCopy(100, true);
+    expect(said).toContain('finishes as soon as you save');
+    expect(said).toContain('your family will see it');
+  });
+
+  it('says nothing about finishing unless it is going to', () => {
+    expect(swapConsequenceCopy(100, false)).not.toContain('finishes');
   });
 
   // §7.10: "do not let any screen imply a Member gave up on the goal they set down."

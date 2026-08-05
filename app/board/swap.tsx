@@ -37,10 +37,15 @@ import { leaveTo } from '../../lib/leave';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import { swapFailureCopy, useSwapBudget, useSwapTile } from '../../lib/queries/swaps';
 import { useSession } from '../../lib/session';
-import { GOAL_TEXT, targetSummary } from '../../src/domain/goal';
-import { evaluateGoalRewrite, swapRefusalCopy } from '../../src/domain/swaps';
+import { GOAL_TEXT, TARGET_CEILING, targetSummary } from '../../src/domain/goal';
+import {
+  SWAP_BUDGET,
+  evaluateGoalRewrite,
+  swapConsequenceCopy,
+  swapRefusalCopy,
+} from '../../src/domain/swaps';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 export default function ComposeSwap() {
   const { boardId, tileId } = useLocalSearchParams<{ boardId: string; tileId: string }>();
@@ -99,7 +104,11 @@ export default function ComposeSwap() {
           {
             sealed: head.data.sealedAt !== null,
             frozen: head.data.year.status === 'frozen',
-            swapsUsed: budget.data ?? 0,
+                        // `?? SWAP_BUDGET`, not `?? 0`. Zero *used* is a full budget, so a failed
+            // read offered three swaps to a Member who had spent all three — and the
+            // refusal arrived from the server as a dead-end retry, which is §0.3's exact
+            // prohibition. An unknown budget is treated as spent.
+            swapsUsed: budget.data ?? SWAP_BUDGET,
             // The shared Centre is one row on every Board; nobody swaps it alone (§12.3).
             isSharedCenter: tile?.familyGoalText != null,
             isComplete: before !== null && count >= before.target,
@@ -107,6 +116,16 @@ export default function ComposeSwap() {
           before === null ? null : { text: before.text, target: before.target },
           { text, target },
         );
+
+  // Progress carries over (§18.6), so a Target at or below what is already logged is a
+  // Target the square has already met.
+  const finishesOnSave =
+    decision !== null &&
+    decision.allowed &&
+    decision.cost === 'swap' &&
+    before !== null &&
+    target < before.target &&
+    count >= target;
 
   const trimmed = text.trim();
   const tooShort = trimmed.length < GOAL_TEXT.min;
@@ -151,6 +170,26 @@ export default function ComposeSwap() {
   // A square this route cannot act on. Reachable by a deep link, by a stale cache, or by
   // a Board that sealed or froze between the confirm sheet and this screen — and §0.3
   // says to state the reason rather than offer a retry that cannot work.
+  // `boards_read` is Family-wide, so this route opens on anyone's Board — and
+  // `evaluateGoalRewrite` cannot see ownership, because it is a rule about a Tile rather
+  // than about a caller. Without this a deep link to a sibling's square rendered their
+  // goal, showed *their* pips, enabled Save, and took a 42501.
+  if (head.data !== null && head.data !== undefined && !head.data.controlled) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
+        <Text style={{ ...styles.body, color: color.ink2 }}>
+          {head.data.memberName}’s board, and {head.data.memberName}’s goals to change.
+        </Text>
+        <Button
+          label="Back"
+          variant="text"
+          style={{ marginTop: space.lg, alignItems: 'flex-start' }}
+          onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
+        />
+      </View>
+    );
+  }
+
   if (head.data === null || head.data === undefined || tile === null || decision === null) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
@@ -222,23 +261,49 @@ export default function ComposeSwap() {
           <Stepper
             label="One fewer"
             symbol="−"
+            disabled={target <= 1}
             onPress={() => setTarget((n) => Math.max(1, n - 1))}
           />
-          <Text
-            accessibilityLiveRegion="polite"
-            style={{ ...styles.ringCount, color: color.ink, minWidth: 56, textAlign: 'center' }}
-          >
-            {target}
-          </Text>
-          <Stepper label="One more" symbol="+" onPress={() => setTarget((n) => n + 1)} />
+          {/* Typed as well as stepped. Lowering 365 to 100 is 265 taps on a stepper, and
+              the authoring screen already offers a field for the same reason.
+              `styles.compose` rather than `ringCount` — that token's own doc says not to
+              reuse it outside the tile sheet's ring, which §3 calls "the one place the
+              exact number appears large". */}
+          <TextInput
+            value={String(target)}
+            onChangeText={(next) => {
+              const digits = next.replace(/[^0-9]/g, '');
+              // An empty field is a Member mid-edit, not a Target of zero. Held at 1,
+              // which is the floor `write_goal` and `swap_tile` both enforce.
+              setTarget(() => (digits === '' ? 1 : Math.min(TARGET_CEILING, Number(digits))));
+            }}
+            keyboardType="number-pad"
+            accessibilityLabel="How many times"
+            style={{
+              ...styles.compose,
+              minWidth: 72,
+              textAlign: 'center',
+              paddingVertical: space.sm,
+              color: color.ink,
+              backgroundColor: color.paperRaised,
+              borderWidth: stroke.hairline,
+              borderColor: color.hairline,
+              borderRadius: radius.card,
+            }}
+          />
+          <Stepper
+            label="One more"
+            symbol="+"
+            disabled={target >= TARGET_CEILING}
+            onPress={() => setTarget((n) => Math.min(TARGET_CEILING, n + 1))}
+          />
           <Text style={{ ...styles.body, color: color.ink2, flex: 1 }}>
             {targetSummary(target, before?.unit ?? null)}
           </Text>
         </View>
 
-        {/* §18.3 said before the tap, not after it. A Member raising 100 to 120 is making
-            the Goal harder, which needs no policing and costs nothing — and being told
-            afterwards that it was free is not the same as knowing beforehand. */}
+        {/* §18.3 said before the tap, not after it: being told afterwards that it was
+            free is not the same as knowing beforehand. */}
         {decision === null ? null : !decision.allowed ? (
           <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>
             {swapRefusalCopy(decision.reason)}
@@ -247,15 +312,33 @@ export default function ComposeSwap() {
           <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>
             {decision.cost === 'swap'
               ? `This costs a swap. ${
-                  decision.swapsRemainingAfter === 1
-                    ? 'One left after it.'
-                    : `${decision.swapsRemainingAfter} left after it.`
+                  decision.swapsRemainingAfter === 0
+                    ? 'None left after it.'
+                    : decision.swapsRemainingAfter === 1
+                      ? 'One left after it.'
+                      : `${decision.swapsRemainingAfter} left after it.`
                 }`
               : decision.cost === 'free'
-                ? 'Raising a target is free — making a goal harder needs no policing.'
+                ? // §18.3. Not "needs no policing" — that is the PRD's rationale said to
+                  // the Member's face, and telling somebody the app polices them is
+                  // exactly the coachy register §4's voice rule rules out.
+                  'Raising a target is free. Only making one easier costs a swap.'
                 : 'Nothing has changed yet.'}
           </Text>
         )}
+
+        {/* The one outcome with an irreversible, family-visible consequence, said before
+              the tap rather than discovered after it. §18.6 carries progress over, so a
+              Target lowered to at or below what is already logged finishes the square on
+              save — `swap_tile()` records the Tile completion and any Lines it closes in
+              its own transaction, and a Bingo is pushed to every phone in the Family. That
+              is the manufactured Bingo §18.5 exists to make visible, and a Member should
+              meet it as a statement rather than as a surprise. */}
+        {finishesOnSave ? (
+          <Text style={{ ...styles.body, color: color.ink, marginTop: space.sm }}>
+            {swapConsequenceCopy(count, true)}
+          </Text>
+        ) : null}
 
         {trouble === null ? null : (
           <Text
@@ -298,16 +381,21 @@ export default function ComposeSwap() {
 function Stepper({
   label,
   symbol,
+  disabled = false,
   onPress,
 }: {
   label: string;
   symbol: string;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      // Announced as disabled rather than silently doing nothing at the floor (§6 A1).
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
         width: size.minTouch,
@@ -317,7 +405,7 @@ function Stepper({
         borderWidth: 1,
         borderColor: color.hairline,
         borderRadius: radius.card,
-        opacity: pressed ? 0.7 : 1,
+        opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
       })}
     >
       <Text style={{ ...styles.action, color: color.ink }}>{symbol}</Text>

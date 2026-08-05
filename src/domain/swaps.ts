@@ -75,21 +75,43 @@ export const swapRefusalCopy = (reason: SwapRefusal): string => {
 };
 
 /**
- * What the confirm sheet says will happen to the Increments already logged (§4.4).
+ * What the confirm sheet says will happen to the Increments already logged.
  *
- * > **The record is never rewritten.** The retired Goal keeps its Increments; they still
- * > count in Family totals and surface in the Almanac as "goals you set down". The Tile
- * > resets to `dormant` because `COUNT(increments)` on the *new* Goal is zero — not
- * > because anything was deleted.
+ * **§18.6 is the authority here, not FRONTEND_DESIGN §4.4, and they disagree.**
  *
- * That distinction is the whole paragraph, and it has to be said plainly: a Member about
- * to spend one of three swaps needs to know they are not deleting their own work. §7.10
- * forbids any screen implying they gave up on the goal they set down.
+ * §4.4 says *"The Tile resets to `dormant` because `COUNT(increments)` on the new Goal is
+ * zero"*. That is a stale model of the schema and it is not what ships. §18.6 says
+ * *"Swapping does not delete existing Increments; **progress carries over against the new
+ * Target**"*, `increments` references `tile_id` and never `goal_id`, and `swap_tile()`
+ * updates the Goal **in place** — there is no new Goal row and nothing is re-pointed. The
+ * migration says so itself: "Progress hangs off the Tile, not the Goal, so it carries over
+ * against the new Target by construction."
+ *
+ * The proof is three lines further down in that same function: if progress already meets
+ * the new Target it calls `record_tile_completion()` and `record_line_milestones()`. That
+ * branch is only reachable *because* progress carries over.
+ *
+ * This copy said the opposite, which was the worst possible place to be wrong. A Member at
+ * 100 of 144 who lowers the Target to 90 was told the square would restart from zero — and
+ * what actually happens is that the Tile completes on save, a Line may close, and a Bingo
+ * is written and pushed to every phone in the Family. That is exactly the manufactured
+ * Bingo §18.5 exists to make visible, and the app was promising it could not happen.
+ *
+ * `completesNow` is that case said out loud, because it is irreversible and family-visible
+ * and a Member should not meet it as a surprise (§0.3).
  */
-export const swapConsequenceCopy = (loggedSoFar: number): string =>
-  loggedSoFar === 0
-    ? 'Nothing is deleted. This square starts again from zero with the new goal.'
-    : `Nothing is deleted. The ${loggedSoFar === 1 ? 'one you' : `${loggedSoFar} you`} logged stay on the goal you set down, and still count for the year. This square starts again from zero with the new one.`;
+export const swapConsequenceCopy = (loggedSoFar: number, completesNow = false): string => {
+  if (loggedSoFar === 0) {
+    return 'Nothing is deleted. This square starts from zero, because nothing has been logged on it yet.';
+  }
+  const kept =
+    loggedSoFar === 1
+      ? 'Nothing is deleted. The one you have logged stays on this square and counts towards the new goal.'
+      : `Nothing is deleted. The ${loggedSoFar} you have logged stay on this square and count towards the new goal.`;
+  return completesNow
+    ? `${kept} That is already enough — the square finishes as soon as you save, and your family will see it.`
+    : kept;
+};
 
 /**
  * What an edit costs on a Sealed Board.
