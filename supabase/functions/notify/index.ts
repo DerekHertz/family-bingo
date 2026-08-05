@@ -13,9 +13,10 @@
  *
  * It decides nothing about WHEN either, for the same reason. `pending_notifications()`
  * (20260801000036) is the drain query, and quiet hours — a wall-clock window in the
- * FAMILY's timezone (FRONTEND_DESIGN §4.8, §8.3 T1) — are applied there. What this file
- * owes quiet hours is the other half of §4.8's sentence: everything held overnight goes
- * out "batched into one line at 07:00", which is a rendering job and belongs here.
+ * ACCOUNT's own timezone, because a handset has one notification tray (FRONTEND_DESIGN
+ * §4.8) — are applied there. What this file owes quiet hours is the other half of §4.8's
+ * sentence: everything held overnight goes out "batched into one line at 07:00", which is
+ * a rendering job and belongs here.
  *
  * That same query carries the Board and the Tile a tap has to open. §4.8: "A tap opens the
  * Tile the notification is about, not the app." A message with no `data` payload has
@@ -119,20 +120,58 @@ const render = (
 const HELD_NAMES = 3;
 
 /**
+ * One held event, as a phrase rather than as a sentence.
+ *
+ * Its own table, and not `render(...).body` with the full stop shaved off, which is what it
+ * used to be. Two of those bodies are two sentences — `join_approved` gave "Your Family
+ * approved you. Time to write your Goals", which is not a phrase and which the ` · ` join
+ * then ran into whatever came next. `setup_closing` was the same shape.
+ *
+ * Every phrase names the Member and the thing, which is §4.8's rule and the reason this
+ * exists separately at all. Where no Member can be named, the phrase names the reader's own
+ * Family or Year instead — `join_approved` and `setup_closing` are about the reader, and
+ * `wrapped` and `digest` are about the whole Family, so there is no third party to name and
+ * inventing one would be the "someone in your family" §4.8 forbids.
+ *
+ * Capitalised, because any one of them can lead the line.
+ */
+const heldPhrase = (kind: string, who: string): string => {
+  switch (kind) {
+    case 'tile_completed':
+      return `${who} completed a Tile`;
+    case 'bingo':
+      return `${who} completed a Line`;
+    case 'blackout':
+      return `${who} completed all 25 Tiles`;
+    case 'join_requested':
+      return `${who} is waiting for you to approve them`;
+    case 'join_approved':
+      return 'Your Family approved you';
+    case 'setup_closing':
+      return 'Boards seal tomorrow';
+    case 'digest':
+      return 'Your week is ready';
+    case 'wrapped':
+      return 'The Almanac is ready';
+    default:
+      return 'Something happened';
+  }
+};
+
+/**
  * The night, as one line (§4.8: "batched into one line at 07:00").
  *
  * The alternative — sending eight held pushes the moment the window closes — is the
  * failure quiet hours exist to prevent, moved by ten hours. §15.3's one-way door does not
  * care what time it was.
  *
- * Each phrase still names the Member and the thing, which is §4.8's other rule: never
- * "someone in your family". Beyond three, the count is of other people's news and never of
- * anything the reader has or has not done.
+ * Beyond three, the count is of other people's news and never of anything the reader has or
+ * has not done (§4.8).
  */
 const summariseHeld = (rows: PendingRow[]): { title: string; body: string } => {
   const phrases = rows
     .slice(0, HELD_NAMES)
-    .map((row) => render(row.notification_kind, row.subject_name ?? 'Someone').body.replace(/\.$/, ''));
+    .map((row) => heldPhrase(row.notification_kind, row.subject_name ?? 'Someone'));
   const rest = rows.length - phrases.length;
   return {
     title: 'Overnight',
@@ -268,6 +307,12 @@ Deno.serve(async (req) => {
     const held = queued.filter((row) => row.was_held);
     // One held row is its own sentence — "Bob completed a Tile" is better than a summary
     // of it — so batching starts at two.
+    //
+    // Known and not fixed: an Account with more than EXPO_BATCH rows held overnight is
+    // split across drains and gets one Overnight line per drain, each with its own "and N
+    // more". Reaching it takes a hundred Milestones in one Family in one night; the honest
+    // fix is a per-Account limit in pending_notifications(), which changes how the drain is
+    // paced rather than what this line says.
     const batched = held.length > 1 ? held : [];
     const single = held.length > 1 ? queued.filter((row) => !row.was_held) : queued;
 

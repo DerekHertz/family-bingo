@@ -277,6 +277,15 @@ grant select, insert, update on notification_preferences to authenticated;
 --                   (`members.digest_opt_in`, §19.1). A second switch over the top of it
 --                   would be two answers to one question.
 --
+-- Quiet hours do NOT carry the same exemptions, and that asymmetry is deliberate rather
+-- than an oversight — both are preferences, but they do different things. A switch DROPS:
+-- the row is never written, so a Member waiting on an Organizer would wait forever behind
+-- something somebody flipped in March. Quiet hours DEFER: every held row goes out at
+-- quiet_end as one line (§4.8), nothing is lost, and a Member who is asleep cannot approve
+-- a join request anyway. Overriding an explicit "do not buzz me at night" in order to tell
+-- somebody at 03:00 that their Family approved them would be the app deciding it knows
+-- better than the setting they chose (§0.3).
+--
 -- SECURITY DEFINER is load-bearing: this is called from inside the fan-out, where the
 -- current role may be `authenticated`, and RLS on notification_preferences would hide the
 -- recipient's row from the Member whose tap caused the Milestone — every preference would
