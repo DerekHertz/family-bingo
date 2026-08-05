@@ -6,6 +6,7 @@ import {
   columnOf,
   completedLines,
   isBlackout,
+  lineName,
   linesThrough,
   rowOf,
   rowsOf,
@@ -229,5 +230,38 @@ describe('rowsOf — the Board laid out as five rows (§5.4)', () => {
   it('ignores positions that are not on a Board', () => {
     const rows = rowsOf([...tiles, { position: 25, id: 'off' }, { position: -1, id: 'off' }]);
     expect(rows.flat().map((t) => t!.id)).toEqual(tiles.map((t) => t.id));
+  });
+});
+
+describe('lineName (§6 A5)', () => {
+  // A5's own example: "Bingo. Row 2 complete."
+  it('names the five rows from one, not from zero', () => {
+    expect(lineName(0)).toBe('Row 1');
+    expect(lineName(4)).toBe('Row 5');
+  });
+
+  it('names the five columns from one', () => {
+    expect(lineName(5)).toBe('Column 1');
+    expect(lineName(9)).toBe('Column 5');
+  });
+
+  // Named by the corner they start from. "Left to right" describes both of them to anyone
+  // reading across, and a Member who cannot see the board has no other way to tell which
+  // one closed.
+  it('names each diagonal by the corner it starts from', () => {
+    expect(lineName(10)).toBe('The top-left diagonal');
+    expect(lineName(11)).toBe('The top-right diagonal');
+  });
+
+  it('names every one of the twelve, and each of them differently', () => {
+    const names = LINES.map((_, i) => lineName(i));
+    expect(new Set(names).size).toBe(LINES.length);
+  });
+
+  // The index comes from `milestones.line_index`, which the database constrains to 0–11.
+  // Inventing a name for anything else would hide a bug upstream rather than surface it.
+  it('refuses an index that is not one of the twelve', () => {
+    expect(() => lineName(12)).toThrow(RangeError);
+    expect(() => lineName(-1)).toThrow(RangeError);
   });
 });

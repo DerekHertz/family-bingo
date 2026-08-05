@@ -10,9 +10,11 @@
  * whole count lives in the accessibility label, where it is read once instead of twelve
  * times.
  *
- * Its own component because §13's client half puts the same strip on the Family screen, one
- * per Member — the row is the compact form of "how far along is this board", and it should
- * be the same row in both places.
+ * Its own component because the row is the compact form of "how far along is this board",
+ * and anywhere that fact is shown twice it should be shown the same way. The Family screen
+ * is the obvious second home — one strip per Member — and is deliberately not built yet:
+ * it needs a Tile-count read for every Board in the Family rather than the caller's own,
+ * and §13's acceptance test asks for the strip on the Board, which is where it is.
  */
 
 import { View } from 'react-native';

@@ -47,6 +47,30 @@ export const LINES: readonly (readonly number[])[] = [
   [4, 8, 12, 16, 20],
 ] as const;
 
+/**
+ * What to call a Line out loud (FRONTEND_DESIGN §6 A5).
+ *
+ * > A completed Line announces once, on the tile that closed it — *"Bingo. Row 2
+ * > complete."* — not five times.
+ *
+ * So the name has to finish that sentence, which is why the diagonals are named by the
+ * corner they start from rather than by direction: "the left-to-right diagonal" describes
+ * both of them to anyone reading across, and a Member who cannot see the board has no
+ * other way to tell which one closed.
+ *
+ * Indices are the constant order above and nothing else — an index that is not one of the
+ * twelve is a bug upstream, and inventing a name for it would hide that.
+ */
+export const lineName = (index: number): string => {
+  if (index >= 0 && index < BOARD_WIDTH) return `Row ${index + 1}`;
+  if (index >= BOARD_WIDTH && index < BOARD_WIDTH * 2) {
+    return `Column ${index - BOARD_WIDTH + 1}`;
+  }
+  if (index === 10) return 'The top-left diagonal';
+  if (index === 11) return 'The top-right diagonal';
+  throw new RangeError(`no line ${index}`);
+};
+
 /** Row of a position, 0–4 (§5.4). */
 export const rowOf = (position: number): number => Math.floor(position / BOARD_WIDTH);
 

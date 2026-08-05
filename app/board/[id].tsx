@@ -15,10 +15,10 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import * as Haptics from 'expo-haptics';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { celebrate } from '../../lib/celebrate';
 import { leaveTo } from '../../lib/leave';
-import { Board, type BoardTile } from '../../components/Board';
+import { Board, type LineCelebration } from '../../components/Board';
 import { Button } from '../../components/Button';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
@@ -32,12 +32,21 @@ import {
   familyGoalFailureCopy,
   useCompleteFamilyGoal,
 } from '../../lib/queries/family-goal';
-import { useTileMilestones } from '../../lib/queries/milestones';
+import { useBoardMilestones } from '../../lib/queries/milestones';
 import { useRoster } from '../../lib/queries/invitations';
 import { useSession } from '../../lib/session';
-import { newlyCelebrated } from '../../src/domain/celebration';
+import {
+  announcementOf,
+  cardMilestone,
+  hapticFor,
+  loudest,
+  milestoneHeadline,
+  newlyCelebrated,
+} from '../../src/domain/celebration';
+import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
-import { columnOf, completedLines, rowOf } from '../../src/domain/lines';
+import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
+import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
@@ -64,17 +73,31 @@ export default function DraftingTable() {
   // Members in join order, which is the ordering §13.5 permits.
   const roster = useRoster(head.data?.familyId);
 
-  // §5, §12.2 — the completion celebration fires **once per Tile, ever**, and it is gated
+  // §5, §12.2, §13.2 — the celebration fires **once per Milestone, ever**, and it is gated
   // on the Milestone rather than on `count >= target`. The count stays true forever once
   // it is true, so anything watching it congratulates a Member every time they reopen a
   // Tile they finished in March, and every time §17.4's queue replays.
-  const milestones = useTileMilestones(id, tileIds, session?.user.id);
+  //
+  // Scoped to this Member and this Year: `milestones_read` is Family-wide, so an unscoped
+  // read would celebrate a sibling's Bingo on this Board.
+  //
+  // Not read at all on a draft. A Board that has not sealed has no Milestones and never
+  // can — `tile_is_loggable()` refuses an Increment until `sealed_at is not null` — so
+  // asking is a round trip whose answer is known to be empty.
+  const milestones = useBoardMilestones(
+    head.data?.sealedAt === null ? undefined : head.data?.memberId,
+    head.data?.year.id,
+    session?.user.id,
+  );
   // Keyed on the Board, not just held. The screen can be reused for a different `id`
   // (`router.replace`, `setParams`), and for one render the new Board's data is
   // `undefined` — so an unkeyed ref survives into it, every Milestone on the new Board
   // reads as fresh, and a Member opening someone else's finished Board is congratulated
   // for all of it.
   const celebrated = useRef<{ boardId: string; seen: Set<string> } | null>(null);
+  // §5's Line animation. Held here rather than derived, because it is an *event* — it
+  // plays once and then the board is at rest, however many times the screen re-renders.
+  const [lineCelebration, setLineCelebration] = useState<LineCelebration | null>(null);
 
   useEffect(() => {
     const current = milestones.data;
@@ -83,15 +106,33 @@ export default function DraftingTable() {
     // The first read of a Board seeds its set and celebrates nothing: opening a Board
     // finished last week must not walk into five celebrations.
     if (celebrated.current === null || celebrated.current.boardId !== boardId) {
-      celebrated.current = { boardId, seen: new Set(current) };
+      celebrated.current = { boardId, seen: new Set(current.map((m) => m.id)) };
       return;
     }
     const fresh = newlyCelebrated(current, celebrated.current.seen);
     if (fresh.length === 0) return;
-    for (const tileId of fresh) celebrated.current.seen.add(tileId);
-    // §5: `success` on tile complete. One notification however many Tiles landed at once —
-    // a burst of them reads as a malfunction rather than a reward.
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    for (const milestone of fresh) celebrated.current.seen.add(milestone.id);
+
+    // **One** haptic however many Milestones landed at once, and it belongs to the loudest
+    // of them. A tap that closes a Tile, three Lines and the Blackout is a single
+    // transaction server-side; five bursts of feedback for it reads as a malfunction
+    // rather than as a reward.
+    //
+    // The sentence is not subject to that rule and `announcementOf` says why: §5's
+    // argument is about buzzes, and a Member listening rather than looking has no other
+    // way to learn that a Line closed underneath the Blackout (§6 A5).
+    const loud = loudest(fresh);
+    if (loud === null) return;
+    const cancel = celebrate(hapticFor(loud.type), announcementOf(fresh, lineName));
+
+    // The Line that just closed, which is not always the loudest Milestone: a Blackout
+    // outranks the Bingo inside it and has no Line of its own to draw.
+    const line = loudest(fresh.filter((m) => m.lineIndex !== null));
+    if (line !== null && line.lineIndex !== null) {
+      setLineCelebration({ lineIndex: line.lineIndex, key: line.id });
+    }
+
+    return cancel;
   }, [milestones.data, id]);
 
   if (head.isPending || board.isPending) {
@@ -198,42 +239,25 @@ export default function DraftingTable() {
       );
     }
 
-    const tileCounts = counts.data ?? {};
-    const boardTiles: BoardTile[] = tiles.map((t) => ({
-      id: t.id,
-      position: t.position,
-      goal:
-        t.goal !== null
-          ? { text: t.goal.text, target: t.goal.target, unit: t.goal.unit }
-          : t.familyGoalText !== null
-            ? // The shared Centre is a Goal like any other once it is decided — one row
-              // referenced by every Board, completed for everyone at once (§12.3).
-              // Target 1: it is done when the Family says it is.
-              { text: t.familyGoalText, target: 1, unit: null }
-            : null,
-      // The shared Centre takes no Increments — `tile_is_loggable()` refuses them, because
-      // a Family Goal has no Target and is marked done rather than counted up (§12.3). Its
-      // count comes from `completed_at`, and counting Increments there would answer 0 for
-      // a Goal the whole Family has finished.
-      count:
-        t.familyGoalText !== null
-          ? t.familyGoalCompletedAt === null
-            ? 0
-            : 1
-          : (tileCounts[t.id] ?? 0),
-    }));
+    // The three rules this projection encodes — the Centre is a Goal once decided, it is
+    // marked rather than counted, and which squares that leaves complete — all live in
+    // `src/domain/board.ts` now. They were inline here, which meant the screen restated
+    // §12.3 in JSX and folded the completed positions by hand next to a tested function
+    // that already did it.
+    const boardTiles = renderTiles(tiles, counts.data ?? {});
 
-    // Derived here, on every render, from the counts already in hand — §13.1's Lines are
-    // never stored, and `milestones` records that a Line was *reached* rather than which
-    // Lines stand. Passing `[]` until slice 13 would have drawn twelve empty pips beneath
-    // a board with a finished row on it.
-    const lines = completedLines(
-      new Set(
-        boardTiles
-          .filter((t) => t.goal !== null && isTileComplete(t.count, t.goal.target))
-          .map((t) => t.position),
-      ),
-    );
+    // Derived on every render from the counts already in hand — §13.1's Lines are never
+    // stored, and `milestones` records that a Line was *reached* rather than which Lines
+    // stand. The two are allowed to disagree: deleting an Increment empties a pip, and the
+    // Milestone it earned stays, because it was pushed and cannot be unsent (§15.3).
+    const lines = completedLines(completedOn(boardTiles));
+
+    // The Milestone the card is about — the newest instant, then the loudest thing that
+    // happened in it. Not "the last row": one tap writes a Tile, its Lines and the
+    // Blackout in one transaction, and they all share a `created_at`, so row order inside
+    // that group is whatever the plan felt like.
+    const card = cardMilestone(milestones.data ?? []);
+    const cardHeadline = card === null ? null : milestoneHeadline(card, lineName);
 
     // An **empty** Tile opens nothing: it has no Goal to show and `tile_is_loggable()`
     // refuses Increments on it (§10.2), so a sheet there would be a sheet about nothing.
@@ -255,7 +279,7 @@ export default function DraftingTable() {
             unit: openTile.goal.unit,
             unitCanonical: sourceTile.goal?.unit_canonical ?? null,
             count: openTile.count,
-            isCentre: sourceTile.familyGoalText !== null,
+            isCentre: openTile.isCentre,
           };
 
     // The same two conditions `tile_is_loggable()` gates on, plus the one it cannot see:
@@ -301,6 +325,8 @@ export default function DraftingTable() {
             tiles={boardTiles}
             centreMode={head.data.year.centerMode}
             completedLines={lines}
+            celebrate={lineCelebration}
+            onCelebrationDone={() => setLineCelebration(null)}
             // §3: the square opens the sheet and never logs directly — a mis-tap on a
             // 67pt target in a pocket must not write a row.
             onPressTile={(t) => {
@@ -313,6 +339,35 @@ export default function DraftingTable() {
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}>
+          {/* §4's Milestone card, and §13.4's whole argument in one component: a Bingo is
+              a rung on a ladder, not an ending, so it is stated and then played past.
+
+              Tiles are deliberately not eligible. Twenty-five of them land over a Year and
+              a card that changed every few days would stop being read — the card is for
+              the four or five things that happen rarely enough to still mean something.
+
+              No count, no comparison, no "first" (§13.5): what happened, and when. */}
+          {card === null || cardHeadline === null ? null : (
+            <View
+              accessible
+              accessibilityLabel={`${cardHeadline}, ${longDate(card.createdAt)}`}
+              style={{
+                marginTop: space.lg,
+                marginHorizontal: space.xl,
+                padding: space.lg,
+                backgroundColor: color.paperRaised,
+                borderRadius: radius.card,
+                borderWidth: 1,
+                borderColor: color.hairline,
+              }}
+            >
+              <Text style={{ ...styles.cardHead, color: color.ink }}>{cardHeadline}</Text>
+              <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xs }}>
+                {longDate(card.createdAt)}
+              </Text>
+            </View>
+          )}
+
           <Text
             style={{
               ...styles.label,
@@ -344,8 +399,7 @@ export default function DraftingTable() {
                 // §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal
                 // has no Target to count toward — it is marked done — so "0/1" would be a
                 // number invented to fill the column.
-                const isCentre =
-                  tiles.find((s) => s.id === t.id)?.familyGoalText != null;
+                const isCentre = t.isCentre;
                 return (
                   <Pressable
                     key={t.id}
