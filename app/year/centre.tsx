@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
+import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
 import { Field } from '../../components/Field';
 import { ErrorState, FormScreen, Loading, Trouble } from '../../components/Screen';
@@ -48,29 +49,6 @@ import {
 } from '../../src/domain/votes';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
-
-/** The centre-tile glyph §4.3 asks for: a 5×5 with only the middle square filled. */
-function CentreGlyph() {
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={{ flexDirection: 'row', flexWrap: 'wrap', width: 46, gap: 2 }}
-    >
-      {Array.from({ length: 25 }, (_, i) => (
-        <View
-          key={i}
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 2,
-            backgroundColor: i === 12 ? color.clay : color.clayTint,
-          }}
-        />
-      ))}
-    </View>
-  );
-}
 
 /** Other people's votes as faces, right-aligned — never as a count (§4.3). */
 function Voters({ names }: { names: { id: string; name: string; isManaged: boolean }[] }) {
@@ -200,7 +178,10 @@ export default function Centre() {
           borderRadius: radius.card,
         }}
       >
-        <CentreGlyph />
+        {/* §4.3's glyph: a 5×5 with only the middle square filled. `<BoardMark>` draws the
+            app's only 5×5, so this is a tone of it rather than a second copy — and the
+            copy was wrapping at four across. */}
+        <BoardMark tile={8} gap={2} tone="centre" />
         <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
           The middle square is the family&rsquo;s. You can share one goal there, or each
           write your own.
