@@ -14,7 +14,8 @@
  */
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import * as Haptics from 'expo-haptics';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Board, type BoardTile } from '../../components/Board';
@@ -27,7 +28,14 @@ import {
   useLogIncrement,
   useRecentIncrements,
 } from '../../lib/queries/increments';
+import {
+  familyGoalFailureCopy,
+  useCompleteFamilyGoal,
+} from '../../lib/queries/family-goal';
+import { useTileMilestones } from '../../lib/queries/milestones';
+import { useRoster } from '../../lib/queries/invitations';
 import { useSession } from '../../lib/session';
+import { newlyCelebrated } from '../../src/domain/celebration';
 import { isTileComplete } from '../../src/domain/growth';
 import { columnOf, completedLines, rowOf } from '../../src/domain/lines';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
@@ -40,7 +48,7 @@ export default function DraftingTable() {
   const router = useRouter();
   const session = useSession();
   const head = useBoardHead(id, session?.user.id);
-  const board = useBoard(id);
+  const board = useBoard(id, session?.user.id);
   const tileIds = (board.data ?? []).map((t) => t.id);
   const counts = useTileCounts(tileIds, session?.user.id);
 
@@ -51,6 +59,40 @@ export default function DraftingTable() {
   const recent = useRecentIncrements(openTileId ?? undefined, session?.user.id);
   const logIncrement = useLogIncrement(tileIds, session?.user.id);
   const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);
+  const completeFamilyGoal = useCompleteFamilyGoal();
+  // §4.3's contributors block, and only for the shared Centre. `useRoster` already returns
+  // Members in join order, which is the ordering §13.5 permits.
+  const roster = useRoster(head.data?.familyId);
+
+  // §5, §12.2 — the completion celebration fires **once per Tile, ever**, and it is gated
+  // on the Milestone rather than on `count >= target`. The count stays true forever once
+  // it is true, so anything watching it congratulates a Member every time they reopen a
+  // Tile they finished in March, and every time §17.4's queue replays.
+  const milestones = useTileMilestones(id, tileIds, session?.user.id);
+  // Keyed on the Board, not just held. The screen can be reused for a different `id`
+  // (`router.replace`, `setParams`), and for one render the new Board's data is
+  // `undefined` — so an unkeyed ref survives into it, every Milestone on the new Board
+  // reads as fresh, and a Member opening someone else's finished Board is congratulated
+  // for all of it.
+  const celebrated = useRef<{ boardId: string; seen: Set<string> } | null>(null);
+
+  useEffect(() => {
+    const current = milestones.data;
+    if (current === undefined) return;
+    const boardId = id ?? 'none';
+    // The first read of a Board seeds its set and celebrates nothing: opening a Board
+    // finished last week must not walk into five celebrations.
+    if (celebrated.current === null || celebrated.current.boardId !== boardId) {
+      celebrated.current = { boardId, seen: new Set(current) };
+      return;
+    }
+    const fresh = newlyCelebrated(current, celebrated.current.seen);
+    if (fresh.length === 0) return;
+    for (const tileId of fresh) celebrated.current.seen.add(tileId);
+    // §5: `success` on tile complete. One notification however many Tiles landed at once —
+    // a burst of them reads as a malfunction rather than a reward.
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [milestones.data, id]);
 
   if (head.isPending || board.isPending) {
     return (
@@ -236,7 +278,9 @@ export default function DraftingTable() {
         ? incrementFailureCopy(logIncrement.error)
         : deleteIncrement.error !== null
           ? incrementFailureCopy(deleteIncrement.error)
-          : null;
+          : completeFamilyGoal.error !== null
+            ? familyGoalFailureCopy(completeFamilyGoal.error)
+            : null;
 
     return (
       // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
@@ -365,15 +409,35 @@ export default function DraftingTable() {
           recentPending={recent.isLoading}
           blocked={blocked}
           failure={writeFailure}
+          family={(roster.data?.members ?? [])
+            .filter((m) => m.status === 'active')
+            .map((m) => ({
+              id: m.id,
+              name: m.display_name,
+              managed: m.is_managed,
+            }))}
           onClose={() => {
             setOpenTileId(null);
             // A refusal is about the tap, not the Tile. Left set, it greets whoever opens
             // the next square with a sentence about a write they never made.
             logIncrement.reset();
             deleteIncrement.reset();
+            completeFamilyGoal.reset();
           }}
           onLog={(tap) => logIncrement.mutate(tap)}
           onDelete={(increment) => deleteIncrement.mutate(increment)}
+          // §12.3 — offered only on the Centre, and only to a Member who may act. The
+          // server checks all of this again; this is about not showing a button that
+          // answers with an error.
+          onCompleteFamilyGoal={
+            sheetTile?.isCentre === true && blocked === null
+              ? () =>
+                  completeFamilyGoal.mutate({
+                    yearId: head.data!.year.id,
+                    memberId: head.data!.memberId,
+                  })
+              : undefined
+          }
         />
       </View>
     );

@@ -107,7 +107,7 @@ function Step({ label, hint, onPress, disabled }: {
 export default function ComposeGoal() {
   const { boardId, tileId } = useLocalSearchParams<{ boardId: string; tileId: string }>();
   const session = useSession();
-  const board = useBoard(boardId);
+  const board = useBoard(boardId, session?.user.id);
   const head = useBoardHead(boardId, session?.user.id);
   const write = useWriteGoal(boardId ?? '');
   const clear = useClearGoal(boardId ?? '');
