@@ -44,3 +44,5 @@ Thumbs.db
 
 expo-env.d.ts
 # @end expo-cli
+# Agent worktrees — a git repo inside the repo, never committed.
+.claude/worktrees/
