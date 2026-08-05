@@ -25,6 +25,7 @@ import * as Haptics from 'expo-haptics';
 import { progressOf, stageOf } from '../src/domain/growth';
 import { incrementVerb } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
+import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
 import { Avatar } from './Avatar';
@@ -86,9 +87,6 @@ interface Props {
    */
   onCompleteFamilyGoal?: (() => void) | undefined;
 }
-
-const dateOf = (iso: string): string =>
-  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 export function TileSheet({
   tile,
@@ -399,7 +397,7 @@ export function TileSheet({
               >
                 <View style={{ flex: 1 }}>
                   <Text style={{ ...styles.label, color: color.ink2 }}>
-                    {dateOf(increment.occurredAt)}
+                    {shortDate(increment.occurredAt)}
                   </Text>
                   <Text
                     style={{
@@ -414,7 +412,7 @@ export function TileSheet({
                 {canLog ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Remove the increment from ${dateOf(increment.occurredAt)}`}
+                    accessibilityLabel={`Remove the increment from ${shortDate(increment.occurredAt)}`}
                     onPress={() => onDelete({ id: increment.id, tileId: increment.tileId })}
                     style={({ pressed }) => ({
                       minHeight: size.minTouch,
