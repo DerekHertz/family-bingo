@@ -29,7 +29,7 @@ import { memo } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import type { StatCell, WrappedCardModel } from '../src/domain/wrapped';
 import { styles } from '../theme/fonts';
-import { categoryTint, color, radius, space } from '../theme/tokens';
+import { categoryTint, color, radius, size, space } from '../theme/tokens';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 
@@ -68,7 +68,12 @@ function Rail({ index, total, tone }: { index: number; total: number; tone: stri
         flexDirection: 'row',
         gap: space.xs,
         paddingHorizontal: space.xl,
-        paddingTop: space.xxl,
+        // `size.screenTop`, like every other full screen here — `theme/tokens.ts` calls it
+        // "below the header on a full screen; clears the status bar without a safe-area
+        // hook". `space.xxl` is 44, and every device from the iPhone X on has a top inset
+        // of 47–59, so the rail — this card's only chrome and its only position indicator
+        // — rendered behind the status bar and the Dynamic Island.
+        paddingTop: size.screenTop,
       }}
     >
       {Array.from({ length: total }, (_, i) => (

@@ -21,7 +21,7 @@
  */
 
 import { useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -147,10 +147,19 @@ export default function Wrapped() {
       ? null
       : (wrapped.data.memberCards.find((c) => c.memberId === myMemberId)?.stats ?? null);
 
-  const deck = wrappedDeck({
+  // Memoised, and §20.2 is why: Wrapped "is read many times, changes never, and must
+  // render instantly". The deck is not cheap — it walks every Milestone of the Year, a
+  // list `..._029` §6 deliberately stopped filtering — and a fresh array on every render
+  // also changes `FlatList`'s `data` identity and defeats `<WrappedCard>`'s `memo`, so
+  // every card remounts whenever anything on this screen changes state.
+  // Narrowed once, outside the callback: TypeScript cannot carry a narrowing of
+  // `wrapped.data` into a closure, and re-reading it inside would be a second read that
+  // could in principle answer differently.
+  const payload = wrapped.data;
+  const deck = useMemo(() => wrappedDeck({
     member: mine,
-    family: wrapped.data.family,
-    awards: wrapped.data.awards,
+    family: payload.family,
+    awards: payload.awards,
     // Join order, and nothing else, is what orders the Awards (§7.2). `useRoster` already
     // returns Members by `joined_at` and says so — "the moment it sorts by activity it
     // becomes a ladder".
@@ -162,7 +171,7 @@ export default function Wrapped() {
     calendarYear: year.calendar_year,
     timezone,
     nextYearState,
-  });
+  }), [mine, payload, roster.data, year.calendar_year, timezone, nextYearState]);
 
   const say = (message: string) => {
     setTrouble(message);

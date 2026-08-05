@@ -304,17 +304,38 @@ export const monthName = (yyyymm: string | null): string | null => {
  * than arithmetic: a fixed offset is wrong for half the year in half the world, and "which
  * month was that" is exactly the question §8.3 T1 says to answer in the Family's zone.
  */
-export const monthOf = (iso: string, timezone: string): string | null => {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return null;
+const MONTH_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * One formatter per timezone, kept.
+ *
+ * Constructing an `Intl.DateTimeFormat` is the expensive part, and this runs once per
+ * Milestone — a list migration `..._029` §6 deliberately stopped filtering, so it is every
+ * Milestone of the Year for every Member: roughly 190 for a family of five and 760 at
+ * §4.5's cap of twenty. A screen §20.2 requires to "render instantly" cannot build 760
+ * formatters to do it.
+ */
+const monthFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  const held = MONTH_FORMATTERS.get(timeZone);
+  if (held !== undefined) return held;
+  let made: Intl.DateTimeFormat;
   try {
-    return new Intl.DateTimeFormat('en', { month: 'long', timeZone: timezone }).format(at);
+    made = new Intl.DateTimeFormat('en', { month: 'long', timeZone });
   } catch {
     // A handset can report a zone newer than the runtime's tzdata, the same way it can
     // report one newer than the server's (see useCreateFamily). A missing month name is
-    // not worth losing the line over.
-    return new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(at);
+    // not worth losing the line over. Cached under the requested zone, so the failing
+    // construction is attempted once rather than once per Milestone.
+    made = new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' });
   }
+  MONTH_FORMATTERS.set(timeZone, made);
+  return made;
+};
+
+export const monthOf = (iso: string, timezone: string): string | null => {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return monthFormatter(timezone).format(at);
 };
 
 /**
@@ -421,8 +442,11 @@ export const awardExplanation = (
         : `Closed a line on ${count(increments, 'increment')}.`;
     }
     case 'showed_up':
-      // No number. See the note above.
-      return 'On the board all year.';
+      // No number, and **no duration**. The floor reaches a §21 late joiner approved in
+      // July who logged nothing, and "all year" is then simply false about the one Member
+      // this axis exists to be kind to. `boards.joined_late_at` exists precisely so the
+      // app can say when somebody arrived rather than assume.
+      return 'Here for it.';
     default:
       // An axis this build has not heard of. The server's `award_axis_known` CHECK means
       // that can only be a newer server than client, and a blank line under a real Award is
@@ -696,7 +720,36 @@ const awardsCard = (
   const rows = awardRows(awards, roster, timezone);
   // States the rule instead of preaching it. §20.7 forbids a standing; saying so once, in
   // the Family's own words, is what stops somebody reading the list as one anyway.
-  const blurb = 'Different things, measured differently. There is no order to this list.';
+  //
+  // It does **not** say the list is unordered, because it is not: `awardRows` puts it in
+  // join order, which is one of the two orderings §7.2 permits precisely because it says
+  // nothing about achievement. Claiming there is no order is a visible sentence that is
+  // untrue, three lines above an accessibility reading that correctly says what the order
+  // is — and a sighted reader who notices the same Member is always first has then been
+  // told a falsehood. What matters is the thing that IS true.
+  const blurb = 'Different things, measured differently. Nobody is ahead of anybody.';
+  // The Awards arrive **after** the Wrapped row, not with it. `freeze_due_years()` runs at
+  // `0 * * * *` and writes `wrapped`; the `wrap` Edge Function that computes the Awards is
+  // scheduled at `5 * * * *`. So for about five minutes after any Family's freeze instant
+  // the screen is live and this list is legitimately empty — and it stays empty
+  // indefinitely on a project whose Vault settings are missing, because
+  // `invoke_edge_function()` returns null without raising and the cron job stays green.
+  //
+  // Rendering the header, the blurb about ordering, and then nothing is the worst of the
+  // three: it states a rule about a list that is not there, and reads aloud as "0 awards".
+  if (rows.length === 0) {
+    return {
+      kind: 'awards',
+      ground: 'paper',
+      id: 'awards',
+      title: 'Awards',
+      // Not an error and not an apology (§0.3) — a fact with a tense that will come true.
+      blurb: 'The awards are still being worked out. They’ll be here shortly.',
+      rows: [],
+      reading: 'Awards. The awards are still being worked out.',
+    };
+  }
+
   return {
     kind: 'awards',
     ground: 'paper',

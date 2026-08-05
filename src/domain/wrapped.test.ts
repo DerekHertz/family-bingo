@@ -291,13 +291,17 @@ describe('the Awards (§20.7, §13.5a, ADR-0006)', () => {
     const card = wrappedDeck(input({ awards })).find((c) => c.kind === 'awards')!;
     const printed = card.rows.map((r) => `${r.label} ${r.explanation}`).join(' ');
     expect(printed).not.toMatch(/\b1st\b|\b2nd\b|\brank\b|\bplace\b|\bwinner\b|\bbeat\b|\bthan\b/i);
-    expect(card.blurb).toMatch(/no order/i);
+    // Not "no order" — there IS one, and it is join order (§7.2 permits it). The blurb
+    // must say the true thing rather than a comforting falsehood a reader can disprove
+    // by noticing the same Member is always first.
+    expect(card.blurb).toMatch(/nobody is ahead of anybody/i);
+    expect(card.blurb).not.toMatch(/no order/i);
   });
 
   it('gives the floor Award no number at all', () => {
     // `showed_up` reaches a Member the ten comparative axes cannot, and its detail is
     // either {increments: 0} or {reason: 'floor'}. "0 increments" is a scold either way.
-    expect(awardExplanation('showed_up', { increments: 0 }, 'UTC')).toBe('On the board all year.');
+    expect(awardExplanation('showed_up', { increments: 0 }, 'UTC')).toBe('Here for it.');
     expect(awardExplanation('showed_up', { reason: 'floor' }, 'UTC')).not.toMatch(/\d/);
   });
 
