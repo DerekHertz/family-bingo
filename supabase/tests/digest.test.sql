@@ -176,29 +176,9 @@ select act_as_cron();
 -- The squares are dealt at seal (§4.1), so "the Tile at position N" and "the Tile holding
 -- the Goal I wrote at N" are two different things now. tile_of() above answers the second,
 -- which is what every progress assertion means. **Lines are the exception**: §13.1 pays out
--- on squares, so a Line test has to say squares.
-create or replace function tile_at(name text, pos int) returns uuid
-language sql stable as $at$
-  select t.id from tiles t
-    join boards b on b.id = t.board_id
-   where b.member_id = member_of(name) and t.position = pos
-$at$;
-
--- Complete whatever Goal now sits on a square, by logging its own Target.
-create or replace function finish_at(name text, pos int) returns void
-language plpgsql as $fin$
-declare n int; tgt int;
-begin
-  select g.target into tgt
-    from tiles t join goals g on g.id = t.goal_id
-   where t.id = tile_at(name, pos);
-  for n in 1..tgt loop
-    insert into increments (id, tile_id, member_id)
-    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
-  end loop;
-end;
-$fin$;
-
+-- on squares, so a Line test has to say squares — tile_at() and finish_at(), both defined
+-- once, at the top. They used to be repeated here, byte for byte; a helper defined twice in
+-- one file is the trap HANDOFF describes, and two copies that agree today are how it starts.
 
 select is(seal_due_boards(), 3, 'three Boards seal and the Year is under way');
 delete from notifications;
@@ -285,25 +265,57 @@ select is((select d.family_id from digests d), family_named('Hertzell Family'),
 select is((select jsonb_array_length(d.near_line) from digests d), 0,
   'nobody is near a Line yet');
 
+-- Which square of row 0 this block leaves open — read off the Board, never assumed to be 4.
+--
+-- **The trap.** The acceptance test above completed a Tile: 'Walk the dog', the one Goal on
+-- Alice's Board with a Target above 1. Which square that Goal sits on is decided by the deal
+-- (§4.1), so it is a different square every run — and one run in twenty-four it is square 4.
+-- On those runs "finish 0, 1, 2 and 3" does not leave Alice one short of row 0, it *closes*
+-- row 0, and members_near_a_line() drops a closed Line on purpose (the gap aggregates to
+-- NULL, and cardinality(NULL) is NULL). The three assertions below then failed together, at
+-- about 4% of runs, saying nothing about why. Measured: 5 failures in 60 runs, every one of
+-- them a run where the deal had put 'Walk the dog' on square 4, and no failure on any other.
+--
+-- So the row is filled around whichever of its squares is still open. Built on
+-- board_completed_positions(), the same function members_near_a_line() reads, so the two
+-- cannot disagree about what "complete" means.
+create or replace function row0_gap() returns int
+language sql stable security definer set search_path = public as $gap$
+  select max(p) from generate_series(0, 4) p
+   where not (p = any(board_completed_positions(
+     (select b.id from boards b
+        join members m on m.id = b.member_id
+       where m.display_name = 'Alice'))))
+$gap$;
+
 select act_as('00000000-0000-4000-8000-0000000000a1');
 -- By square, not by Goal: "near a Line" is a positional fact (§13.1), and row 0 is row 0
--- whichever Goals the deal put on it.
-select finish_at('Alice', 0);
-select finish_at('Alice', 1);
-select finish_at('Alice', 2);
-select finish_at('Alice', 3);
+-- whichever Goals the deal put on it. Four of its five, whichever four are still open.
+do $row0$
+declare gap int := row0_gap(); p int;
+begin
+  for p in 0..4 loop
+    if p <> gap then perform finish_at('Alice', p); end if;
+  end loop;
+end $row0$;
 
 select act_as_cron();
-select is((select count(*)::int from members_near_a_line(year_of('Hertzell Family'))), 1,
-  'Alice completes Tiles 0-3 and is one Tile from row 0');
-select is((select n.line_index from members_near_a_line(year_of('Hertzell Family')) n), 0,
+-- Scoped to Alice's Member id. "How many Members in the Year are near a Line" is a fact
+-- about the Family; this is a claim about her, and the count only happens to be the same
+-- number today because Bob and Carol have nothing on their Boards.
+select is((select count(*)::int from members_near_a_line(year_of('Hertzell Family')) n
+            where n.member_id = member_of('Alice')), 1,
+  'Alice completes four of row 0 and is one Tile from it');
+select is((select n.line_index from members_near_a_line(year_of('Hertzell Family')) n
+            where n.member_id = member_of('Alice')), 0,
   'the Line she is near is row 0');
-select is((select n.missing_position from members_near_a_line(year_of('Hertzell Family')) n), 4,
-  'and the Tile she is short of is position 4');
+select is((select n.missing_position from members_near_a_line(year_of('Hertzell Family')) n
+            where n.member_id = member_of('Alice')), row0_gap(),
+  'and the Tile she is short of is the one square of row 0 she left');
 
 -- Closing it takes her off the list — she is no longer NEAR a Line, she has one.
 select act_as('00000000-0000-4000-8000-0000000000a1');
-select finish_at('Alice', 4);
+select finish_at('Alice', row0_gap());
 
 select act_as_cron();
 select is((select count(*)::int from members_near_a_line(year_of('Hertzell Family'))), 0,
