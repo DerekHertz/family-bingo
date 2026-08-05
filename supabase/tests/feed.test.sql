@@ -41,6 +41,52 @@ language sql stable as $$
    where b.member_id = member_of(name) and t.position = pos
 $$;
 
+-- ---------------------------------------------------------------------------------
+-- A Board is laid out by board_positions(), derived from its own id (§4.1)
+-- ---------------------------------------------------------------------------------
+--
+-- "positions are dealt at seal, so no Member can place the easy one in a corner." So
+-- after the seal the Goal written to square N is no longer on square N, and every
+-- assertion below that says `tile_of(name, N)` means "the Tile carrying the Goal I wrote
+-- to N" — which is exactly what dealt_position() answers. Before the seal the two are the
+-- same thing, which is why this works on both sides of it.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select t.id
+    from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.position = case
+           when b.sealed_at is null then pos
+           else dealt_position(b.id, pos)
+         end
+$dealt$;
+
+-- The literal square, for the assertions that mean one. A Line is five squares (§13.1),
+-- whichever Goals the layout put on them.
+create or replace function tile_at(name text, pos int) returns uuid
+language sql stable as $at$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name) and t.position = pos
+$at$;
+
+-- Complete whatever Goal sits on a square, by logging its own Target.
+create or replace function finish_at(name text, pos int) returns void
+language plpgsql as $fin$
+declare n int; tgt int;
+begin
+  select g.target into tgt
+    from tiles t join goals g on g.id = t.goal_id
+   where t.id = tile_at(name, pos);
+  for n in 1..coalesce(tgt, 0) loop
+    insert into increments (id, tile_id, member_id)
+    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
+  end loop;
+end;
+$fin$;
+
+
 create or replace function year_of(family text) returns uuid
 language sql stable as $$
   select y.id from years y join families f on f.id = y.family_id where f.name = family
