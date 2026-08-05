@@ -46,6 +46,74 @@ export const swapsRemaining = (swapsUsed: number): number =>
   Math.max(0, SWAP_BUDGET - swapsUsed);
 
 /**
+ * Why a square cannot be swapped, said to the Member.
+ *
+ * Every one of these is a state the client can see before it asks, and `swap_tile()`
+ * refuses all four with `PT403` — one SQLSTATE covering four different reasons. So the
+ * discrimination has to happen here, on facts already in hand, rather than by matching the
+ * server's message text (which the handoff warns about, and which would break the day
+ * somebody rewords a `raise`).
+ *
+ * Nothing here scolds and nothing suggests a workaround that does not exist (§0.3). "No
+ * swaps left" is a fact about a budget the Member spent; §18.5 is explicit that the
+ * scarcity is the feature.
+ */
+export const swapRefusalCopy = (reason: SwapRefusal): string => {
+  switch (reason) {
+    case 'year_frozen':
+      // §20.1 — frozen Years are permanently read-only. There is no retry and no appeal.
+      return 'This year is finished. Its boards are family history now.';
+    case 'budget_exhausted':
+      return 'No swaps left this year. They come back when the next year opens.';
+    case 'shared_center_tile':
+      // §12.3 — one row referenced by every Board. Changing it would change everyone's.
+      return 'The middle square belongs to the whole family, so nobody swaps it alone.';
+    case 'tile_complete':
+      // §4.4: "Not swappable: the Centre, and any Tile already `complete`."
+      return 'This one is already done. Nothing left to change.';
+  }
+};
+
+/**
+ * What the confirm sheet says will happen to the Increments already logged.
+ *
+ * **§18.6 is the authority here, not FRONTEND_DESIGN §4.4, and they disagree.**
+ *
+ * §4.4 says *"The Tile resets to `dormant` because `COUNT(increments)` on the new Goal is
+ * zero"*. That is a stale model of the schema and it is not what ships. §18.6 says
+ * *"Swapping does not delete existing Increments; **progress carries over against the new
+ * Target**"*, `increments` references `tile_id` and never `goal_id`, and `swap_tile()`
+ * updates the Goal **in place** — there is no new Goal row and nothing is re-pointed. The
+ * migration says so itself: "Progress hangs off the Tile, not the Goal, so it carries over
+ * against the new Target by construction."
+ *
+ * The proof is three lines further down in that same function: if progress already meets
+ * the new Target it calls `record_tile_completion()` and `record_line_milestones()`. That
+ * branch is only reachable *because* progress carries over.
+ *
+ * This copy said the opposite, which was the worst possible place to be wrong. A Member at
+ * 100 of 144 who lowers the Target to 90 was told the square would restart from zero — and
+ * what actually happens is that the Tile completes on save, a Line may close, and a Bingo
+ * is written and pushed to every phone in the Family. That is exactly the manufactured
+ * Bingo §18.5 exists to make visible, and the app was promising it could not happen.
+ *
+ * `completesNow` is that case said out loud, because it is irreversible and family-visible
+ * and a Member should not meet it as a surprise (§0.3).
+ */
+export const swapConsequenceCopy = (loggedSoFar: number, completesNow = false): string => {
+  if (loggedSoFar === 0) {
+    return 'Nothing is deleted. This square starts from zero, because nothing has been logged on it yet.';
+  }
+  const kept =
+    loggedSoFar === 1
+      ? 'Nothing is deleted. The one you have logged stays on this square and counts towards the new goal.'
+      : `Nothing is deleted. The ${loggedSoFar} you have logged stay on this square and count towards the new goal.`;
+  return completesNow
+    ? `${kept} That is already enough — the square finishes as soon as you save, and your family will see it.`
+    : kept;
+};
+
+/**
  * What an edit costs on a Sealed Board.
  *
  * `before` is `null` for an unfilled Tile — an unfinished Board seals with empty Tiles

@@ -57,18 +57,12 @@ import {
   goalTextProblem,
   targetProblem,
   unitProblem,
+  TARGET_CEILING,
 } from '../../src/domain/goal';
 import { stepperHint } from '../../src/domain/increment';
 import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
-
-/**
- * A ceiling on the typed target. Not a domain rule — `write_goal()` accepts any positive
- * int — but a field that reads a pasted phone number as a target of nine billion produces
- * a Tile nobody can ever complete, and no keystroke gets you here by accident.
- */
-const TARGET_CEILING = 100_000;
 
 /** The stepper's two halves. 44pt each — §6 A3's floor, and an 8-year-old's finger. */
 function Step({ label, hint, onPress, disabled }: {

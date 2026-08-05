@@ -87,6 +87,15 @@ interface Props {
    * when this Member may do it; `undefined` renders the state as a fact instead.
    */
   onCompleteFamilyGoal?: (() => void) | undefined;
+  /**
+   * §4.4 — open the Swap confirm sheet for this square.
+   *
+   * `undefined` whenever a Swap is impossible, and the caller decides that rather than
+   * this component, because the four reasons are four different facts about the Board and
+   * the Year (`evaluateGoalRewrite`). A row offered here that the server would refuse is
+   * the exact failure §0.3 forbids — asking for a retry that cannot work.
+   */
+  onSwap?: (() => void) | undefined;
 }
 
 export function TileSheet({
@@ -102,6 +111,7 @@ export function TileSheet({
   onLog,
   onDelete,
   onCompleteFamilyGoal,
+  onSwap,
 }: Props) {
   const [note, setNote] = useState('');
   const canLog = blocked === null;
@@ -295,6 +305,32 @@ export function TileSheet({
                 ? 'This year is finished. Nothing more can be logged.'
                 : `${ownerName ?? 'This member'} logs progress on this one.`}
             </Text>
+          )}
+
+          {/* §4.4's way in. Below the logging controls and quieter than them, because
+              swapping is the rarer thing by two orders of magnitude — a Member logs
+              hundreds of Increments a year and has three of these.
+
+              Rendered only when the caller passed a handler, which it does only when
+              `evaluateGoalRewrite()` says the Swap would be allowed. A row here on the
+              shared Centre, a completed Tile, a frozen Year or an exhausted budget would
+              be a row that opens a sheet whose only button the server refuses. */}
+          {onSwap === undefined ? null : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Swap this goal. ${tile.text}`}
+              accessibilityHint="Shows what it costs before anything changes"
+              onPress={onSwap}
+              style={({ pressed }) => ({
+                minHeight: size.minTouch,
+                marginTop: space.lg,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ ...styles.body, color: color.ink2 }}>Swap this goal</Text>
+            </Pressable>
           )}
 
           {/* §4.3: "Contributors render as faces in join order inside a `clayTint` block:

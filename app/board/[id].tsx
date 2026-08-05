@@ -21,6 +21,7 @@ import { leaveTo } from '../../lib/leave';
 import { Board, type LineCelebration } from '../../components/Board';
 import { Button } from '../../components/Button';
 import { ErrorState, Loading } from '../../components/Screen';
+import { SwapSheet, type SwapCandidate } from '../../components/SwapSheet';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import {
@@ -34,6 +35,7 @@ import {
   useCompleteFamilyGoal,
 } from '../../lib/queries/family-goal';
 import { useBoardMilestones } from '../../lib/queries/milestones';
+import { useSwapBudget } from '../../lib/queries/swaps';
 import { useRoster } from '../../lib/queries/invitations';
 import { useSession } from '../../lib/session';
 import {
@@ -47,6 +49,7 @@ import {
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
 import { countCompact, countSummary } from '../../src/domain/increment';
+import { SWAP_BUDGET, evaluateGoalRewrite } from '../../src/domain/swaps';
 import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
@@ -72,6 +75,14 @@ export default function DraftingTable() {
   const logIncrement = useLogIncrement(tileIds, session?.user.id);
   const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);
   const completeFamilyGoal = useCompleteFamilyGoal();
+  // §18.1's budget, for the confirm sheet's pips and for deciding whether to offer the row
+  // at all. Only meaningful on a sealed Board — a draft is free editing (§6.4).
+  const swapBudget = useSwapBudget(
+    head.data?.sealedAt === null ? undefined : id,
+    session?.user.id,
+  );
+  // §4.4: "One confirm sheet, then compose." This is the sheet's subject.
+  const [swapping, setSwapping] = useState<SwapCandidate | null>(null);
   // §4.3's contributors block, and only for the shared Centre. `useRoster` already returns
   // Members in join order, which is the ordering §13.5 permits.
   const roster = useRoster(head.data?.familyId);
@@ -276,6 +287,49 @@ export default function DraftingTable() {
           ? 'not-yours'
           : null;
 
+    // §4.4 — may this square be swapped at all?
+    //
+    // Asked with an unchanged Goal, so the answer is about the *square* rather than about
+    // any particular rewrite: `evaluateGoalRewrite` refuses a frozen Year, the shared
+    // Centre, a completed Tile and an exhausted budget regardless of what is being written,
+    // and those four are exactly the states in which the row must not appear. What a
+    // specific rewrite costs is the compose screen's question (§18.3).
+    const swapAllowed =
+      sheetTile !== null &&
+      blocked === null &&
+      head.data.sealedAt !== null &&
+      evaluateGoalRewrite(
+        {
+          sealed: true,
+          frozen: head.data.year.status === 'frozen',
+          swapsUsed: swapBudget.data ?? SWAP_BUDGET,
+          isSharedCenter: sheetTile.isCentre,
+          isComplete: isTileComplete(sheetTile.count, sheetTile.target),
+        },
+        { text: sheetTile.text, target: sheetTile.target },
+        // A rewrite that would cost a swap, so the budget check is exercised. Anything
+        // free would answer "allowed" on a Board with none left.
+        { text: `${sheetTile.text} `.trim() + '.', target: sheetTile.target },
+      ).allowed;
+
+    // §10.2's empty square, and whether this caller may fill it. Same four refusals as
+    // above minus the two that cannot apply — an empty Tile is never the shared Centre and
+    // never complete — so what is left is the Year, the Board and the budget.
+    const emptyFillable =
+      blocked === null &&
+      head.data.sealedAt !== null &&
+      evaluateGoalRewrite(
+        {
+          sealed: true,
+          frozen: head.data.year.status === 'frozen',
+          swapsUsed: swapBudget.data ?? SWAP_BUDGET,
+          isSharedCenter: false,
+          isComplete: false,
+        },
+        null,
+        { text: 'anything', target: 1 },
+      ).allowed;
+
     // Whichever write failed last. Both mutations feed one line, because only one of them
     // can be in flight from a sheet showing a single Tile.
     const writeFailure =
@@ -313,10 +367,26 @@ export default function DraftingTable() {
             // §3: the square opens the sheet and never logs directly — a mis-tap on a
             // 67pt target in a pocket must not write a row.
             onPressTile={(t) => {
-              // An empty Tile opens nothing (§10.2): no Goal to show, and Increments are
-              // refused there. Setting the id anyway left the sheet resolving to `null`
-              // and the state quietly stale.
-              if (t.goal !== null) setOpenTileId(t.id);
+              // A Tile with a Goal opens the sheet. An **empty** one on a sealed Board
+              // goes straight to the Swap confirm: it has no progress to show and takes no
+              // Increments, so a tile sheet there would be a sheet about nothing — but
+              // §10.2 is explicit that "an unfinished Board seals with empty Tiles" and
+              // that "those Tiles can be filled using Swaps", and §18.5 says the same.
+              // Swallowing the tap left those squares inert for the whole Year and put
+              // Blackout out of reach by construction.
+              if (t.goal !== null) {
+                setOpenTileId(t.id);
+                return;
+              }
+              if (emptyFillable) {
+                setSwapping({
+                  tileId: t.id,
+                  position: t.position,
+                  text: null,
+                  target: 1,
+                  count: 0,
+                });
+              }
             }}
           />
         </View>
@@ -479,6 +549,45 @@ export default function DraftingTable() {
                   })
               : undefined
           }
+          onSwap={
+            swapAllowed && sheetTile !== null
+              ? () => {
+                  // The tile sheet closes, **then** the confirm sheet opens — a frame
+                  // apart, not in one commit. React batches both `setState`s, so on iOS
+                  // the present would be issued while the dismiss was still in flight and
+                  // UIKit drops it: the Member taps "Swap this goal" and nothing happens.
+                  // Android is unaffected, which is exactly why this is easy to miss.
+                  const candidate: SwapCandidate = {
+                    tileId: sheetTile.id,
+                    position: sheetTile.position,
+                    text: sheetTile.text,
+                    target: sheetTile.target,
+                    count: sheetTile.count,
+                  };
+                  setOpenTileId(null);
+                  requestAnimationFrame(() => setSwapping(candidate));
+                }
+              : undefined
+          }
+        />
+
+        <SwapSheet
+          tile={swapping}
+          swapsUsed={swapBudget.data ?? SWAP_BUDGET}
+          onClose={() => setSwapping(null)}
+          onConfirm={() => {
+            const target = swapping;
+            if (target === null) return;
+            // Same reason as above, one layer up: dismissing the modal and pushing a route
+            // in one tick races the presentation controller.
+            setSwapping(null);
+            requestAnimationFrame(() =>
+              router.push({
+                pathname: '/board/swap',
+                params: { boardId: id ?? '', tileId: target.tileId },
+              }),
+            );
+          }}
         />
       </View>
     );
