@@ -1,0 +1,342 @@
+/**
+ * The Account screen — Slice 19 (FRONTEND_DESIGN §4.6, PRD §1.5, §19.1).
+ *
+ * > Ordered by how often it's needed: **Families → people you look after → this handset**.
+ * > Rows are hairline-divided `body`, values in `ink3`. Sign out is a plain text row.
+ * > **Delete my account** is the `clayDeep`-on-hairline treatment at the bottom, with the
+ * > consequence stated *above* the tap … No modal that says the same thing again.
+ *
+ * That ordering is the spec's, and it is the opposite of where a settings screen usually
+ * starts: the thing a Member opens this screen for is almost always a Family or a child,
+ * and almost never the handset. Sign out and delete sit at the bottom because they are
+ * rare, not because they are dangerous.
+ *
+ * **A name lives on the Member, not on the Account.** Somebody in two Families is two
+ * Members with two names (CONTEXT.md), so "change my name" is one control per Family
+ * rather than one for the person — and that is why editing it here closes handoff open
+ * item 5, where a magic-link Account was stuck with its email's local part forever.
+ */
+
+import { Redirect, useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Pressable, ScrollView, Switch, Text, View } from 'react-native';
+import { Button } from '../components/Button';
+import { Field } from '../components/Field';
+import { Loading, Trouble } from '../components/Screen';
+import { signOut } from '../lib/auth';
+import {
+  renameFailureCopy,
+  useDeleteAccount,
+  useManagedByMe,
+  useRenameMember,
+  useSetDigestOptIn,
+} from '../lib/queries/account';
+import { useFamilies } from '../lib/queries/families';
+import { useAnnounce } from '../lib/announce';
+import { useSession } from '../lib/session';
+import { styles } from '../theme/fonts';
+import { color, radius, size, space, stroke } from '../theme/tokens';
+
+export default function Account() {
+  const router = useRouter();
+  const session = useSession();
+  const families = useFamilies(session?.user.id);
+  const managed = useManagedByMe(session?.user.id);
+  const rename = useRenameMember();
+  const digest = useSetDigestOptIn();
+  const remove = useDeleteAccount();
+  const { trouble, say } = useAnnounce();
+  // Which Membership's name is open for editing, and what it currently reads. One at a
+  // time: a screen of live fields is a screen where a mistyped name saves itself.
+  const [editing, setEditing] = useState<{ memberId: string; name: string } | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  if (session === null) return <Redirect href="/" />;
+  if (session === undefined || families.isPending) {
+    return <Loading what="Loading your account" />;
+  }
+
+  const list = families.data ?? [];
+
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: color.paper }}
+      contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop, paddingBottom: space.xxl }}
+    >
+      <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
+        You
+      </Text>
+      {/* The one fact about the Account rather than about a Member. `ink3` per §4.6's
+          "values in `ink3`", and not editable: the email is the identity, and changing it
+          is Supabase's flow rather than a row in a list. */}
+      <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
+        {session.user.email ?? 'Signed in'}
+      </Text>
+
+      <Section title="Families" />
+      {list.length === 0 ? (
+        <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
+          You’re not in a family yet.
+        </Text>
+      ) : (
+        list.map((family) => (
+          <View key={family.id} style={row}>
+            <Text style={{ ...styles.body, color: color.ink }}>{family.name}</Text>
+
+            {editing?.memberId === family.member.id ? (
+              <View style={{ marginTop: space.sm }}>
+                <Field
+                  value={editing.name}
+                  onChangeText={(name) => setEditing({ memberId: family.member.id, name })}
+                  accessibilityLabel={`Your name in ${family.name}`}
+                  autoFocus
+                  maxLength={60}
+                />
+                <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.sm }}>
+                  <Button
+                    label={rename.isPending ? 'Saving…' : 'Save'}
+                    variant="outlined"
+                    disabled={rename.isPending || editing.name.trim() === ''}
+                    style={{ flex: 1 }}
+                    onPress={() =>
+                      rename.mutate(
+                        { memberId: family.member.id, name: editing.name },
+                        {
+                          onSuccess: () => setEditing(null),
+                          onError: (e) => say(renameFailureCopy(e)),
+                        },
+                      )
+                    }
+                  />
+                  <Button
+                    label="Cancel"
+                    variant="text"
+                    style={{ flex: 1 }}
+                    onPress={() => setEditing(null)}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Your name in ${family.name} is ${family.member.display_name}. Change it.`}
+                onPress={() =>
+                  setEditing({ memberId: family.member.id, name: family.member.display_name })
+                }
+                style={({ pressed }) => ({
+                  minHeight: size.minTouch,
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ ...styles.label, color: color.ink3 }}>
+                  {family.member.display_name}
+                  {family.member.role === 'organizer' ? ' · organizer' : ''}
+                </Text>
+              </Pressable>
+            )}
+
+            {/* §19.1 — opt-in, default off, and per Family because a Digest is one
+                Family's week. Never a nag: there is nothing here that asks a Member to
+                turn it on, and nothing that says what they will miss (§7.11). */}
+            <SwitchRow
+              label="Weekly summary"
+              hint={`A quiet round-up of ${family.name}’s week, on Sundays.`}
+              value={family.member.digest_opt_in}
+              onChange={(optIn) =>
+                digest.mutate(
+                  { memberId: family.member.id, optIn },
+                  { onError: () => say('That didn’t save. Have another go in a moment.') },
+                )
+              }
+            />
+          </View>
+        ))
+      )}
+
+      <Section title="People you look after" />
+      {managed.isPending ? (
+        <Loading what="Loading the people you look after" inline />
+      ) : (managed.data ?? []).length === 0 ? (
+        <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
+          Nobody yet. You can add a child profile from a family’s screen.
+        </Text>
+      ) : (
+        (managed.data ?? []).map((child) => (
+          <View key={child.id} style={row}>
+            <Text style={{ ...styles.body, color: color.ink }}>{child.displayName}</Text>
+            <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
+              {child.familyName}
+            </Text>
+          </View>
+        ))
+      )}
+
+      <Section title="This handset" />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Notifications"
+        accessibilityHint="What this handset is allowed to interrupt you for"
+        onPress={() => router.push('/account/notifications')}
+        style={({ pressed }) => ({ ...row, opacity: pressed ? 0.7 : 1 })}
+      >
+        <Text style={{ ...styles.body, color: color.ink }}>Notifications</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          void signOut();
+        }}
+        style={({ pressed }) => ({ ...row, opacity: pressed ? 0.7 : 1 })}
+      >
+        <Text style={{ ...styles.body, color: color.ink }}>Sign out</Text>
+      </Pressable>
+
+      {trouble === null ? null : <Trouble message={trouble} />}
+
+      {/* §4.6's delete. The consequence is stated **above** the tap and there is no modal
+          that says it again — a second screen repeating the same sentence is a screen that
+          teaches people to dismiss sentences.
+
+          **The copy says what the server does, not what §4.6 does.** §4.6 says "Managed
+          Members transfer"; `delete_account()` implements §1.5 literally, and `members`
+          cascades from `accounts` by `guardian_account_id` as well as `account_id` — so a
+          Guardian deleting their Account deletes their children's Boards too. The
+          migration flags that as a known spec conflict resolved in favour of the PRD, and
+          this screen is the last place it could be softened into a lie. If the product
+          decides transfer is right, the function changes and so does this paragraph. */}
+      <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xxl }}>
+        Deleting
+      </Text>
+      <Text style={{ ...styles.body, color: color.ink2, marginTop: space.sm }}>
+        Your boards leave every year, including the frozen ones. Each family keeps its own.
+        {(managed.data ?? []).length === 0
+          ? ''
+          : ` The ${(managed.data ?? []).length === 1 ? 'profile' : 'profiles'} you look after ${
+              (managed.data ?? []).length === 1 ? 'goes' : 'go'
+            } too, with their boards.`}{' '}
+        This cannot be undone.
+      </Text>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          confirmingDelete ? 'Yes, delete my account' : 'Delete my account'
+        }
+        disabled={remove.isPending}
+        onPress={() => {
+          // Two taps, not two screens. The second tap is the confirmation §4.6 wants
+          // without the modal it forbids: the button restates itself in place, so the
+          // consequence above stays on screen while the Member decides.
+          if (!confirmingDelete) {
+            setConfirmingDelete(true);
+            return;
+          }
+          remove.mutate(undefined, {
+            onError: () => say('That didn’t work. Have another go in a moment.'),
+          });
+        }}
+        style={({ pressed }) => ({
+          marginTop: space.lg,
+          height: size.control,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: color.paper,
+          borderWidth: stroke.hairline,
+          borderColor: color.hairline,
+          borderRadius: radius.card,
+          opacity: pressed ? 0.7 : 1,
+        })}
+      >
+        <Text style={{ ...styles.action, color: color.clayDeep }}>
+          {remove.isPending
+            ? 'Deleting…'
+            : confirmingDelete
+              ? 'Yes, delete my account'
+              : 'Delete my account'}
+        </Text>
+      </Pressable>
+
+      {confirmingDelete && !remove.isPending ? (
+        <Button
+          label="Keep it"
+          variant="text"
+          style={{ marginTop: space.sm }}
+          onPress={() => setConfirmingDelete(false)}
+        />
+      ) : null}
+
+      <Button
+        label="Back"
+        variant="text"
+        style={{ marginTop: space.xl, alignItems: 'flex-start' }}
+        onPress={() => router.back()}
+      />
+    </ScrollView>
+  );
+}
+
+/** §4.6's hairline-divided rows. One shape, so the three sections cannot drift apart. */
+const row = {
+  paddingVertical: space.md,
+  borderTopWidth: stroke.hairline,
+  borderTopColor: color.hairline,
+  minHeight: size.minTouch,
+  justifyContent: 'center',
+} as const;
+
+function Section({ title }: { title: string }) {
+  return (
+    <Text
+      accessibilityRole="header"
+      style={{ ...styles.meta, color: color.ink3, marginTop: space.xxl }}
+    >
+      {title}
+    </Text>
+  );
+}
+
+/**
+ * A preference, said as a sentence.
+ *
+ * The track is `ink` and never `moss`: moss is the growth ladder, and a settings screen
+ * full of it would make a toggle look like progress (§1.1, §4.1's argument about the
+ * drafting table's pips).
+ */
+function SwitchRow({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.md,
+        marginTop: space.md,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={{ ...styles.body, color: color.ink }}>{label}</Text>
+        <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>{hint}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={label}
+        accessibilityHint={hint}
+        trackColor={{ false: color.paperSunk, true: color.ink }}
+        thumbColor={color.paperRaised}
+        ios_backgroundColor={color.paperSunk}
+      />
+    </View>
+  );
+}

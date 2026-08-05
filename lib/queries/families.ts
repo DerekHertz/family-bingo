@@ -17,7 +17,16 @@ export interface Family {
   name: string;
   timezone: string;
   /** The caller's own Member row in this Family. One per Family, never more. */
-  member: { id: string; display_name: string; role: 'organizer' | 'member' };
+  member: {
+    id: string;
+    display_name: string;
+    role: 'organizer' | 'member';
+    /**
+     * §19.1 — the weekly Digest, opt-in and default off. Per **Member**, not per Account:
+     * a Digest is one Family's week, so somebody in two Families chooses twice.
+     */
+    digest_opt_in: boolean;
+  };
 }
 
 /**
@@ -58,7 +67,7 @@ export function useFamilies(accountId: string | undefined) {
       // are not the Guardian, and this list is "Families you are in" (§2.2).
       const { data, error } = await supabase
         .from('members')
-        .select('id, display_name, role, joined_at, family:family_id (id, name, timezone)')
+        .select('id, display_name, role, digest_opt_in, joined_at, family:family_id (id, name, timezone)')
         .eq('account_id', accountId ?? '')
         .eq('status', 'active')
         .order('joined_at', { ascending: true });
@@ -76,6 +85,7 @@ export function useFamilies(accountId: string | undefined) {
               id: row.id as string,
               display_name: row.display_name as string,
               role: row.role as 'organizer' | 'member',
+              digest_opt_in: (row.digest_opt_in as boolean | null) ?? false,
             },
           },
         ];

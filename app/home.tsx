@@ -122,15 +122,16 @@ export default function Home() {
         <Button label="Join a Family" onPress={() => router.push('/family/join')} />
       </View>
 
-      {/* §4.6 puts this under an Account screen ("Families → people you look after → this
-          handset"), which is not built yet and belongs to another slice. Until it is, the
-          notifications screen needs a door, and this is the only screen in the app that is
-          about the Account rather than about one Family. */}
+      {/* §4.6's Account screen, which now exists — so this points at it rather than
+          straight past it at the notifications screen, and the handset's settings sit
+          where §4.6 orders them: Families, then the people you look after, then this
+          handset. This is still the only screen in the app that is about the Account
+          rather than about one Family, which is why the door is here. */}
       <Button
-        label="Notifications"
+        label="You"
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-        onPress={() => router.push('/account/notifications')}
+        onPress={() => router.push('/account')}
       />
 
       <Button
