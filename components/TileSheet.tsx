@@ -434,26 +434,21 @@ export function TileSheet({
                   note" and identical to it in weight, because they are the same kind of
                   thing: something a Member may do and never has to. */}
               {photo === null ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Add a photo"
-                  accessibilityState={{ disabled: picking }}
+                // The same control as "Add a note" above, and it was a hand-rolled
+                // `<Pressable>` beside it. §3 lists the two as one pair of secondaries —
+                // "46pt, hairline outline" — so two renderings of one thing is the app
+                // disagreeing with itself in the two rows where the disagreement is
+                // side by side: `body`/`ink2` against `action`/`ink`, and a literal
+                // `borderWidth: 1` where the token is `stroke.hairline`. `<Button>` is
+                // also where §6 A3's 44pt floor and §6 A4's growth live, both of which a
+                // fixed `minHeight` opted out of.
+                <Button
+                  label="Add a photo"
+                  height={size.controlSharpen}
                   disabled={picking}
                   onPress={addPhoto}
-                  style={({ pressed }) => ({
-                    minHeight: size.controlSharpen,
-                    paddingVertical: space.sm,
-                    marginTop: space.md,
-                    borderRadius: radius.card,
-                    borderWidth: 1,
-                    borderColor: color.hairline,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: pressed || picking ? 0.7 : 1,
-                  })}
-                >
-                  <Text style={{ ...styles.body, color: color.ink2 }}>Add a photo</Text>
-                </Pressable>
+                  style={{ marginTop: space.md }}
+                />
               ) : (
                 /* What is about to be attached, and a way out of it. The thumbnail is the
                    **original** local file rather than anything signed — nothing has been
@@ -466,7 +461,9 @@ export function TileSheet({
                     marginTop: space.md,
                     padding: space.sm,
                     borderRadius: radius.card,
-                    borderWidth: 1,
+                    // The token, not a literal 1 — §1 gives the rule one width and this
+                    // row sits directly under a `<Button variant="outlined">` drawn from it.
+                    borderWidth: stroke.hairline,
                     borderColor: color.hairline,
                   }}
                 >
