@@ -13,7 +13,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(49);
+select plan(51);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -159,6 +159,18 @@ select open_year((select id from families where name = 'Hertzell Family'), 2027)
 select write_goal(tile_of('Alice', 0), 'Walk the dog', 3, 'walks');
 select write_goal(tile_of('Alice', 1), 'Read a book', 2, 'books');
 
+-- Alice votes for a shared Centre and nobody writes a Proposal.
+--
+-- This is the case the Feed used to get exactly backwards, and it is a path §9.3 puts
+-- there on purpose: `resolve_center_vote()` stores the mode that was VOTED in
+-- `votes.outcome` and the mode the centre BECAME in `years.center_mode`, and with no
+-- Proposal to put on Tile 12 those two disagree — voted `shared`, resolved `personal`.
+-- The view read `votes.outcome`, so this Family's Feed announced a family goal over
+-- twenty-five personal squares, and it was the only thing the Feed said about the Vote.
+select cast_ballot(
+  (select id from votes where year_id = year_of('Hertzell Family') and kind = 'mode'),
+  member_of('Alice'), 'shared');
+
 select set_config('role', 'postgres', true);
 update years set setup_deadline = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Hertzell Family');
@@ -222,13 +234,22 @@ select is(
   (select f.goal_text from feed f where f.kind = 'milestone'),
   'Walk the dog', 'naming the Goal that closed');
 
--- Vote outcomes. Nobody cast a Ballot, so the mode fell back to personal (§8.3) and the
--- goal Vote resolved with no winner — which is not an outcome, and does not appear.
+-- Vote outcomes. Alice voted `shared`, but nobody wrote a Proposal — so §9.3 resolved the
+-- centre to `personal` anyway, and the Feed has to say what the centre IS rather than what
+-- was asked for. A Feed that announced a family goal here would be the only thing it said
+-- about the Vote, and it would be false (§4.3: stated as a fact).
 select is(feed_count('vote_resolved'), 1,
   'the mode Vote''s outcome is in the Feed');
 select is(
+  (select y.center_mode::text from years y where y.id = year_of('Hertzell Family')),
+  'personal', 'a shared vote with no Proposal resolves to a personal centre (§9.3)');
+select is(
+  (select v.outcome from votes v
+    where v.year_id = year_of('Hertzell Family') and v.kind = 'mode'),
+  'shared', 'and the Vote still records what was voted, which is not the same fact');
+select is(
   (select f.vote_outcome from feed f where f.kind = 'vote_resolved' and f.vote_kind = 'mode'),
-  'personal', 'the mode Vote records what was voted (§9.3)');
+  'personal', 'the Feed reports the centre the Family got, not the one it voted for');
 select is(
   (select count(*)::int from feed f
     where f.kind = 'vote_resolved' and f.vote_kind = 'goal'), 0,

@@ -218,6 +218,28 @@ export default function FamilyRoster() {
         </View>
       )}
 
+      {/* The way into the Feed (§14). Below the Year card because it is *about* that Year:
+          the Feed is scoped to one Family and one Year (§14.1), and there is no version of
+          it that spans two.
+
+          Not a badge and not an unread count. §15.3 spends the whole notification budget
+          on Milestones precisely so the ~3,300 Increments a family logs in a year land
+          somewhere that does not ask to be cleared — a number on this row would undo that
+          in one component. */}
+      {current === null || current === undefined ? null : (
+        <Button
+          label="What’s happened"
+          variant="outlined"
+          style={{ marginTop: space.md }}
+          onPress={() =>
+            router.push({
+              pathname: '/year/feed',
+              params: { yearId: current.id, familyId: id ?? '' },
+            })
+          }
+        />
+      )}
+
       {/* The way onto a Board (§6). One row per Member the caller may author for, which is
           themselves plus any child they guard — a Guardian authoring for a Managed Member
           is the normal case, not an administrative one (§4.2). */}
