@@ -156,6 +156,27 @@ const signedUrlFor = async (token: string, path: string) =>
     body: JSON.stringify({ expiresIn: 60 }),
   });
 
+/**
+ * The **batch** endpoint, which is what the client actually calls.
+ *
+ * `useSignedPhotos` signs a whole Feed page in one request (`createSignedUrls`), because
+ * one `createSignedUrl` per row is thirty requests on a screen that exists to be scrolled.
+ * That is a different endpoint from the one every test above exercises, and §16.5 is a
+ * claim about what a real endpoint returns — so it gets asserted rather than assumed.
+ */
+const signedUrlsFor = async (token: string, paths: string[]) =>
+  fetch(`${API}/storage/v1/object/sign/${BUCKET}`, {
+    method: 'POST',
+    headers: headers(token, { 'content-type': 'application/json' }),
+    body: JSON.stringify({ expiresIn: 60, paths }),
+  });
+
+interface BatchSignature {
+  error: string | null;
+  path: string | null;
+  signedURL: string | null;
+}
+
 let alice: Player;
 let bob: Player;
 
@@ -172,6 +193,19 @@ beforeAll(async () => {
 
   sql(`insert into attachments (increment_id, storage_path)
        values ('${alice.incrementId}', '${alice.objectPath}')`);
+
+  // Bob gets a photo of his own. Without one, every refusal below is consistent with a
+  // Storage service that simply answers nothing to anybody — and a boundary test that
+  // passes when the feature is broken is not a boundary test.
+  const bobUpload = await fetch(`${API}/storage/v1/object/${BUCKET}/${bob.objectPath}`, {
+    method: 'POST',
+    headers: headers(bob.token, { 'content-type': 'image/jpeg' }),
+    body: PHOTO,
+  });
+  if (!bobUpload.ok) throw new Error(`bob upload: ${bobUpload.status} ${await bobUpload.text()}`);
+
+  sql(`insert into attachments (increment_id, storage_path)
+       values ('${bob.incrementId}', '${bob.objectPath}')`);
 }, 120_000);
 
 afterAll(async () => {
@@ -257,6 +291,92 @@ describe('§16.5 — a real object URL, and who it refuses', () => {
     const tampered = `${API}/storage/v1${signedURL}`.replace(/token=.*/, 'token=not-a-real-token');
     const response = await fetch(tampered);
     expect(response.ok).toBe(false);
+  });
+});
+
+/**
+ * §16.5 again, against the endpoint the client actually uses.
+ *
+ * Slice 16's client signs a whole Feed page in one request, and a batch endpoint has a
+ * failure mode a single-path one does not: it answers a *list*, so it has to decide what
+ * to do about a caller who may read some of the paths and not others. If it answered
+ * all-or-nothing, `useSignedPhotos` would still be safe but useless — one refused row
+ * would blank the page. If it answered a URL for every path asked for, it would hand a
+ * Family's photographs to anyone who could guess a key, and the singular endpoint's
+ * careful refusals above would be beside the point.
+ *
+ * It filters, per path. `useSignedPhotos` is written to that contract — it skips entries
+ * carrying an `error` and keeps the rest — and this is where that contract is checked
+ * rather than believed.
+ */
+describe('§16.5 — the batch endpoint the client signs with', () => {
+  it('signs Alice her own page', async () => {
+    const response = await signedUrlsFor(alice.token, [alice.objectPath]);
+    expect(response.ok).toBe(true);
+
+    const [signature] = (await response.json()) as BatchSignature[];
+    expect(signature?.error).toBeNull();
+    expect(signature?.signedURL).toBeTruthy();
+
+    const photo = await fetch(`${API}/storage/v1${signature?.signedURL ?? ''}`);
+    expect(photo.status).toBe(200);
+  });
+
+  it('CROSS-FAMILY: gives Bob nothing for Alice’s path, though he asks in a batch', async () => {
+    const response = await signedUrlsFor(bob.token, [alice.objectPath]);
+    const signatures = (await response.json()) as BatchSignature[];
+    for (const signature of signatures) {
+      expect(signature.signedURL).toBeFalsy();
+    }
+  });
+
+  it('CROSS-FAMILY: a mixed batch answers Bob his own and refuses Alice’s', async () => {
+    // The one that matters. A Member of two Families scrolls a Feed carrying both, and an
+    // endpoint that leaked on a mixed request would leak on the ordinary case rather than
+    // on a contrived one.
+    const response = await signedUrlsFor(bob.token, [bob.objectPath, alice.objectPath]);
+    expect(response.ok).toBe(true);
+
+    const signatures = (await response.json()) as BatchSignature[];
+    const usable = signatures.filter((s) => s.signedURL !== null && s.signedURL !== '');
+    expect(usable.map((s) => s.path)).toEqual([bob.objectPath]);
+
+    // And the URL it did give him is his own photo, not a redirect into Alice's folder.
+    const photo = await fetch(`${API}/storage/v1${usable[0]?.signedURL ?? ''}`);
+    expect(photo.status).toBe(200);
+    expect(new Uint8Array(await photo.arrayBuffer())).toEqual(PHOTO);
+  });
+
+  it('ANON: signs nothing at all in a batch', async () => {
+    const response = await signedUrlsFor(ANON, [alice.objectPath]);
+    if (response.ok) {
+      const signatures = (await response.json()) as BatchSignature[];
+      for (const signature of signatures) expect(signature.signedURL).toBeFalsy();
+    } else {
+      expect(response.status).toBeGreaterThanOrEqual(400);
+    }
+  });
+
+  it('a signed URL expires, which is the whole of the exposure window (§16.2)', async () => {
+    // Nothing revokes a signed URL — it is a stateless HMAC over the path and an expiry,
+    // and Storage consults no table before honouring one. So "short TTL" is not a tuning
+    // knob, it is the security control, and an expiry that Storage ignored would mean
+    // every URL this app has ever minted is still good.
+    const response = await fetch(`${API}/storage/v1/object/sign/${BUCKET}/${alice.objectPath}`, {
+      method: 'POST',
+      headers: headers(alice.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ expiresIn: -1 }),
+    });
+
+    if (!response.ok) {
+      // Refusing to mint an already-expired URL is a stronger answer than honouring the
+      // expiry, and either is correct.
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      return;
+    }
+    const { signedURL } = (await response.json()) as { signedURL: string };
+    const expired = await fetch(`${API}/storage/v1${signedURL}`);
+    expect(expired.ok).toBe(false);
   });
 });
 
