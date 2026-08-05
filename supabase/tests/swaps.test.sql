@@ -43,6 +43,52 @@ language sql stable as $$
    where b.member_id = member_of(name) and t.position = pos
 $$;
 
+-- ---------------------------------------------------------------------------------
+-- A Board is laid out by board_positions(), derived from its own id (§4.1)
+-- ---------------------------------------------------------------------------------
+--
+-- "positions are dealt at seal, so no Member can place the easy one in a corner." So
+-- after the seal the Goal written to square N is no longer on square N, and every
+-- assertion below that says `tile_of(name, N)` means "the Tile carrying the Goal I wrote
+-- to N" — which is exactly what dealt_position() answers. Before the seal the two are the
+-- same thing, which is why this works on both sides of it.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select t.id
+    from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.position = case
+           when b.sealed_at is null then pos
+           else dealt_position(b.id, pos)
+         end
+$dealt$;
+
+-- The literal square, for the assertions that mean one. A Line is five squares (§13.1),
+-- whichever Goals the layout put on them.
+create or replace function tile_at(name text, pos int) returns uuid
+language sql stable as $at$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name) and t.position = pos
+$at$;
+
+-- Complete whatever Goal sits on a square, by logging its own Target.
+create or replace function finish_at(name text, pos int) returns void
+language plpgsql as $fin$
+declare n int; tgt int;
+begin
+  select g.target into tgt
+    from tiles t join goals g on g.id = t.goal_id
+   where t.id = tile_at(name, pos);
+  for n in 1..coalesce(tgt, 0) loop
+    insert into increments (id, tile_id, member_id)
+    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
+  end loop;
+end;
+$fin$;
+
+
 create or replace function family_named(name text) returns uuid
 language sql stable security definer set search_path = public as $$
   select f.id from families f where f.name = family_named.name
@@ -110,6 +156,52 @@ update votes set closes_at = now() - interval '1 minute'
  where year_id = (select id from years where family_id = family_named('Hertzell Family'));
 
 select act_as_cron();
+
+-- ---------------------------------------------------------------------------------
+-- The squares are dealt at seal (§4.1), so from here a Tile is found by its Goal
+-- ---------------------------------------------------------------------------------
+--
+-- `positions are dealt at seal, so no Member can place the easy one in a corner`. Every
+-- assertion below means "the Tile carrying the Goal I wrote to that square", never "square
+-- N" — so that is what tile_of() now answers. Squares nothing was written to, including
+-- the Centre at 12, still resolve literally: that is what the empty-Tile assertions of
+-- §10.2 are about.
+-- "A Tile that sealed empty", which after the deal is no longer a fixed square (§10.2).
+create or replace function tile_empty(name text) returns uuid
+language sql stable as $empty$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.goal_id is null and t.family_goal_id is null and t.position <> 12
+   order by t.position
+   limit 1
+$empty$;
+
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select coalesce(
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+       join goals  g on g.id = t.goal_id
+      where b.member_id = member_of(name)
+        and g.text = (select m.txt from (values
+                ('Alice', 0, 'Walk the dog'),
+                ('Alice', 1, 'Read a book'),
+                ('Alice', 2, 'Swim'),
+                ('Alice', 3, 'Cook something new'),
+                ('Alice', 4, 'Call Mum'),
+                ('Alice', 5, 'Something easy'),
+                ('Carol', 0, 'Run a marathon')
+              ) as m(nm, ps, txt)
+             where m.nm = name and m.ps = pos)),
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+      where b.member_id = member_of(name) and t.position = pos)
+  )
+$dealt$;
+
 select is(seal_due_boards(), 2, 'both Boards seal — everything after this costs a Swap');
 
 -- ---------------------------------------------------------------------------------
@@ -141,7 +233,13 @@ select is((select f.member_id from feed f where f.kind = 'swap'), member_of('Ali
   'attributed to the Member who spent it');
 
 -- §18.6: progress carries over. It hangs off the Tile, not the Goal.
-select is((select count(*)::int from increments where tile_id = tile_of('Alice', 0)), 2,
+-- By the Goal the Swap put there, not the one it replaced: tile_of() follows the Goal
+-- text, and after a Swap the old text is on no Tile at all. The Tile is the same Tile —
+-- which is the whole point of §18.6.
+select is((select count(*)::int from increments i
+             join tiles t on t.id = i.tile_id
+             join goals g on g.id = t.goal_id
+            where g.text = 'Walk the dog every day'), 2,
   'the two Increments logged against the old Goal are untouched (§18.6)');
 
 -- ---------------------------------------------------------------------------------
@@ -181,11 +279,11 @@ select is(revisions_for('Alice'), 2, 'and is recorded for the Family to see');
 -- The Tile was left empty by the Member's own choice. Filling it in December against a
 -- Line they are one short of is the manufactured Bingo by another route.
 
-select is((select goal_id from tiles where id = tile_of('Alice', 5)), null,
-  'Tile 5 sealed empty (§10.2)');
+select is((select goal_id from tiles where id = tile_empty('Alice')), null,
+  'a Tile sealed empty (§10.2)');
 
 select throws_ok(
-  $$select write_goal(tile_of('Alice', 5), 'Something easy', 1)$$,
+  $$select write_goal(tile_empty('Alice'), 'Something easy', 1)$$,
   'PT403', null,
   'write_goal will not fill it — that door closed at the seal');
 

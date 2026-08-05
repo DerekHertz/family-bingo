@@ -40,6 +40,52 @@ language sql stable as $$
    where b.member_id = member_of(name) and t.position = pos
 $$;
 
+-- ---------------------------------------------------------------------------------
+-- A Board is laid out by board_positions(), derived from its own id (§4.1)
+-- ---------------------------------------------------------------------------------
+--
+-- "positions are dealt at seal, so no Member can place the easy one in a corner." So
+-- after the seal the Goal written to square N is no longer on square N, and every
+-- assertion below that says `tile_of(name, N)` means "the Tile carrying the Goal I wrote
+-- to N" — which is exactly what dealt_position() answers. Before the seal the two are the
+-- same thing, which is why this works on both sides of it.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select t.id
+    from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.position = case
+           when b.sealed_at is null then pos
+           else dealt_position(b.id, pos)
+         end
+$dealt$;
+
+-- The literal square, for the assertions that mean one. A Line is five squares (§13.1),
+-- whichever Goals the layout put on them.
+create or replace function tile_at(name text, pos int) returns uuid
+language sql stable as $at$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name) and t.position = pos
+$at$;
+
+-- Complete whatever Goal sits on a square, by logging its own Target.
+create or replace function finish_at(name text, pos int) returns void
+language plpgsql as $fin$
+declare n int; tgt int;
+begin
+  select g.target into tgt
+    from tiles t join goals g on g.id = t.goal_id
+   where t.id = tile_at(name, pos);
+  for n in 1..coalesce(tgt, 0) loop
+    insert into increments (id, tile_id, member_id)
+    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
+  end loop;
+end;
+$fin$;
+
+
 create or replace function progress_of(name text, pos int) returns int
 language sql stable as $$
   select count(*)::int from increments i where i.tile_id = tile_of(name, pos)
@@ -76,6 +122,37 @@ update votes set closes_at = now() - interval '1 minute'
                     where family_id = (select id from families where name = 'Hertzell Family'));
 
 select act_as_cron();
+
+-- ---------------------------------------------------------------------------------
+-- The squares are dealt at seal (§4.1), so from here a Tile is found by its Goal
+-- ---------------------------------------------------------------------------------
+--
+-- `positions are dealt at seal, so no Member can place the easy one in a corner`. Every
+-- assertion below means "the Tile carrying the Goal I wrote to that square", never "square
+-- N" — so that is what tile_of() now answers. Squares nothing was written to, including
+-- the Centre at 12, still resolve literally: that is what the empty-Tile assertions of
+-- §10.2 are about.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select coalesce(
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+       join goals  g on g.id = t.goal_id
+      where b.member_id = member_of(name)
+        and g.text = (select m.txt from (values
+                ('Alice', 0, 'Walk every day'),
+                ('Alice', 1, 'Read more books'),
+                ('Alice', 12, 'Learn to sail')
+              ) as m(nm, ps, txt)
+             where m.nm = name and m.ps = pos)),
+    (select t.id
+       from tiles t
+       join boards b on b.id = t.board_id
+      where b.member_id = member_of(name) and t.position = pos)
+  )
+$dealt$;
+
 select is(seal_due_boards(), 2, 'both Boards seal, and the Year is under way');
 
 -- The personal centre is authored first, while the seal is still fresh: its free write

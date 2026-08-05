@@ -41,6 +41,52 @@ language sql stable as $$
    where b.member_id = member_of(name) and t.position = pos
 $$;
 
+-- ---------------------------------------------------------------------------------
+-- A Board is laid out by board_positions(), derived from its own id (§4.1)
+-- ---------------------------------------------------------------------------------
+--
+-- "positions are dealt at seal, so no Member can place the easy one in a corner." So
+-- after the seal the Goal written to square N is no longer on square N, and every
+-- assertion below that says `tile_of(name, N)` means "the Tile carrying the Goal I wrote
+-- to N" — which is exactly what dealt_position() answers. Before the seal the two are the
+-- same thing, which is why this works on both sides of it.
+create or replace function tile_of(name text, pos int) returns uuid
+language sql stable as $dealt$
+  select t.id
+    from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.position = case
+           when b.sealed_at is null then pos
+           else dealt_position(b.id, pos)
+         end
+$dealt$;
+
+-- The literal square, for the assertions that mean one. A Line is five squares (§13.1),
+-- whichever Goals the layout put on them.
+create or replace function tile_at(name text, pos int) returns uuid
+language sql stable as $at$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name) and t.position = pos
+$at$;
+
+-- Complete whatever Goal sits on a square, by logging its own Target.
+create or replace function finish_at(name text, pos int) returns void
+language plpgsql as $fin$
+declare n int; tgt int;
+begin
+  select g.target into tgt
+    from tiles t join goals g on g.id = t.goal_id
+   where t.id = tile_at(name, pos);
+  for n in 1..coalesce(tgt, 0) loop
+    insert into increments (id, tile_id, member_id)
+    values (gen_random_uuid(), tile_at(name, pos), member_of(name));
+  end loop;
+end;
+$fin$;
+
+
 create or replace function year_of(family text) returns uuid
 language sql stable as $$
   select y.id from years y join families f on f.id = y.family_id where f.name = family
@@ -91,6 +137,10 @@ $$;
 
 -- Log exactly as many Increments as the Tile's Target, the way the client would
 -- (api.md §8). Client-generated ids (§11.2), one per tap.
+--
+-- **By square, not by Goal.** A Line is five squares (§13.1) and closing one means
+-- finishing whatever Goals the layout put on them — which is what a Member actually does.
+-- Once a Board is dealt (§4.1) those are no longer the Goals that were written there.
 create or replace function finish_positions(name text, ps int[]) returns void
 language plpgsql as $$
 declare
@@ -101,10 +151,10 @@ begin
   foreach p in array ps loop
     select g.target into tgt
       from tiles t join goals g on g.id = t.goal_id
-     where t.id = tile_of(name, p);
+     where t.id = tile_at(name, p);
     for n in 1..tgt loop
       insert into increments (id, tile_id, member_id)
-      values (gen_random_uuid(), tile_of(name, p), member_of(name));
+      values (gen_random_uuid(), tile_at(name, p), member_of(name));
     end loop;
   end loop;
 end;
@@ -133,8 +183,16 @@ select author_positions('Alice', array[0], 3);
 select author_positions('Alice',
   array[1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
+-- Bob authors every square, not just the row he is going to finish.
+--
+-- The squares are dealt at seal (§4.1), so "write five Goals to positions 0-4" no longer
+-- puts five Goals on row 0 — it puts them wherever the deal sends them, and a Line drawn
+-- through empty Tiles can never close. Authoring the whole Board is what makes a
+-- *positional* assertion meaningful once the mapping from write order to square is gone,
+-- and it is what a Member who finishes a row will actually have done.
 select act_as('00000000-0000-4000-8000-0000000000a2');
-select author_positions('Bob', array[0,1,2,3,4], 1);
+select author_positions('Bob',
+  array[0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
 select set_config('role', 'postgres', true);
 update years set setup_deadline = now() - interval '1 minute'
@@ -236,7 +294,7 @@ select is(bingos_of('Alice'), 1, 'a Member has at most one Bingo, ever');
 -- §13.4: play continues after Bingo to the end of the Year. Nothing shuts off.
 select lives_ok($$
   insert into increments (id, tile_id, member_id)
-  values (gen_random_uuid(), tile_of('Alice', 0), member_of('Alice'))
+  values (gen_random_uuid(), tile_at('Alice', 0), member_of('Alice'))
 $$, 'Increments keep landing after Bingo — it is a rung, not an ending (§13.4)');
 
 select is(lines_of('Alice'), 2,
@@ -264,7 +322,7 @@ select is(blackouts_of('Alice'), 1, 'and a Blackout, recorded once (§13.3)');
 -- nothing a second time.
 select lives_ok($$
   insert into increments (id, tile_id, member_id)
-  values (gen_random_uuid(), tile_of('Alice', 24), member_of('Alice'))
+  values (gen_random_uuid(), tile_at('Alice', 24), member_of('Alice'))
 $$, 'a Member keeps logging after Blackout');
 select is(blackouts_of('Alice'), 1, 'no second Blackout');
 select is(lines_of('Alice'), 12, 'and no thirteenth Line');
@@ -285,7 +343,7 @@ select finish_positions('Bob', array[0,1,2,3]);
 select is(tiles_done_of('Bob'), 4, 'Bob completes four Tiles of row 0');
 
 select lives_ok($$
-  delete from increments where tile_id = tile_of('Bob', 0)
+  delete from increments where tile_id = tile_at('Bob', 0)
 $$, 'then deletes the Increment on Tile 0, correcting a mistake (§11.3)');
 
 select is(tiles_done_of('Bob'), 4,
@@ -322,8 +380,12 @@ select act_as('00000000-0000-4000-8000-0000000000a3');
 select open_year((select id from families where name = 'Okonkwo Family'), 2028);
 
 -- Every Tile on the four Lines through the centre, and nothing else.
+-- The whole Board again, for the reason above: the deal (§4.1) scatters whatever subset
+-- is authored, and the sixteen squares this test then finishes are chosen for the *Lines*
+-- they nearly close. A Line drawn through an empty Tile can never close, so leaving
+-- squares unauthored made the assertion depend on where the shuffle happened to land.
 select author_positions('Chidi',
-  array[10,11,13,14, 2,7,17,22, 0,6,18,24, 4,8,16,20], 1);
+  array[0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
 select set_config('role', 'postgres', true);
 insert into proposals (id, vote_id, member_id, text)
