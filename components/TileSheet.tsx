@@ -27,8 +27,9 @@ import { incrementVerb } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 import { Avatar } from './Avatar';
+import { Button } from './Button';
 import { ProgressRing } from './ProgressRing';
 import type { Increment, LogIncrement } from '../lib/queries/increments';
 
@@ -199,9 +200,14 @@ export function TileSheet({
               // §4.3: "the increment verb is the app's only plural — 'We did it'". It
               // completes for every Member at once (§12.3), which is why the word is
               // *we* and why this is the only button in the app that speaks for more
-              // than the person pressing it.
-              <Pressable
-                accessibilityRole="button"
+              // than the person pressing it — and why it is `tone="clay"`, because clay
+              // means family and nothing else (§1.1).
+              <Button
+                label="We did it"
+                variant="primary"
+                tone="clay"
+                // §6 A6: the label carries the goal, because "We did it" alone is
+                // meaningless read out of context.
                 accessibilityLabel={`We did it. ${tile.text}`}
                 accessibilityHint="Marks the family's goal done for everyone"
                 // `light`, not `success`. §5 gives `success` to *tile complete*, which is
@@ -212,27 +218,19 @@ export function TileSheet({
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 onPress={onCompleteFamilyGoal}
-                style={({ pressed }) => ({
-                  minHeight: size.controlPrimary,
-                  paddingVertical: space.sm,
-                  paddingHorizontal: space.md,
-                  marginTop: space.lg,
-                  borderRadius: radius.card,
-                  backgroundColor: color.clayDeep,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: pressed ? 0.85 : 1,
-                })}
-              >
-                <Text style={{ ...styles.action, color: color.paper, textAlign: 'center' }}>
-                  We did it
-                </Text>
-              </Pressable>
+                style={{ marginTop: space.lg }}
+              />
             )
           ) : canLog ? (
             <>
-              <Pressable
-                accessibilityRole="button"
+              {/* §3's primary action — 56pt moss, `paper` at 17pt/700 — which is exactly
+                  `<Button variant="primary">`. It was hand-rolled for the growth
+                  behaviour: §6 A4 gives the sheet the *full* Dynamic Type range and a
+                  fixed 56 truncates the label at XXL instead of growing with it. `Button`
+                  treats its height as a floor now, so every button in the app does that. */}
+              <Button
+                label={incrementVerb(tile.unit, tile.unitCanonical)}
+                variant="primary"
                 // §6 A6: the label carries the goal text, because "Walked one" alone is
                 // meaningless read out of context.
                 accessibilityLabel={`${incrementVerb(tile.unit, tile.unitCanonical)}. ${tile.text}`}
@@ -242,25 +240,8 @@ export function TileSheet({
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 onPress={log}
-                style={({ pressed }) => ({
-                  // `minHeight`, not `height`. §6 A4 gives the sheet the *full* Dynamic
-                  // Type range — it is where larger text is meant to live — and a fixed
-                  // 56 truncates the label at XXL instead of growing with it.
-                  minHeight: size.controlPrimary,
-                  paddingVertical: space.sm,
-                  paddingHorizontal: space.md,
-                  marginTop: space.lg,
-                  borderRadius: radius.card,
-                  backgroundColor: color.moss,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: pressed ? 0.85 : 1,
-                })}
-              >
-                <Text style={{ ...styles.action, color: color.paper, textAlign: 'center' }}>
-                  {incrementVerb(tile.unit, tile.unitCanonical)}
-                </Text>
-              </Pressable>
+                style={{ marginTop: space.lg }}
+              />
 
               {/* Optional, always (§11.1). Never required, never pre-focused — which is
                   why this is a disclosure rather than a field sitting open above the
@@ -278,30 +259,27 @@ export function TileSheet({
                     marginTop: space.md,
                     padding: space.md,
                     minHeight: size.controlSharpen,
-                    borderWidth: 1,
+                    borderWidth: stroke.hairline,
                     borderColor: color.hairline,
                     borderRadius: radius.card,
                   }}
                 />
               ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Add a note"
+                // §3's secondary: "46pt, hairline outline", which is `<Button
+                // variant="outlined">` at `size.controlSharpen`. It reads one step louder
+                // than the hand-rolled copy did — `action`/`ink` rather than `body`/`ink2`
+                // — because that is what an outlined control is everywhere else in the
+                // app. §3 specifies only the height and the outline for this one, and a
+                // second text treatment for a single button would be the fifth variant
+                // `<Button>` exists to avoid.
+                <Button
+                  label="Add a note"
+                  height={size.controlSharpen}
+                  // `outlined`'s `paperRaised` fill is the sheet's own ground, so the
+                  // button reads as an outline exactly as the transparent copy did.
                   onPress={() => setNoteOpen(true)}
-                  style={({ pressed }) => ({
-                    minHeight: size.controlSharpen,
-                    paddingVertical: space.sm,
-                    marginTop: space.md,
-                    borderRadius: radius.card,
-                    borderWidth: 1,
-                    borderColor: color.hairline,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    opacity: pressed ? 0.7 : 1,
-                  })}
-                >
-                  <Text style={{ ...styles.body, color: color.ink2 }}>Add a note</Text>
-                </Pressable>
+                  style={{ marginTop: space.md }}
+                />
               )}
             </>
           ) : (

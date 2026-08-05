@@ -13,7 +13,8 @@
 import { Redirect, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+import { Loading } from '../../components/Screen';
 import { SignInCancelled, sessionFromUrl } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
 import { styles } from '../../theme/fonts';
@@ -54,6 +55,7 @@ export default function AuthCallback() {
   }, []);
 
   if (done) return <Redirect href="/home" />;
+  if (failed === null) return <Loading what="Signing you in" />;
 
   return (
     <View
@@ -65,24 +67,18 @@ export default function AuthCallback() {
         justifyContent: 'center',
       }}
     >
-      {failed === null ? (
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityLabel="Signing you in"
-          accessibilityRole="progressbar"
-        />
-      ) : (
-        <>
-          <Text style={{ ...styles.body, color: color.ink2, textAlign: 'center' }}>{failed}</Text>
-          <Text
-            accessibilityRole="button"
-            onPress={() => router.replace('/')}
-            style={{ ...styles.body, color: color.ink, marginTop: space.lg }}
-          >
-            Back to sign in
-          </Text>
-        </>
-      )}
+      {/* Not `<Trouble>`: this is the whole screen rather than a line beside a form, and
+          it carries its own way out. Not `<ErrorState>` either — the exit here is
+          `router.replace('/')` and not `leaveTo`, because a magic link cold-starts the app
+          and there is deliberately no history to unwind to. */}
+      <Text style={{ ...styles.body, color: color.ink2, textAlign: 'center' }}>{failed}</Text>
+      <Text
+        accessibilityRole="button"
+        onPress={() => router.replace('/')}
+        style={{ ...styles.body, color: color.ink, marginTop: space.lg }}
+      >
+        Back to sign in
+      </Text>
     </View>
   );
 }

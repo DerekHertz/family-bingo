@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { RECENT_INCREMENTS, countSummary, incrementVerb } from './increment';
+import {
+  RECENT_INCREMENTS,
+  countCompact,
+  countSummary,
+  incrementVerb,
+  stepperHint,
+} from './increment';
 
 describe('incrementVerb (§3, §4.1)', () => {
   it('says "Did it" when there is no unit', () => {
@@ -50,6 +56,42 @@ describe('incrementVerb (§3, §4.1)', () => {
   });
 });
 
+describe('stepperHint (§4.1)', () => {
+  it('previews the verb beside the target', () => {
+    expect(stepperHint(1, null)).toBe('once · the button will say “Did it”');
+  });
+
+  it('previews the SAME verb the tile sheet will show', () => {
+    // The whole reason this lives beside `incrementVerb`. A second rule in goal.ts knew
+    // only the target and answered "+1" for anything above one, so these two disagreed on
+    // every Goal with a unit — promised while authoring, contradicted all Year.
+    for (const [unit, canonical] of [
+      ['walks', 'walk'],
+      ['books', 'book'],
+      ['pomodoros', 'pomodoro'],
+      ['runs', null],
+      [null, null],
+    ] as const) {
+      expect(stepperHint(12, unit, canonical)).toContain(
+        `“${incrementVerb(unit, canonical)}”`,
+      );
+    }
+  });
+
+  it('reads the target through targetSummary, unit and all', () => {
+    expect(stepperHint(300, 'walks', 'walk')).toBe(
+      '300 walks · the button will say “Walked one”',
+    );
+  });
+
+  it('is honest about a Goal that has not been sharpened yet', () => {
+    // `unit_canonical` is Sharpening's (§7.10) and is NULL until it runs, so the preview
+    // says "Log one" and the sheet will say "Read one" once the model answers. One rule
+    // reading an incomplete Goal — not two rules disagreeing about a complete one.
+    expect(stepperHint(12, 'books')).toBe('12 books · the button will say “Log one”');
+  });
+});
+
 describe('countSummary', () => {
   it('reads as §3’s ring label', () => {
     expect(countSummary(3, 144)).toBe('3 of 144');
@@ -59,6 +101,26 @@ describe('countSummary', () => {
   it('does not clamp overshoot — the ring stops at full, the count does not', () => {
     // §13.5 hides overshoot on the *board*; the sheet is where the real number lives.
     expect(countSummary(160, 150)).toBe('160 of 150');
+  });
+});
+
+describe('countCompact', () => {
+  it('reads as a column entry rather than a sentence', () => {
+    expect(countCompact(3, 144)).toBe('3/144');
+  });
+
+  it('puts the numbers in the same order countSummary does', () => {
+    // The sealed Board's goal list shows one and says the other in the same row's
+    // accessibility label. A row reading "3/144" while announcing "144 of 3" is two apps.
+    for (const [count, target] of [
+      [0, 1],
+      [3, 144],
+      [160, 150],
+    ] as const) {
+      expect(countCompact(count, target)).toBe(
+        countSummary(count, target).replace(' of ', '/'),
+      );
+    }
   });
 });
 

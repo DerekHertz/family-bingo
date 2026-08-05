@@ -6,7 +6,31 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { failedWith } from '../failure';
 import { supabase } from '../supabase';
+
+/**
+ * Why `open_year()` refused, in words the Organizer can act on.
+ *
+ * Here rather than on `app/family/[id].tsx`, for the reason `incrementFailureCopy` is in
+ * `increments.ts`: the module that owns the RPC owns the sentence for its refusals.
+ *
+ * `calendarYear` is passed in because two of the three sentences name the Year, and the
+ * screen is the only place that knows which one was being opened.
+ *
+ * All three are permanent — none of them is fixed by trying again — which is why one
+ * message for all three was advice that could never work (§0.3). Matched on the SQLSTATE
+ * through `lib/failure.ts` with the message kept as a second key; all three raises are in
+ * `20260801000012_open_year.sql`.
+ */
+export const openYearFailureCopy = (thrown: unknown, calendarYear: number): string => {
+  if (failedWith(thrown, '42501', /organizer/i)) return 'Only the Organizer can open a Year.';
+  // 'this Family already has a % Year' — §5.1's one Year per Family per calendar year.
+  if (failedWith(thrown, 'PT409', /already|exists/i)) return `${calendarYear} is already open.`;
+  // 'that Year has already passed', raised as a bad argument rather than a permission.
+  if (failedWith(thrown, '22023', /past|ended/i)) return 'That Year has already ended.';
+  return 'That didn’t open. Have another go in a moment.';
+};
 
 export interface Year {
   id: string;

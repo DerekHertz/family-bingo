@@ -10,14 +10,15 @@
  */
 
 import { Redirect, useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
+import { Loading } from '../components/Screen';
 import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
 import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
-import { color, radius, size, space } from '../theme/tokens';
+import { color, radius, size, space, stroke } from '../theme/tokens';
 
 export default function Home() {
   const session = useSession();
@@ -40,13 +41,10 @@ export default function Home() {
         {list.length === 0 && waiting.length === 0 ? 'Welcome' : 'Your families'}
       </Text>
 
+      {/* `inline`, because the header above this is already real and stays put — the
+          spinner sits in the flow of the page rather than replacing it. */}
       {families.isPending ? (
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading your families"
-          style={{ marginTop: space.xl, alignSelf: 'flex-start' }}
-        />
+        <Loading what="Loading your families" inline />
       ) : families.isError ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
           Couldn’t reach your families just now. Pull down in a moment.
@@ -73,7 +71,7 @@ export default function Home() {
                 padding: space.md,
                 backgroundColor: color.paperRaised,
                 borderRadius: radius.card,
-                borderWidth: 1,
+                borderWidth: stroke.hairline,
                 borderColor: color.hairline,
                 opacity: pressed ? 0.7 : 1,
               })}
@@ -102,7 +100,7 @@ export default function Home() {
                 minHeight: size.minTouch,
                 padding: space.md,
                 borderRadius: radius.card,
-                borderWidth: 1,
+                borderWidth: stroke.hairline,
                 borderColor: color.hairline,
               }}
             >

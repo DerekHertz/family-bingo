@@ -18,6 +18,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
 import { Button } from '../../components/Button';
+import { Loading, Trouble } from '../../components/Screen';
 import { FeedRow } from '../../components/FeedRow';
 import { leaveTo } from '../../lib/leave';
 import { useFamilies } from '../../lib/queries/families';
@@ -79,13 +80,7 @@ export default function Feed() {
       </View>
 
       {feed.isPending || roster.isPending ? (
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-          <ActivityIndicator
-            color={color.ink3}
-            accessibilityRole="progressbar"
-            accessibilityLabel="Loading the feed"
-          />
-        </View>
+        <Loading what="Loading the feed" />
       ) : /* `isLoadingError`, not `isError`. On an infinite query `isError` goes true when
             **any** page fails, including a `fetchNextPage` — so three hundred rows a
             Member had already scrolled would vanish and be replaced by one sentence
@@ -97,9 +92,7 @@ export default function Feed() {
             one — the same trap `board.isError` exists to catch on the Board screen. */
         feed.isLoadingError || roster.isError ? (
         <View style={{ paddingHorizontal: space.xl }}>
-          <Text style={{ ...styles.body, color: color.ink2 }}>
-            Couldn’t reach the feed just now. Try again in a moment.
-          </Text>
+          <Trouble message="Couldn’t reach the feed just now. Try again in a moment." />
         </View>
       ) : (
         <FlatList

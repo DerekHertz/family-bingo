@@ -22,6 +22,7 @@ import {
   buildSharpenUserMessage,
   normalizeSuggestions,
 } from '../../../src/domain/sharpen.ts';
+import { remainingYearFraction } from '../../../src/domain/setup-window.ts';
 
 interface SharpenBody {
   text?: unknown;
@@ -110,7 +111,24 @@ Deno.serve(async (req) => {
   }
 
   const timezone = (year as { families?: { timezone?: string } }).families?.timezone ?? 'UTC';
-  const remainingYearFraction = remainingFractionOf(year.calendar_year as number, timezone);
+  // The domain's function, not a copy of it.
+  //
+  // Forty lines of timezone arithmetic — `remainingFractionOf`, `startOfYear`,
+  // `zoneOffsetMs` — lived at the bottom of this file, character for character the same as
+  // `src/domain/setup-window.ts`, under a comment claiming "that module is Node-shaped".
+  // It is not: it has no imports at all, which is exactly what
+  // `src/domain/boundaries.test.ts` enforces, and this function already imports
+  // `src/domain/sharpen.ts` twenty lines above.
+  //
+  // The copy had a live blast radius rather than a stylistic one. This number is what
+  // §7.7/§21.3 hand the model so a July joiner is offered ≈70 walks rather than 300, and
+  // only the domain copy has tests — a drift between the two would have shown up as
+  // targets that were quietly wrong for half the Year.
+  const fractionLeft = remainingYearFraction(
+    new Date(),
+    year.calendar_year as number,
+    timezone,
+  );
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (apiKey === undefined || apiKey === '') {
@@ -152,7 +170,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: 'user',
-            content: buildSharpenUserMessage({ text, remainingYearFraction }),
+            content: buildSharpenUserMessage({ text, remainingYearFraction: fractionLeft }),
           },
         ],
       } as Parameters<typeof anthropic.beta.messages.create>[0],
@@ -210,49 +228,3 @@ Deno.serve(async (req) => {
 
   return ok(suggestions);
 });
-
-/**
- * How much of a calendar Year remains, in the Family's timezone.
- *
- * Mirrors `remainingYearFraction` in src/domain/setup-window.ts. Kept local rather than
- * imported because that module is Node-shaped; if the rule changes, change both.
- */
-const remainingFractionOf = (calendarYear: number, timeZone: string): number => {
-  const start = startOfYear(calendarYear, timeZone);
-  const end = startOfYear(calendarYear + 1, timeZone);
-  const fraction = (end - Date.now()) / (end - start);
-  return Math.min(1, Math.max(0, fraction));
-};
-
-const startOfYear = (year: number, timeZone: string): number => {
-  const asIfUtc = Date.UTC(year, 0, 1);
-  let ts = asIfUtc;
-  for (let pass = 0; pass < 2; pass++) {
-    ts = asIfUtc - zoneOffsetMs(new Date(ts), timeZone);
-  }
-  return ts;
-};
-
-const zoneOffsetMs = (instant: Date, timeZone: string): number => {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(instant);
-  const field = (type: string) =>
-    Number(parts.find((p) => p.type === type)?.value ?? '0');
-  const wallClock = Date.UTC(
-    field('year'),
-    field('month') - 1,
-    field('day'),
-    field('hour'),
-    field('minute'),
-    field('second'),
-  );
-  return wallClock - (instant.getTime() - (instant.getTime() % 1000));
-};

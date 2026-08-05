@@ -21,7 +21,6 @@ graph TB
         subgraph fn["Edge Functions — Deno"]
             SHARP["sharpen"]
             PUSH["notify"]
-            DIG["digest"]
         end
         CRON["pg_cron"]
     end
@@ -37,9 +36,7 @@ graph TB
     SHARP -->|"API key never leaves here"| ANTH
     PG -->|"notifications insert"| PUSH
     PUSH --> APNS
-    CRON -->|"seal · freeze · expire"| PG
-    CRON --> DIG
-    DIG --> APNS
+    CRON -->|"seal · freeze · expire · digest"| PG
 
     classDef sec fill:#fff3cd,stroke:#b8860b,stroke-width:2px
     class PG,ST sec
@@ -124,9 +121,9 @@ with no Year at all, so filtering by Year loses nothing.
 | `resolve_center_vote(year_id)` | Resolves both Votes, applies §8.3 / §9.3 fallbacks | `pg_cron` or Organizer, Setup Window closed |
 | `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent |
 | `seal_due_boards()` | The sweep: every Year past its deadline, then §21.1 stragglers | `pg_cron` |
-| `remaining_year_fraction(target_year_id)` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
+| `remaining_year_fraction(target_year_id, at default now())` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
-| `swap_tile(tile_id, text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
+| `swap_tile(tile_id, goal_text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |
 | `generate_wrapped(target_year_id)` | Materializes the Family and Member cards, one per Year | `pg_cron` after freeze, Year frozen, idempotent |
 | `finalize_wrapped(year_id, awards)` | Writes the Awards from `assignAwards()` and pushes every Member at once (§20.3) | `wrap` Edge Function; refuses a Wrapped that leaves a Member out (§20.7) |
@@ -439,7 +436,10 @@ await supabase.from('increments').upsert(
 );
 
 // Multi-step writes: RPC, atomic, SECURITY INVOKER so RLS still applies.
-await supabase.rpc('swap_tile', { tile_id, text, target });
+// `goal_text`, not `text` — PostgREST resolves an RPC by ARGUMENT NAME, so a wrong one
+// comes back PGRST202 "could not find the function", which reads like an undeployed
+// migration rather than a typo. `lib/rpc-signatures.test.ts` checks every call site.
+await supabase.rpc('swap_tile', { tile_id, goal_text, target });
 
 // Photos: private bucket, short-TTL signed URL. Never a public URL.
 const { data } = await supabase.storage

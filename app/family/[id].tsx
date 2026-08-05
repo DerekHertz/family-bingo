@@ -10,20 +10,13 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  Share,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
+import { Loading, Trouble } from '../../components/Screen';
 import { SeatPips } from '../../components/SeatPips';
+import { useAnnounce } from '../../lib/announce';
 import { failure } from '../../lib/failure';
 import { useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
@@ -34,7 +27,7 @@ import {
   useRosterActions,
 } from '../../lib/queries/invitations';
 import { useRemoveManagedMember } from '../../lib/queries/managed';
-import { useOpenYear, useYears } from '../../lib/queries/years';
+import { openYearFailureCopy, useOpenYear, useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
 import {
   hasOpenSetupWindow,
@@ -45,7 +38,7 @@ import {
 import { draftProgress } from '../../src/domain/goal';
 import { joinedMarkerInline } from '../../src/domain/joining';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 /** One phrase, used by both the visible text and the accessibility label. */
 const yearSays = (year: {
@@ -70,12 +63,7 @@ export default function FamilyRoster() {
   const years = useYears(id);
   const openYear = useOpenYear(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
-  const [trouble, setTrouble] = useState<string | null>(null);
-
-  const say = (message: string) => {
-    setTrouble(message);
-    AccessibilityInfo.announceForAccessibility(message);
-  };
+  const { trouble, say, clear } = useAnnounce();
 
   const family = families.data?.find((f) => f.id === id);
   const isOrganizer = family?.member.role === 'organizer';
@@ -115,17 +103,7 @@ export default function FamilyRoster() {
   // Boards write_goal() refuses.
   const myBoards = useMyBoards(current?.id, session?.user.id);
 
-  if (roster.isPending || families.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading the roster"
-        />
-      </View>
-    );
-  }
+  if (roster.isPending || families.isPending) return <Loading what="Loading the roster" />;
 
   return (
     <ScrollView
@@ -151,7 +129,7 @@ export default function FamilyRoster() {
             padding: space.lg,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
             alignItems: 'center',
           }}
@@ -206,7 +184,7 @@ export default function FamilyRoster() {
             padding: space.md,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
           }}
         >
@@ -266,7 +244,7 @@ export default function FamilyRoster() {
             minHeight: size.minTouch,
             backgroundColor: color.paperRaised,
             borderRadius: radius.card,
-            borderWidth: 1,
+            borderWidth: stroke.hairline,
             borderColor: color.hairline,
             opacity: pressed ? 0.7 : 1,
           })}
@@ -308,22 +286,9 @@ export default function FamilyRoster() {
           style={{ marginTop: space.lg }}
           onPress={() =>
             openYear.mutate(openable, {
-              // Three distinct refusals, none of which a retry fixes. One message for all
-              // three was advice that could never work.
-              onError: (e) => {
-                // PostgREST rejects with a plain object, so `instanceof Error` read '' and
-        // every branch below was unreachable — see lib/failure.ts.
-        const raw = failure(e).message;
-                say(
-                  /organizer/i.test(raw)
-                    ? 'Only the Organizer can open a Year.'
-                    : /already|exists/i.test(raw)
-                      ? `${openable} is already open.`
-                      : /past|ended/i.test(raw)
-                        ? 'That Year has already ended.'
-                        : 'That didn’t open. Have another go in a moment.',
-                );
-              },
+              // Three distinct refusals, none of which a retry fixes, and the copy for all
+              // three lives beside the mutation (`openYearFailureCopy`).
+              onError: (e) => say(openYearFailureCopy(e, openable)),
             })
           }
         />
@@ -352,7 +317,7 @@ export default function FamilyRoster() {
           onPress={() =>
             invite.mutate(undefined, {
               onSuccess: (row) => {
-                setTrouble(null);
+                clear();
                 setCode({ code: row.code, expires_at: row.expires_at });
               },
               onError: (e) =>
@@ -366,14 +331,7 @@ export default function FamilyRoster() {
         />
       ) : null}
 
-      {trouble === null ? null : (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={{ ...styles.body, color: color.ink2, marginTop: space.md }}
-        >
-          {trouble}
-        </Text>
-      )}
+      <Trouble message={trouble} />
 
       {roster.isError ? (
         <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>

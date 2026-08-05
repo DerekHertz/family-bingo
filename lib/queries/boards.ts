@@ -11,7 +11,44 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CENTER_POSITION } from '../../src/domain/goal';
+import { isControlledBy, isManaged } from '../../src/domain/member';
+import { failure } from '../failure';
 import { supabase } from '../supabase';
+
+/**
+ * Why `write_goal()` would not take this Goal, phrased for the Member who wrote it.
+ *
+ * Here rather than on `app/board/goal.tsx`, for the reason `incrementFailureCopy` is in
+ * `increments.ts`: the module that owns the RPC owns the sentence for its refusals, so
+ * the copy and the argument names are checked against the same migration by the same
+ * reader. Migration 17 (`personal_center_tile`) is the one that last replaced the function
+ * and holds every `raise` below.
+ *
+ * Read through `failure()` rather than `instanceof Error`, because a PostgREST rejection
+ * is a plain object and the whole chain read `''` before that existed (see lib/failure.ts).
+ *
+ * **Known defect, carried over unchanged: the centre branch cannot fire.** `write_goal()`
+ * raises PT403 twice — 'this Board is sealed' and 'the Center Tile is decided by the
+ * Family, not authored' — and the first branch below claims every PT403, so a Member who
+ * somehow reaches the Centre while the mode is `shared` is told their board has sealed.
+ * The order is preserved deliberately rather than quietly corrected: it is a copy
+ * decision (§0.3) and the two sentences say different things about what to do next.
+ * Fixing it means testing the message before the code, or the migration raising a
+ * distinguishable SQLSTATE.
+ */
+export const writeGoalFailureCopy = (thrown: unknown): string => {
+  const { message: raw, code } = failure(thrown);
+  if (code === 'PT403' || /sealed/i.test(raw)) {
+    return 'This board has sealed. Changing a goal now costs a swap.';
+  }
+  if (/Center Tile|centre/i.test(raw)) {
+    return 'The centre square is the family’s, not yours to write.';
+  }
+  // Both 42501: `controlled_member_ids()` said no, or the Year is frozen.
+  if (/not your Board/i.test(raw)) return 'That board isn’t yours to write on.';
+  if (/frozen/i.test(raw)) return 'This year has finished.';
+  return 'That didn’t save. Have another go in a moment.';
+};
 
 export interface Goal {
   id: string;
@@ -188,11 +225,9 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         memberId: data.member_id as string,
         memberName: member.display_name,
         isSelf: member.account_id !== null && member.account_id === accountId,
-        // The same predicate as `controlled_member_ids()` and as `useMyBoards`. Three
-        // copies of one rule is two too many, but the third is SQL and cannot be shared.
-        controlled:
-          member.status === 'active' &&
-          (member.account_id === accountId || member.guardian_account_id === accountId),
+        // `controlled_member_ids()`, client-side — and one function now rather than the
+        // three hand-written copies this rule was spread across (see src/domain/member.ts).
+        controlled: isControlledBy(member, accountId),
         joinedLateAt: data.joined_late_at as string | null,
         personalSetupDeadline: data.personal_setup_deadline as string | null,
         year: {
@@ -247,10 +282,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
         if (member === null) return [];
         // Exactly `controlled_member_ids()`, which is what write_goal() checks. Keeping
         // the two the same shape means a row that renders is a row the server will accept.
-        const controlled =
-          member.status === 'active' &&
-          (member.account_id === accountId || member.guardian_account_id === accountId);
-        if (!controlled) return [];
+        if (!isControlledBy(member, accountId)) return [];
 
         const tiles = (row.tiles ?? []) as { position: number; goal_id: string | null }[];
         return [
@@ -258,7 +290,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
             id: row.id as string,
             memberId: member.id,
             memberName: member.display_name,
-            isManaged: member.account_id === null,
+            isManaged: isManaged(member),
             sealedAt: row.sealed_at as string | null,
             joinedLateAt: row.joined_late_at as string | null,
             // The Centre is never authored here (§6.5), so counting it would put the

@@ -10,7 +10,13 @@
  * marathon" is target 1 and "Read 12 books" is target 12, and everything downstream treats
  * them identically (§6.2, ADR-0002). Nothing here may branch on which one it is except to
  * choose a word.
+ *
+ * The increment verb and `stepperHint` are **not** here, and used to be: they live in
+ * `increment.ts`, which owns what the logging button says. See the note above
+ * `incrementVerb` there for what the copy in this file got wrong.
  */
+
+import { BOARD_SIZE, CENTER_POSITION } from './lines';
 
 /** §6.1. The database checks the same numbers in `write_goal()`. */
 export const GOAL_TEXT = { min: 1, max: 200 } as const;
@@ -19,10 +25,28 @@ export const TARGET_MIN = 1;
 
 /**
  * Position 12 is the Centre and is not authored like the others (§6.5), which leaves 24.
- * Row-major, 0-indexed, and load-bearing for line detection — see §5.4 before touching it.
+ *
+ * **Re-exported, not declared.** `lines.ts` owns the twelve, because 12 is geometry rather
+ * than an authoring rule: it is the square `linesThrough(12)` puts on four Lines, and that
+ * is where it is tested. A `= 12` was written here too and the consumers split between the
+ * two copies at random — `components/Board.tsx` read lines.ts, `lib/queries/boards.ts` read
+ * this file, and neither reader could tell there was a second one. `theme/tokens.ts` makes
+ * exactly this argument about the Board's five: "a second copy is a copy that can disagree
+ * with line detection."
+ *
+ * Authoring still says `CENTER_POSITION` and finds it here, which is why the re-export
+ * exists rather than a note telling everyone to import from somewhere else.
  */
-export const CENTER_POSITION = 12;
-export const AUTHORABLE_TILES = 24;
+export { CENTER_POSITION };
+
+/**
+ * The 24 squares a Member writes: every position but the Centre (§6.5).
+ *
+ * Derived rather than typed. `24` and `12` are the same fact about a 5×5 stated twice, and
+ * a Board that ever stopped being 25 squares would have left this reading 24 with nothing
+ * to catch it.
+ */
+export const AUTHORABLE_TILES = BOARD_SIZE - 1;
 
 /**
  * What is wrong with this Goal's text, in words a Member can act on, or `null`.
@@ -61,14 +85,6 @@ export const targetProblem = (target: number): string | null => {
 };
 
 /**
- * What the logging button will say once the Year is under way (§4.1, §11.1).
- *
- * A one-shot Goal is done in a single tap and the word is the whole event, so "Did it"
- * rather than a count of one. Everything else counts, and counts up.
- */
-export const incrementVerb = (target: number): string => (target === 1 ? 'Did it' : '+1');
-
-/**
  * The target as a phrase — "once", "12 books", "12 times".
  *
  * The unit is never pluralised. A Member who typed "books" gets "12 books" and one who
@@ -82,16 +98,6 @@ export const targetSummary = (target: number, unit: string | null = null): strin
   if (word === '') return `${target} times`;
   return `${target} ${word}`;
 };
-
-/**
- * The line beside the stepper: what this Goal is, and what logging it will feel like.
- *
- * §4.1 writes it as `"once · the button will say 'Did it'"`. Showing the verb while the
- * target is still being chosen is the point — it is the only moment the difference between
- * a one-shot and a cumulative Goal is visible before a Year of tapping settles it.
- */
-export const stepperHint = (target: number, unit: string | null = null): string =>
-  `${targetSummary(target, unit)} · the button will say “${incrementVerb(target)}”`;
 
 /**
  * How far through authoring a Member is — "17 of 24".

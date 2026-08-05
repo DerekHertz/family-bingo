@@ -19,9 +19,51 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isManaged, votersFor, type Voter } from '../../src/domain/member';
+import { failedWith, failure } from '../failure';
 import { supabase } from '../supabase';
+import { useRoster } from './invitations';
 
 export const MAX_PROPOSALS_PER_MEMBER = 3;
+
+/**
+ * Why a Ballot, Proposal or tiebreak was refused, in words that help.
+ *
+ * Here rather than on `app/year/centre.tsx`, for the reason `incrementFailureCopy` is in
+ * `increments.ts`: the module that owns the RPC owns the sentence for its refusals. A
+ * screen that grows its own chain is a screen that has to be kept in step with a migration
+ * it does not import.
+ *
+ * Three of these say "this cannot be retried" — a full slate of Proposals, a Proposal
+ * somebody has voted for, a closed window. Answering any of them with "have another go" is
+ * advice that is guaranteed to fail (§0.3).
+ *
+ * Matched on `code` through `lib/failure.ts`, because that is where the SQLSTATE lives:
+ * PostgREST puts it in its own field and never inside the message text, so the `/PT409/`
+ * this once tested against the message could not have fired once. The message patterns are
+ * kept beside the codes as a second key rather than as the only one.
+ */
+export const voteFailureCopy = (thrown: unknown): string => {
+  // `cast_ballot` and `enforce_proposal_rules`, both 'the Setup Window has closed'.
+  if (failedWith(thrown, 'PT403', /closed/i)) {
+    return 'The setup window has closed — the centre is decided now.';
+  }
+  // **Matched on the message on purpose, and it has to stay above the branch below.**
+  // `enforce_proposal_rules` raises PT409 for two different things — "others have voted
+  // for this Proposal" and "at most 3 Proposals" — so here the SQLSTATE is the ambiguous
+  // key and the sentence is the specific one. Migration 15 is where both live.
+  if (/no longer be withdrawn/i.test(failure(thrown).message)) {
+    return 'Somebody has voted for this one, so it stays.';
+  }
+  if (failedWith(thrown, 'PT409', /at most 3/i)) {
+    return `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`;
+  }
+  // 'that is not your Member', 'no such Vote', 'only the Organizer may break a tie'.
+  if (failedWith(thrown, '42501', /not your Member|no such Vote|only the Organizer/i)) {
+    return 'That isn’t yours to vote with.';
+  }
+  return 'That didn’t go through. Have another go in a moment.';
+};
 
 export interface CentreVote {
   id: string;
@@ -49,39 +91,67 @@ export interface CentreBallot {
   proposalId: string | null;
 }
 
-export interface Centre {
+/** What the Votes themselves say. The Family's Members are the roster's business. */
+export interface CentreVotes {
   modeVote: CentreVote | null;
   goalVote: CentreVote | null;
   proposals: CentreProposal[];
   modeBallots: CentreBallot[];
   goalBallots: CentreBallot[];
+}
+
+export interface Centre extends CentreVotes {
   /** Members the caller may vote as: themselves plus any child they guard (§4.3). */
-  voters: { id: string; name: string; isManaged: boolean }[];
+  voters: Voter[];
 }
 
 /**
- * Carries the Account because `voters` is an answer about the caller, not about the Year.
- * The same trap `boardHeadKey` was fixed for.
+ * Carries the Account because every row underneath it is RLS-filtered, so a read fired
+ * before the session resolved would cache an empty Centre against a key the real Account
+ * then reused — the trap `boardHeadKey` was fixed for.
+ *
+ * It no longer carries the Account because of `voters`: those are composed from the
+ * roster on the way out and are not in this cache entry at all.
  */
 export const centreKey = (yearId: string, accountId: string, familyId: string) =>
   ['centre', yearId, accountId, familyId] as const;
 
 /**
- * Everything the Centre screen needs, in four reads.
+ * Everything the Centre screen needs: the Votes, plus who this Account may vote as.
  *
  * Ballots come back with the voter's name attached because §4.3 renders other people's
  * votes as faces — "22pt voter avatars, right-aligned" — rather than as a count. A count
  * is a scoreboard; faces are a family.
+ *
+ * ## Why the Members are not read here
+ *
+ * They were, and it was the same `select` `useRoster` already runs: same table, same
+ * `family_id` filter, same `joined_at` order, one column apart, into a second cache entry
+ * with a second shape. Two reads of one list is two lists that can disagree — a Member
+ * approved between them appears on the roster and cannot be voted as, or the reverse.
+ *
+ * So the roster is the Family's single Member read now, and `voters` is `votersFor()` over
+ * it. That is also what keeps the answer per-Account correct: `rosterKey` is keyed by
+ * Family alone, deliberately, because those rows ARE the same for everyone who may see
+ * them — it is the *narrowing* that differs by Account, and doing it outside the cache is
+ * what stops one Account's children being served to another. (`SIGNED_OUT` clears the
+ * client regardless.)
+ *
+ * The roster's failure is this hook's failure. Without it there is no way to know who the
+ * caller may vote as, and rendering the Centre with an empty `voters` list would disable
+ * every control on the screen with nothing on it to say why.
  */
 export function useCentre(
   yearId: string | undefined,
   accountId: string | undefined,
   familyId: string | undefined,
 ) {
-  return useQuery({
+  const roster = useRoster(familyId);
+
+  const votes = useQuery({
     queryKey: centreKey(yearId ?? 'none', accountId ?? 'anonymous', familyId ?? 'none'),
     enabled: yearId !== undefined && accountId !== undefined && familyId !== undefined,
-    queryFn: async (): Promise<Centre> => {
+    queryFn: async (): Promise<CentreVotes> => {
       const { data: voteRows, error: voteError } = await supabase
         .from('votes')
         .select('id, kind, status, outcome, closes_at, organizer_tiebreak_proposal_id')
@@ -103,7 +173,7 @@ export function useCentre(
       // A Year with no Votes is a Year opened before slice 8's migration. Nothing to show
       // and nothing to fetch — returning early beats four queries with an empty `in`.
       if (ids.length === 0) {
-        return { modeVote, goalVote, proposals: [], modeBallots: [], goalBallots: [], voters: [] };
+        return { modeVote, goalVote, proposals: [], modeBallots: [], goalBallots: [] };
       }
 
       const [{ data: proposalRows, error: pErr }, { data: ballotRows, error: bErr }] =
@@ -127,27 +197,6 @@ export function useCentre(
       if (pErr !== null) throw pErr;
       if (bErr !== null) throw bErr;
 
-      // TWO filters, and the Family one is the half that is easy to miss.
-      //
-      // `members_read` is Family-wide, so the caller's own filter is needed — the trap
-      // the handoff names. But `controlled_member_ids()` is not Family-scoped either:
-      // somebody in two Families is two Members (CONTEXT.md), and both of them match
-      // `account_id = auth.uid()`. Without `.eq('family_id', …)` this Year's Centre could
-      // default to voting as the Member from the OTHER Family — every write then refused
-      // by `cast_ballot`'s `family_of_vote <> family_of_member` guard, forever, with
-      // nothing on screen to explain it. It also put two identically-named chips in the
-      // "Voting as" row of an Account with no children at all.
-      //
-      // `joined_at` so the default voter is stable rather than whatever order the rows
-      // happened to come back in.
-      const { data: memberRows, error: mErr } = await supabase
-        .from('members')
-        .select('id, display_name, account_id, guardian_account_id, status')
-        .eq('family_id', familyId ?? '')
-        .eq('status', 'active')
-        .order('joined_at', { ascending: true });
-      if (mErr !== null) throw mErr;
-
       const proposals: CentreProposal[] = (proposalRows ?? [])
         .filter((p) => p.vote_id === goalVote?.id)
         .map((p) => ({
@@ -170,7 +219,9 @@ export function useCentre(
             return {
               memberId: b.member_id as string,
               memberName: member?.display_name ?? '',
-              isManaged: member?.account_id === null,
+              // A Ballot whose Member row RLS withheld is nobody's child: a missing row
+              // means "we cannot see them", not "no Account".
+              isManaged: member == null ? false : isManaged(member),
               choiceMode: b.choice_mode as 'shared' | 'personal' | null,
               proposalId: b.proposal_id as string | null,
             };
@@ -182,18 +233,35 @@ export function useCentre(
         proposals,
         modeBallots: ballotsFor(modeVote?.id),
         goalBallots: ballotsFor(goalVote?.id),
-        voters: (memberRows ?? [])
-          .filter(
-            (m) => m.account_id === accountId || m.guardian_account_id === accountId,
-          )
-          .map((m) => ({
-            id: m.id as string,
-            name: m.display_name as string,
-            isManaged: m.account_id === null,
-          })),
       };
     },
   });
+
+  /**
+   * The per-Account narrowing, done outside both caches.
+   *
+   * `useRoster` is keyed by Family and holds the whole Family in join order — including
+   * pending Members, which `votersFor` drops through `isControlledBy` (§3.3). The Family
+   * filter that used to live in this file's own `select` is `useRoster`'s `.eq('family_id',
+   * …)` now, and it is still the half that must not be lost: `controlled_member_ids()` is
+   * not Family-scoped, so somebody in two Families matches `account_id` twice and the
+   * Centre would default to voting as the wrong Family's Member — every write refused by
+   * `cast_ballot`'s `family_of_vote <> family_of_member` guard, forever, with nothing on
+   * screen to explain it.
+   */
+  const data: Centre | undefined =
+    votes.data === undefined || roster.data === undefined
+      ? undefined
+      : { ...votes.data, voters: votersFor(roster.data.members, accountId) };
+
+  // Three fields rather than the whole query result, because there is no single query
+  // behind this any more and pretending otherwise would hand the screen a `refetch` that
+  // reloaded half of what it reads. These are what `app/year/centre.tsx` uses.
+  return {
+    data,
+    isPending: votes.isPending || roster.isPending,
+    isError: votes.isError || roster.isError,
+  };
 }
 
 /**

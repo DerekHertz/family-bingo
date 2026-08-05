@@ -60,6 +60,22 @@ export const color = {
    * there is a light-mode colour that can never flip, and `dark` carries its own.
    */
   scrim: 'rgba(51, 48, 42, 0.35)',
+
+  /**
+   * §2's 1px/7px diagonal hatch over a completed Tile — 10% white on solid `moss`.
+   *
+   * Here for the same reason `scrim` is, and it was the last `rgba()` left inside a
+   * component. It is also load-bearing rather than decorative: §6 A2 says completion
+   * carries **four** independent cues — fill, silhouette, check, hatch — tested by
+   * desaturating a board screenshot, and fill and silhouette are both colour, so the hatch
+   * and the check are what survive that test.
+   *
+   * Absent from `dark` on purpose, like `moss` itself: §1.2 keeps completed tiles reading
+   * as lit rather than filled, so white over the same moss is the same mark. (§1.2's drop
+   * to 5% is the *loading* hatch behind a photo, which is a different hatch on
+   * `paperSunk`.)
+   */
+  completionHatch: 'rgba(255, 255, 255, 0.1)',
 } as const;
 
 /**
@@ -202,6 +218,21 @@ export const size = {
 
 /** Android takes tile 12 and sheet 28 (§1). */
 export const radius = { tile: 11, card: 12, sheet: 22, pill: 999 } as const;
+
+/**
+ * The two border widths this design has, and there is no third.
+ *
+ * `hairline` is the 1px rule §1 gives `color.hairline` — a tile edge, a card, a field.
+ * `selected` is the 1.5px inset that means **this one is chosen**: §4.3's clay inset on
+ * your vote, §4.2's moss inset on the card you picked, §3's clay inset on the shared
+ * Centre, and the ring around a Managed Member's dot.
+ *
+ * Named because 1.5 was written out at six sites and a seventh would have been a 2 without
+ * anything noticing. And because the number is the *meaning*: §4.2 says the border width
+ * does not change with selection — only its colour does — so both states are `selected`
+ * and a card that grew a thicker edge when chosen would shift its own text.
+ */
+export const stroke = { hairline: 1, selected: 1.5 } as const;
 
 /**
  * Four bespoke animations (§5); screen transitions stay platform default and unstyled.

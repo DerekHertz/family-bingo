@@ -20,21 +20,14 @@
 
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  AccessibilityInfo,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
+import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
+import { Field } from '../../components/Field';
+import { ErrorState, FormScreen, Loading, Trouble } from '../../components/Screen';
+import { useAnnounce } from '../../lib/announce';
 import {
   MAX_PROPOSALS_PER_MEMBER,
   useCastBallot,
@@ -42,6 +35,7 @@ import {
   useProposeGoal,
   useSetTiebreak,
   useWithdrawProposal,
+  voteFailureCopy,
 } from '../../lib/queries/votes';
 import { useFamilies } from '../../lib/queries/families';
 import { useSession } from '../../lib/session';
@@ -53,32 +47,8 @@ import {
   resolveModeVote,
   voteCountCopy,
 } from '../../src/domain/votes';
-import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
-import { color, radius, size, space } from '../../theme/tokens';
-
-/** The centre-tile glyph §4.3 asks for: a 5×5 with only the middle square filled. */
-function CentreGlyph() {
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={{ flexDirection: 'row', flexWrap: 'wrap', width: 46, gap: 2 }}
-    >
-      {Array.from({ length: 25 }, (_, i) => (
-        <View
-          key={i}
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 2,
-            backgroundColor: i === 12 ? color.clay : color.clayTint,
-          }}
-        />
-      ))}
-    </View>
-  );
-}
+import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 /** Other people's votes as faces, right-aligned — never as a count (§4.3). */
 function Voters({ names }: { names: { id: string; name: string; isManaged: boolean }[] }) {
@@ -122,42 +92,17 @@ export default function Centre() {
 
   const [votingAs, setVotingAs] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [trouble, setTrouble] = useState<string | null>(null);
+  // `clear` is called on every success, so a refusal cannot outlive the thing it refused.
+  const { trouble, say, clear: clearTrouble } = useAnnounce();
 
-  /** Cleared on every success, so a refusal cannot outlive the thing it refused. */
-  const clearTrouble = () => setTrouble(null);
-
-  const say = (message: string) => {
-    setTrouble(message);
-    // accessibilityLiveRegion is Android-only; iOS has to be told outright (§6 A6).
-    AccessibilityInfo.announceForAccessibility(message);
-  };
-
-  if (centre.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading the centre"
-        />
-      </View>
-    );
-  }
+  if (centre.isPending) return <Loading what="Loading the centre" />;
 
   if (centre.isError || centre.data === undefined) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
-        <Text style={{ ...styles.body, color: color.ink2 }}>
-          Couldn&rsquo;t load the centre just now. Try again in a moment.
-        </Text>
-        <Button
-          label="Back"
-          variant="text"
-          style={{ marginTop: space.lg, alignItems: 'flex-start' }}
-          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
-        />
-      </View>
+      <ErrorState
+        message="Couldn’t load the centre just now. Try again in a moment."
+        backTo={{ pathname: '/family/[id]', params: { id: familyId ?? '' } }}
+      />
     );
   }
 
@@ -205,443 +150,398 @@ export default function Centre() {
 
   const mineCount = proposals.filter((p) => p.memberId === actingAs).length;
 
-  /**
-   * What actually went wrong, in words that help.
-   *
-   * Reads `code` first, because that is where the SQLSTATE lives — PostgREST puts it in
-   * its own field and never inside the message text, so the `/PT409/` this used to match
-   * against the message could not have fired once. And it reads through `failure()`
-   * rather than `instanceof Error`, because a PostgREST rejection is a plain object and
-   * the whole chain was dead (see lib/failure.ts).
-   *
-   * Three of these say "this cannot be retried" — a full slate of Proposals, a Proposal
-   * somebody has voted for, a closed window. Answering any of them with "have another go"
-   * is advice that is guaranteed to fail (§0.3).
-   */
-  const refusal = (e: unknown): string => {
-    const { message: raw, code } = failure(e);
-    if (code === 'PT403' || /closed/i.test(raw)) {
-      return 'The setup window has closed — the centre is decided now.';
-    }
-    if (/no longer be withdrawn/i.test(raw)) {
-      return 'Somebody has voted for this one, so it stays.';
-    }
-    if (code === 'PT409' || /at most 3/i.test(raw)) {
-      return `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours. Take one back to make room.`;
-    }
-    if (code === '42501' || /not your Member|no such Vote|only the Organizer/i.test(raw)) {
-      return 'That isn’t yours to vote with.';
-    }
-    return 'That didn’t go through. Have another go in a moment.';
-  };
-
   const voteFor = (proposalId: string) => {
     if (actingAs === null || goalVote === null) return;
     castBallot.mutate(
       { voteId: goalVote.id, memberId: actingAs, proposalId },
-      { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
+      { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
     );
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={{ padding: space.xl, paddingTop: size.screenTop, paddingBottom: space.xxl }}
-        keyboardShouldPersistTaps="handled"
+    // The extra bottom padding is this screen's own: the proposal list can run long and
+    // the "Put it forward" field sits at the end of it.
+    <FormScreen contentStyle={{ paddingBottom: space.xxl }}>
+      <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
+        The centre
+      </Text>
+
+      {/* §4.3's clayTint explainer block with the centre-tile glyph. */}
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: space.md,
+          alignItems: 'center',
+          marginTop: space.lg,
+          padding: space.lg,
+          backgroundColor: color.clayTint,
+          borderRadius: radius.card,
+        }}
       >
-        <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
-          The centre
+        {/* §4.3's glyph: a 5×5 with only the middle square filled. `<BoardMark>` draws the
+            app's only 5×5, so this is a tone of it rather than a second copy — and the
+            copy was wrapping at four across. */}
+        <BoardMark tile={8} gap={2} tone="centre" />
+        <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
+          The middle square is the family&rsquo;s. You can share one goal there, or each
+          write your own.
         </Text>
+      </View>
 
-        {/* §4.3's clayTint explainer block with the centre-tile glyph. */}
-        <View
-          style={{
-            flexDirection: 'row',
-            gap: space.md,
-            alignItems: 'center',
-            marginTop: space.lg,
-            padding: space.lg,
-            backgroundColor: color.clayTint,
-            borderRadius: radius.card,
-          }}
-        >
-          <CentreGlyph />
-          <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
-            The middle square is the family&rsquo;s. You can share one goal there, or each
-            write your own.
-          </Text>
-        </View>
-
-        {/* Whose vote is being cast. Only when there is a choice to make — a Member with
-            no children never sees it (§0.2, nothing on screen that does nothing). */}
-        {voters.length > 1 ? (
-          <View style={{ marginTop: space.lg }}>
-            <Text style={{ ...styles.meta, color: color.ink2 }}>Voting as</Text>
-            <View
-              accessibilityRole="radiogroup"
-              accessibilityLabel="Voting as"
-              style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm }}
-            >
-              {voters.map((v) => (
-                <Pressable
-                  key={v.id}
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: v.id === actingAs }}
-                  accessibilityLabel={`Vote as ${v.name}`}
-                  onPress={() => setVotingAs(v.id)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: space.sm,
-                    minHeight: size.minTouch,
-                    paddingHorizontal: space.md,
-                    borderRadius: radius.pill,
-                    borderWidth: 1.5,
-                    borderColor: v.id === actingAs ? color.clay : color.hairline,
-                    backgroundColor: color.paperRaised,
-                  }}
-                >
-                  <Avatar name={v.name} size={22} managed={v.isManaged} />
-                  <Text style={{ ...styles.label, color: color.ink }}>{v.name}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {/* ── Slice 8: the mode ─────────────────────────────────────────────────── */}
-        <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>
-          Share the middle square?
-        </Text>
-
-        <View
-          accessibilityRole="radiogroup"
-          accessibilityLabel="Share the middle square?"
-          style={{ gap: size.stack, marginTop: space.md }}
-        >
-          {(
-            [
-              ['shared', 'Yes — one goal, all of us'],
-              ['personal', 'No — everyone writes their own'],
-            ] as const
-          ).map(([mode, label]) => {
-            const chosen = myModeBallot === mode;
-            const others = modeBallots.filter(
-              (b) => b.choiceMode === mode && b.memberId !== actingAs,
-            );
-            return (
+      {/* Whose vote is being cast. Only when there is a choice to make — a Member with
+          no children never sees it (§0.2, nothing on screen that does nothing). */}
+      {voters.length > 1 ? (
+        <View style={{ marginTop: space.lg }}>
+          <Text style={{ ...styles.meta, color: color.ink2 }}>Voting as</Text>
+          <View
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Voting as"
+            style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm }}
+          >
+            {voters.map((v) => (
               <Pressable
-                key={mode}
+                key={v.id}
                 accessibilityRole="radio"
-                accessibilityState={{ checked: chosen, disabled: closed }}
-                accessibilityLabel={`${label}. ${
-                  modeBallots.filter((b) => b.choiceMode === mode).length === 0
-                    ? voteCountCopy(0)
-                    : `Voted: ${modeBallots
-                        .filter((b) => b.choiceMode === mode)
-                        .map((b) => b.memberName)
-                        .join(', ')}`
-                }`}
-                disabled={closed || actingAs === null || modeVote === null}
-                onPress={() =>
-                  modeVote !== null &&
-                  actingAs !== null &&
-                  castBallot.mutate(
-                    { voteId: modeVote.id, memberId: actingAs, choiceMode: mode },
-                    { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
-                  )
-                }
-                style={({ pressed }) => ({
+                accessibilityState={{ checked: v.id === actingAs }}
+                accessibilityLabel={`Vote as ${v.name}`}
+                onPress={() => setVotingAs(v.id)}
+                style={{
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: space.sm,
-                  minHeight: size.control,
-                  padding: space.md,
-                  borderRadius: radius.card,
+                  minHeight: size.minTouch,
+                  paddingHorizontal: space.md,
+                  borderRadius: radius.pill,
+                  borderWidth: stroke.selected,
+                  borderColor: v.id === actingAs ? color.clay : color.hairline,
                   backgroundColor: color.paperRaised,
-                  // 1.5px clay inset when it is your vote (§4.3).
-                  borderWidth: 1.5,
-                  borderColor: chosen ? color.clay : color.hairline,
-                  opacity: pressed ? 0.7 : 1,
-                })}
+                }}
               >
-                <Text style={{ ...styles.body, color: color.ink, flexShrink: 1 }}>{label}</Text>
-                {chosen ? (
-                  <View
-                    style={{
-                      paddingHorizontal: space.sm,
-                      paddingVertical: 2,
-                      borderRadius: radius.pill,
-                      backgroundColor: color.clayTint,
-                    }}
-                  >
-                    <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
-                  </View>
-                ) : null}
-                <Voters
-                  names={others.map((b) => ({
-                    id: b.memberId,
-                    name: b.memberName,
-                    isManaged: b.isManaged,
-                  }))}
-                />
+                <Avatar name={v.name} size={22} managed={v.isManaged} />
+                <Text style={{ ...styles.label, color: color.ink }}>{v.name}</Text>
               </Pressable>
-            );
-          })}
+            ))}
+          </View>
         </View>
+      ) : null}
 
-        {/* Once it has resolved, say what it DECIDED — past tense, from the Vote's own
-            `outcome`, not from a tally recomputed after the fact.
-            §9.3 is why this matters rather than being a nicety: a Family can vote shared
-            and still get a personal centre because nobody proposed. Recomputing the tally
-            would have gone on saying "you'll share one goal in the middle" beside "the
-            centre is decided", which is two lines of the same screen disagreeing. The
-            migration keeps `voted_mode` and `resolved_mode` apart for exactly this. */}
-        <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-          {closed && modeVote?.outcome != null
-            ? modeVote.outcome === 'shared'
-              ? 'You chose to share one goal in the middle.'
-              : 'You chose to each write your own middle square.'
-            : modeStandingCopy(modeChoices)}
-        </Text>
+      {/* ── Slice 8: the mode ─────────────────────────────────────────────────── */}
+      <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>
+        Share the middle square?
+      </Text>
 
-        {/* ── Slice 9: the Goal, only while shared is where this is heading ──────── */}
-        {goalVote !== null ? (
-          <>
-            <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>
-              What should it be?
+      <View
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Share the middle square?"
+        style={{ gap: size.stack, marginTop: space.md }}
+      >
+        {(
+          [
+            ['shared', 'Yes — one goal, all of us'],
+            ['personal', 'No — everyone writes their own'],
+          ] as const
+        ).map(([mode, label]) => {
+          const chosen = myModeBallot === mode;
+          const others = modeBallots.filter(
+            (b) => b.choiceMode === mode && b.memberId !== actingAs,
+          );
+          return (
+            <Pressable
+              key={mode}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: chosen, disabled: closed }}
+              accessibilityLabel={`${label}. ${
+                modeBallots.filter((b) => b.choiceMode === mode).length === 0
+                  ? voteCountCopy(0)
+                  : `Voted: ${modeBallots
+                      .filter((b) => b.choiceMode === mode)
+                      .map((b) => b.memberName)
+                      .join(', ')}`
+              }`}
+              disabled={closed || actingAs === null || modeVote === null}
+              onPress={() =>
+                modeVote !== null &&
+                actingAs !== null &&
+                castBallot.mutate(
+                  { voteId: modeVote.id, memberId: actingAs, choiceMode: mode },
+                  { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
+                )
+              }
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: space.sm,
+                minHeight: size.control,
+                padding: space.md,
+                borderRadius: radius.card,
+                backgroundColor: color.paperRaised,
+                // 1.5px clay inset when it is your vote (§4.3).
+                borderWidth: stroke.selected,
+                borderColor: chosen ? color.clay : color.hairline,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Text style={{ ...styles.body, color: color.ink, flexShrink: 1 }}>{label}</Text>
+              {chosen ? (
+                <View
+                  style={{
+                    paddingHorizontal: space.sm,
+                    paddingVertical: 2,
+                    borderRadius: radius.pill,
+                    backgroundColor: color.clayTint,
+                  }}
+                >
+                  <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
+                </View>
+              ) : null}
+              <Voters
+                names={others.map((b) => ({
+                  id: b.memberId,
+                  name: b.memberName,
+                  isManaged: b.isManaged,
+                }))}
+              />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* Once it has resolved, say what it DECIDED — past tense, from the Vote's own
+          `outcome`, not from a tally recomputed after the fact.
+          §9.3 is why this matters rather than being a nicety: a Family can vote shared
+          and still get a personal centre because nobody proposed. Recomputing the tally
+          would have gone on saying "you'll share one goal in the middle" beside "the
+          centre is decided", which is two lines of the same screen disagreeing. The
+          migration keeps `voted_mode` and `resolved_mode` apart for exactly this. */}
+      <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
+        {closed && modeVote?.outcome != null
+          ? modeVote.outcome === 'shared'
+            ? 'You chose to share one goal in the middle.'
+            : 'You chose to each write your own middle square.'
+          : modeStandingCopy(modeChoices)}
+      </Text>
+
+      {/* ── Slice 9: the Goal, only while shared is where this is heading ──────── */}
+      {goalVote !== null ? (
+        <>
+          <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>
+            What should it be?
+          </Text>
+
+          {/* Said once, quietly, and never as a shortfall — "these are here if that
+              changes" is a fact about the list, not a request for votes (§8.4). */}
+          {!headingShared ? (
+            <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
+              As it stands everyone writes their own. These are here if that changes.
             </Text>
+          ) : null}
 
-            {/* Said once, quietly, and never as a shortfall — "these are here if that
-                changes" is a fact about the list, not a request for votes (§8.4). */}
-            {!headingShared ? (
-              <Text style={{ ...styles.label, color: color.ink3, marginTop: space.xs }}>
-                As it stands everyone writes their own. These are here if that changes.
+          <View
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Goals put forward"
+            style={{ gap: size.stack, marginTop: space.md }}
+          >
+            {proposals.map((p) => {
+              const votes = goalBallots.filter((b) => b.proposalId === p.id);
+              const chosen = myGoalBallot === p.id;
+              const isTiebreak = goalVote.organizerTiebreakProposalId === p.id;
+              return (
+                <View key={p.id}>
+                  {/* The card holds NO interactive children. A Pressable is
+                      accessible by default, and an accessible container merges its
+                      whole subtree into one element on iOS — which made "Take it back"
+                      and the tiebreak row unreachable to VoiceOver entirely, and
+                      swallowed the voters' label with them. A Guardian could not
+                      withdraw their own Proposal; an Organizer could not record a
+                      tiebreak. The actions are siblings now, the same shape
+                      components/SuggestionCards.tsx already uses. */}
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: chosen, disabled: closed }}
+                    accessibilityLabel={`${p.text}, put forward by ${p.memberName}. ${
+                      votes.length === 0
+                        ? 'No votes yet'
+                        : `Voted: ${votes.map((b) => b.memberName).join(', ')}`
+                    }`}
+                    disabled={closed || actingAs === null}
+                    onPress={() => voteFor(p.id)}
+                    style={({ pressed }) => ({
+                      padding: space.md,
+                      borderRadius: radius.card,
+                      backgroundColor: color.paperRaised,
+                      borderWidth: stroke.selected,
+                      borderColor: chosen ? color.clay : color.hairline,
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                      <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>{p.text}</Text>
+                      {chosen ? (
+                        <View
+                          style={{
+                            paddingHorizontal: space.sm,
+                            paddingVertical: 2,
+                            borderRadius: radius.pill,
+                            backgroundColor: color.clayTint,
+                          }}
+                        >
+                          <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.sm }}>
+                      {/* §7 rule 9: never a vote count as a numeral. "4 votes" beside
+                          somebody's idea is the ranking rule 2 forbids, wearing a
+                          different hat — a Proposal has an author. Zero is the one case
+                          with nothing to draw, and §4.3 gives it words instead. */}
+                      <Text style={{ ...styles.meta, color: color.ink3 }}>
+                        {votes.length === 0 ? voteCountCopy(0) : ''}
+                        {isTiebreak ? (votes.length === 0 ? ' · ' : '') + 'organizer’s pick if it ties' : ''}
+                      </Text>
+                      <Voters
+                        names={votes
+                          .filter((b) => b.memberId !== actingAs)
+                          .map((b) => ({ id: b.memberId, name: b.memberName, isManaged: b.isManaged }))}
+                      />
+                    </View>
+                  </Pressable>
+
+                  {/* Yours to take back, while nobody else has voted for it. */}
+                  {p.memberId === actingAs && !closed ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Take back ${p.text}`}
+                      onPress={() =>
+                        Alert.alert('Take this one back?', 'It comes off the list.', [
+                          { text: 'Leave it', style: 'cancel' },
+                          {
+                            text: 'Take it back',
+                            onPress: () =>
+                              withdraw.mutate(p.id, {
+                                onSuccess: clearTrouble,
+                                onError: (e) => say(voteFailureCopy(e)),
+                              }),
+                          },
+                        ])
+                      }
+                      style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
+                    >
+                      <Text style={{ ...styles.label, color: color.clayDeep }}>Take it back</Text>
+                    </Pressable>
+                  ) : null}
+
+                  {/* §9.2 — recorded ahead of the deadline, because pg_cron resolves on
+                      a clock and cannot stop to ask. An option, never an obligation:
+                      without one the earliest Proposal decides (§4.3). */}
+                  {isOrganizer && !closed && !isTiebreak ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`If it ties, choose ${p.text}`}
+                      onPress={() =>
+                        tiebreak.mutate(
+                          { voteId: goalVote.id, proposalId: p.id },
+                          { onSuccess: clearTrouble, onError: (e) => say(voteFailureCopy(e)) },
+                        )
+                      }
+                      style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
+                    >
+                      <Text style={{ ...styles.label, color: color.ink2 }}>
+                        Pick this one if it ties
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })}
+
+            {proposals.length === 0 ? (
+              <Text style={{ ...styles.body, color: color.ink2 }}>
+                Nothing put forward yet. Anything goes — a trip, a project, a habit
+                you&rsquo;d all keep.
               </Text>
             ) : null}
+          </View>
 
-            <View
-              accessibilityRole="radiogroup"
-              accessibilityLabel="Goals put forward"
-              style={{ gap: size.stack, marginTop: space.md }}
-            >
-              {proposals.map((p) => {
-                const votes = goalBallots.filter((b) => b.proposalId === p.id);
-                const chosen = myGoalBallot === p.id;
-                const isTiebreak = goalVote.organizerTiebreakProposalId === p.id;
-                return (
-                  <View key={p.id}>
-                    {/* The card holds NO interactive children. A Pressable is
-                        accessible by default, and an accessible container merges its
-                        whole subtree into one element on iOS — which made "Take it back"
-                        and the tiebreak row unreachable to VoiceOver entirely, and
-                        swallowed the voters' label with them. A Guardian could not
-                        withdraw their own Proposal; an Organizer could not record a
-                        tiebreak. The actions are siblings now, the same shape
-                        components/SuggestionCards.tsx already uses. */}
-                    <Pressable
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: chosen, disabled: closed }}
-                      accessibilityLabel={`${p.text}, put forward by ${p.memberName}. ${
-                        votes.length === 0
-                          ? 'No votes yet'
-                          : `Voted: ${votes.map((b) => b.memberName).join(', ')}`
-                      }`}
-                      disabled={closed || actingAs === null}
-                      onPress={() => voteFor(p.id)}
-                      style={({ pressed }) => ({
-                        padding: space.md,
-                        borderRadius: radius.card,
-                        backgroundColor: color.paperRaised,
-                        borderWidth: 1.5,
-                        borderColor: chosen ? color.clay : color.hairline,
-                        opacity: pressed ? 0.7 : 1,
-                      })}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                        <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>{p.text}</Text>
-                        {chosen ? (
-                          <View
-                            style={{
-                              paddingHorizontal: space.sm,
-                              paddingVertical: 2,
-                              borderRadius: radius.pill,
-                              backgroundColor: color.clayTint,
-                            }}
-                          >
-                            <Text style={{ ...styles.meta, color: color.clayDeep }}>Your vote</Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.sm }}>
-                        {/* §7 rule 9: never a vote count as a numeral. "4 votes" beside
-                            somebody's idea is the ranking rule 2 forbids, wearing a
-                            different hat — a Proposal has an author. Zero is the one case
-                            with nothing to draw, and §4.3 gives it words instead. */}
-                        <Text style={{ ...styles.meta, color: color.ink3 }}>
-                          {votes.length === 0 ? voteCountCopy(0) : ''}
-                          {isTiebreak ? (votes.length === 0 ? ' · ' : '') + 'organizer’s pick if it ties' : ''}
-                        </Text>
-                        <Voters
-                          names={votes
-                            .filter((b) => b.memberId !== actingAs)
-                            .map((b) => ({ id: b.memberId, name: b.memberName, isManaged: b.isManaged }))}
-                        />
-                      </View>
-                    </Pressable>
-
-                    {/* Yours to take back, while nobody else has voted for it. */}
-                    {p.memberId === actingAs && !closed ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Take back ${p.text}`}
-                        onPress={() =>
-                          Alert.alert('Take this one back?', 'It comes off the list.', [
-                            { text: 'Leave it', style: 'cancel' },
-                            {
-                              text: 'Take it back',
-                              onPress: () =>
-                                withdraw.mutate(p.id, {
-                                  onSuccess: clearTrouble,
-                                  onError: (e) => say(refusal(e)),
-                                }),
-                            },
-                          ])
-                        }
-                        style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
-                      >
-                        <Text style={{ ...styles.label, color: color.clayDeep }}>Take it back</Text>
-                      </Pressable>
-                    ) : null}
-
-                    {/* §9.2 — recorded ahead of the deadline, because pg_cron resolves on
-                        a clock and cannot stop to ask. An option, never an obligation:
-                        without one the earliest Proposal decides (§4.3). */}
-                    {isOrganizer && !closed && !isTiebreak ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`If it ties, choose ${p.text}`}
-                        onPress={() =>
-                          tiebreak.mutate(
-                            { voteId: goalVote.id, proposalId: p.id },
-                            { onSuccess: clearTrouble, onError: (e) => say(refusal(e)) },
-                          )
-                        }
-                        style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
-                      >
-                        <Text style={{ ...styles.label, color: color.ink2 }}>
-                          Pick this one if it ties
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                );
-              })}
-
-              {proposals.length === 0 ? (
-                <Text style={{ ...styles.body, color: color.ink2 }}>
-                  Nothing put forward yet. Anything goes — a trip, a project, a habit
-                  you&rsquo;d all keep.
-                </Text>
-              ) : null}
-            </View>
-
-            <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-              {closed && goalVote.outcome != null
-                ? goalVote.outcome === 'personal'
-                  ? // §9.3 said plainly, and without blame. Nobody failed at anything.
-                    'Nobody put one forward, so everyone writes their own.'
-                  : 'This one went in the middle.'
-                : goalStandingCopy(
-                {
-                  proposals: proposals.map((p, order) => ({ id: p.id, order })),
-                  ballots: goalBallots
-                    .map((b) => b.proposalId)
-                    .filter((id): id is string => id !== null),
-                  organizerTiebreak: goalVote.organizerTiebreakProposalId ?? undefined,
-                },
-                    (id) => proposals.find((p) => p.id === id)?.text,
-                  )}
-            </Text>
-
-            {/* Putting one forward. Max 3 each (§9.1), and the count is stated rather
-                than the button silently vanishing. */}
-            {!closed && actingAs !== null ? (
-              <View style={{ marginTop: space.lg }}>
-                <TextInput
-                  value={draft}
-                  onChangeText={setDraft}
-                  placeholder="A camping trip, all five of us"
-                  placeholderTextColor={color.ink3}
-                  multiline
-                  accessibilityLabel="A goal for the middle square"
-                  accessibilityHint={`Up to ${GOAL_TEXT.max} characters`}
-                  style={{
-                    ...styles.body,
-                    minHeight: size.control,
-                    padding: space.md,
-                    color: color.ink,
-                    backgroundColor: color.paperRaised,
-                    borderWidth: 1,
-                    borderColor: color.hairline,
-                    borderRadius: radius.card,
-                    textAlignVertical: 'top',
-                  }}
-                />
-                <Button
-                  label={
-                    mineCount >= MAX_PROPOSALS_PER_MEMBER
-                      ? `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours`
-                      : 'Put it forward'
-                  }
-                  disabled={
-                    propose.isPending || mineCount >= MAX_PROPOSALS_PER_MEMBER
-                  }
-                  style={{ marginTop: space.sm }}
-                  onPress={() => {
-                    const problem = goalTextProblem(draft);
-                    if (problem !== null) {
-                      say(problem);
-                      return;
-                    }
-                    propose.mutate(
-                      { voteId: goalVote.id, memberId: actingAs, text: draft },
-                      {
-                        onSuccess: () => {
-                          setDraft('');
-                          clearTrouble();
-                        },
-                        onError: (e) => say(refusal(e)),
-                      },
-                    );
-                  }}
-                />
-              </View>
-            ) : null}
-          </>
-        ) : null}
-
-        {closed ? (
-          <Text style={{ ...styles.label, color: color.ink3, marginTop: space.lg }}>
-            The setup window has closed. The centre is decided.
+          <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
+            {closed && goalVote.outcome != null
+              ? goalVote.outcome === 'personal'
+                ? // §9.3 said plainly, and without blame. Nobody failed at anything.
+                  'Nobody put one forward, so everyone writes their own.'
+                : 'This one went in the middle.'
+              : goalStandingCopy(
+              {
+                proposals: proposals.map((p, order) => ({ id: p.id, order })),
+                ballots: goalBallots
+                  .map((b) => b.proposalId)
+                  .filter((id): id is string => id !== null),
+                organizerTiebreak: goalVote.organizerTiebreakProposalId ?? undefined,
+              },
+                  (id) => proposals.find((p) => p.id === id)?.text,
+                )}
           </Text>
-        ) : null}
 
-        {trouble === null ? null : (
-          <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>{trouble}</Text>
-        )}
+          {/* Putting one forward. Max 3 each (§9.1), and the count is stated rather
+              than the button silently vanishing. */}
+          {!closed && actingAs !== null ? (
+            <View style={{ marginTop: space.lg }}>
+              <Field
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="A camping trip, all five of us"
+                multiline
+                accessibilityLabel="A goal for the middle square"
+                accessibilityHint={`Up to ${GOAL_TEXT.max} characters`}
+              />
+              <Button
+                label={
+                  mineCount >= MAX_PROPOSALS_PER_MEMBER
+                    ? `That’s all ${MAX_PROPOSALS_PER_MEMBER} of yours`
+                    : 'Put it forward'
+                }
+                disabled={
+                  propose.isPending || mineCount >= MAX_PROPOSALS_PER_MEMBER
+                }
+                style={{ marginTop: space.sm }}
+                onPress={() => {
+                  const problem = goalTextProblem(draft);
+                  if (problem !== null) {
+                    say(problem);
+                    return;
+                  }
+                  propose.mutate(
+                    { voteId: goalVote.id, memberId: actingAs, text: draft },
+                    {
+                      onSuccess: () => {
+                        setDraft('');
+                        clearTrouble();
+                      },
+                      onError: (e) => say(voteFailureCopy(e)),
+                    },
+                  );
+                }}
+              />
+            </View>
+          ) : null}
+        </>
+      ) : null}
 
-        <Button
-          label="Back"
-          variant="text"
-          style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-          onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
-        />
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {closed ? (
+        <Text style={{ ...styles.label, color: color.ink3, marginTop: space.lg }}>
+          The setup window has closed. The centre is decided.
+        </Text>
+      ) : null}
+
+      {/* `live={false}`: every message here arrives through `say()`, which already
+          announces it. A live region on top of that makes Android say it twice. */}
+      <Trouble message={trouble} live={false} style={{ marginTop: space.lg }} />
+
+      <Button
+        label="Back"
+        variant="text"
+        style={{ marginTop: space.xl, alignItems: 'flex-start' }}
+        onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
+      />
+    </FormScreen>
   );
 }
