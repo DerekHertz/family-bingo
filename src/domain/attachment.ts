@@ -111,6 +111,13 @@ export const familyOfPath = (path: string): string | null => {
  * `width` as "can be `0` if the system did not provide the width", and resizing to a
  * fraction of nothing is a worse answer than leaving the image alone at whatever size it
  * is; the upload is bounded by the re-encode either way.
+ *
+ * **This answer is only as good as the dimensions it is given, and `lib/photo.ts` calls it
+ * again on the result rather than trusting one pass.** iOS reports a portrait photograph's
+ * pixel buffer sideways — its uprightness lives in `UIImage.imageOrientation`, not in the
+ * buffer — so a first call can constrain what is really the short edge and leave the long
+ * one a third over `MAX_EDGE`. Nothing here can see that; the caller measures what came out
+ * instead.
  */
 export const resizeToFit = (
   width: number,

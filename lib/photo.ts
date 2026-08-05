@@ -83,6 +83,16 @@ export const discardPhoto = (photo: PickedPhoto): void => {
  * nothing at all; declining the permission is an answer, and gets one plain sentence
  * pointing at Settings. Only `unavailable` is a genuine "that didn't work".
  */
+/**
+ * How many times `pickPhoto` will measure and re-bound before accepting what it has.
+ *
+ * Two, and the second exists because iOS reports a portrait photograph's dimensions
+ * sideways — see the loop for the whole story. It converges there, because anything the
+ * manipulator renders is upright by construction; the bound is a ceiling on the work rather
+ * than a guess at how many passes it takes.
+ */
+const RESIZE_PASSES = 2;
+
 export type PickOutcome =
   | { kind: 'photo'; photo: PickedPhoto }
   | { kind: 'cancelled' }
@@ -184,9 +194,9 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
   if (asset === undefined) return { kind: 'cancelled' };
 
   let saved: { uri: string; width: number; height: number } | null = null;
-  // The two native bitmaps, held so the `finally` can hand them back — see the note there.
-  let decoded: ImageRef | null = null;
-  let rendered: ImageRef | null = null;
+  // Every native bitmap this function has caused to exist, so the `finally` can hand them
+  // all back — see the note there.
+  const bitmaps = new Set<ImageRef>();
   try {
     // **The rendered image's own dimensions, not the picker's.** `ImagePickerAsset`
     // documents `width` as "can be `0` if the system did not provide the width", and
@@ -195,23 +205,48 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
     // photographs whose metadata the system could not read. Rendering first costs one
     // decode, which `saveAsync` was going to do anyway, and the resize below then works
     // on the already-decoded native image rather than re-reading the file.
-    decoded = await ImageManipulator.manipulate(asset.uri).renderAsync();
-    const resize = resizeToFit(decoded.width, decoded.height);
+    let image = await ImageManipulator.manipulate(asset.uri).renderAsync();
+    bitmaps.add(image);
 
-    if (resize === null) {
-      rendered = decoded;
-    } else {
-      rendered = await ImageManipulator.manipulate(decoded).resize(resize).renderAsync();
-      // Let the full-size bitmap go the instant the scaled one exists, rather than at the
-      // end of the function. This is the moment both are alive, and on a 48 MP photograph
-      // that is roughly 190 MB of native heap plus the copy — which is the peak the
-      // `finally` alone would not have moved.
-      decoded.release();
-      decoded = null;
+    // **Measure the result and bound it again, because one pass does not always land it.**
+    //
+    // §16.4's bound is on the long edge, and on iOS the number this reads and the number
+    // the resize *uses* are two different things for a photograph taken in portrait.
+    // `ImageRef.width`/`height` are `cgImage.width`/`height` — the raw sensor pixels, so a
+    // portrait iPhone photo reads 4032×3024 with its uprightness carried in
+    // `UIImage.imageOrientation` rather than in the buffer. `ImageResizeTransformer` then
+    // works from `UIImage.size`, which *is* orientation-corrected (3024×4032), and draws
+    // upright. So one pass constrained the wrong axis: told `{width: 2048}` for what was
+    // really the short edge, it produced an upright 2048×2731 and quietly missed §16.4 by
+    // a third on every portrait photo an iPhone has ever taken.
+    //
+    // The second pass costs nothing where it is not needed and needs no knowledge of EXIF
+    // at all, which is why it is the fix rather than trying to read the orientation from
+    // JS: a resized image is `.up` by construction (it came out of a renderer), so its
+    // dimensions and its appearance finally agree, and `resizeToFit` gets the true long
+    // edge. It converges in two — Android is already upright, because
+    // `expo-image-loader` decodes through Glide, which applies EXIF orientation itself.
+    for (let pass = 0; pass < RESIZE_PASSES; pass += 1) {
+      const resize = resizeToFit(image.width, image.height);
+      if (resize === null) break;
+
+      const smaller = await ImageManipulator.manipulate(image).resize(resize).renderAsync();
+      bitmaps.add(smaller);
+      // Let the larger bitmap go the instant the smaller one exists, rather than at the end
+      // of the function. This is the moment both are alive, and on a 48 MP photograph that
+      // is roughly 190 MB of native heap plus its copy — the peak the `finally` alone would
+      // not have moved.
+      try {
+        image.release();
+      } catch {
+        // Already gone. The `finally` would not have done better.
+      }
+      bitmaps.delete(image);
+      image = smaller;
     }
 
     // Always re-encoded, even when nothing was resized: this is the step that drops EXIF.
-    saved = await rendered.saveAsync({
+    saved = await image.saveAsync({
       format: SaveFormat.JPEG,
       compress: PHOTO_QUALITY,
     });
@@ -242,16 +277,12 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
     // `ImageRef extends SharedRef<'image'>`, and `SharedObject.release()`'s own docs name
     // "image bitmap" as the case manual release exists for: the JS object is a few bytes
     // and the thing it holds is not, so a garbage collector with no reason to run leaves
-    // the pixels allocated. A 48 MP photograph is around 190 MB decoded, and during the
+    // the pixels allocated. A 48 MP photograph is around 190 MB decoded, and during a
     // resize there are two of them — which is a native-heap OOM on Android, from a path
     // that cannot reproduce in Node and so cannot be caught by any suite here.
     //
-    // A Set because `rendered === decoded` whenever nothing needed scaling, and releasing
-    // one object twice throws. When they do differ, `decoded` was released and nulled at
-    // the peak above and only `rendered` is left here.
-    const bitmaps = new Set<ImageRef>();
-    if (decoded !== null) bitmaps.add(decoded);
-    if (rendered !== null) bitmaps.add(rendered);
+    // A Set, and each larger bitmap is taken out of it as it is released at the peak
+    // above, so nothing here is released twice — which throws.
     for (const bitmap of bitmaps) {
       try {
         bitmap.release();

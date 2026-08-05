@@ -85,6 +85,23 @@ describe('§16.4 — 2048px on the long edge, before upload', () => {
     expect(resizeToFit(100, 50, 10)).toEqual({ width: 10 });
     expect(resizeToFit(50, 100, 10)).toEqual({ height: 10 });
   });
+
+  it('reaches the bound on a second pass when the first was handed sideways dimensions', () => {
+    // The iPhone portrait case, and why `lib/photo.ts` measures the result rather than
+    // trusting one pass. `ImageRef.width`/`height` are the raw `cgImage` pixels, so a
+    // portrait photograph reads 4032×3024 — its uprightness is in `UIImage.imageOrientation`
+    // and not in the buffer.
+    expect(resizeToFit(4032, 3024)).toEqual({ width: MAX_EDGE });
+
+    // `ImageResizeTransformer` works from the orientation-corrected `UIImage.size`, so
+    // `{width: 2048}` against a 3:4 upright ratio draws an upright 2048×2731 — over the
+    // bound on the edge that turned out to be the long one.
+    expect(resizeToFit(2048, 2731)).toEqual({ height: MAX_EDGE });
+
+    // Anything a renderer produced is `.up`, so the second pass is measured on dimensions
+    // that finally agree with the picture, and the third has nothing left to do.
+    expect(resizeToFit(1536, MAX_EDGE)).toBeNull();
+  });
 });
 
 describe('§16.2 — the TTL is short, because nothing revokes a signed URL', () => {
