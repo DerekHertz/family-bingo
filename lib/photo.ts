@@ -42,9 +42,39 @@ export interface PickedPhoto {
   /**
    * The **original** picked URI, kept only so the sheet can show a thumbnail of what is
    * about to be attached. Never uploaded — the re-encoded `body` is what goes up.
+   *
+   * It is a full-resolution copy with its EXIF intact, sitting in the app's cache because
+   * the picker put it there, and it is alive for exactly as long as this object is. Hand it
+   * to `discardPhoto` the moment the thumbnail is no longer on screen.
    */
   readonly previewUri: string;
 }
+
+/**
+ * Delete the picker's own copy, which is the one file this module does not write and does
+ * have to clean up.
+ *
+ * The module docblock says this app "deletes that result the moment the bytes have been
+ * read", and the `finally` in `pickPhoto` does exactly that — for the re-encoded file. It
+ * never touched the picker's original, which is worse in every dimension: full resolution
+ * rather than 2048px, EXIF intact rather than stripped (the capture time, the device, very
+ * often the GPS coordinates of the house a child was photographed in), and kept alive by
+ * `previewUri` for the whole life of the sheet and then forgotten.
+ *
+ * It is inside the app's private container, so this is not a §7.6 breach — that rule is
+ * about a photo cached *outside* it — but it is the same instinct as §16.6 and ADR-0005
+ * applied to a copy this app caused to exist. It cannot be deleted inside `pickPhoto`,
+ * because the thumbnail is still rendering from it; the sheet owns the moment instead.
+ *
+ * Best effort and never throws: a cache file that outlives us is not worth failing a tap.
+ */
+export const discardPhoto = (photo: PickedPhoto): void => {
+  try {
+    new FileSystem.File(photo.previewUri).delete();
+  } catch {
+    // Already gone, or a URI with no file behind it (web hands back a blob).
+  }
+};
 
 /**
  * Four answers, and three of them are not failures.

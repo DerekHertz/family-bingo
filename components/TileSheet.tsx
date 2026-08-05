@@ -22,7 +22,7 @@
  * will say".
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -49,7 +49,7 @@ import { color, radius, size, space, stroke } from '../theme/tokens';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { ProgressRing } from './ProgressRing';
-import { pickPhoto, type PickedPhoto } from '../lib/photo';
+import { discardPhoto, pickPhoto, type PickedPhoto } from '../lib/photo';
 import type { Increment, LogIncrement } from '../lib/queries/increments';
 
 /**
@@ -182,6 +182,38 @@ export function TileSheet({
   const [pickNotice, setPickNotice] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
 
+  /**
+   * The chosen photo, mirrored where an unmount cleanup can still read it.
+   *
+   * A cleanup closes over the state it was rendered with, so a `[photo]` effect would run
+   * its cleanup on every *change* and a `[]` one would see `null` forever. The ref is the
+   * only way the last value survives to the teardown.
+   */
+  const chosen = useRef<PickedPhoto | null>(null);
+  useEffect(() => {
+    chosen.current = photo;
+  }, [photo]);
+
+  /**
+   * Leaving the sheet takes the picker's original with it (§7.6's instinct, `discardPhoto`).
+   *
+   * The sheet is keyed on the square in `app/board/[id].tsx`, so this fires when a Member
+   * opens a different Tile as well as when they close the sheet — and both are moments
+   * after which nothing will ever read that file again.
+   */
+  useEffect(
+    () => () => {
+      if (chosen.current !== null) discardPhoto(chosen.current);
+    },
+    [],
+  );
+
+  /** Put a chosen photo down: the state, and the full-resolution file behind it. */
+  const forgetPhoto = () => {
+    if (photo !== null) discardPhoto(photo);
+    setPhoto(null);
+  };
+
   if (tile === null) return null;
 
   const progress = progressOf(tile.count, tile.target);
@@ -213,7 +245,9 @@ export function TileSheet({
     });
     setNote('');
     setNoteOpen(false);
-    setPhoto(null);
+    // The upload reads `photo.body`, which is already in memory, so the picker's original
+    // has nothing left to do the moment the tap is handed over.
+    forgetPhoto();
     setPickNotice(null);
   };
 
@@ -456,7 +490,7 @@ export function TileSheet({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Remove the photo from this one"
-                    onPress={() => setPhoto(null)}
+                    onPress={forgetPhoto}
                     style={({ pressed }) => ({
                       minHeight: size.minTouch,
                       justifyContent: 'center',
