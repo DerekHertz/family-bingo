@@ -71,6 +71,11 @@ interface Props {
   onClose: () => void;
   onLog: (tap: LogIncrement) => void;
   onDelete: (increment: { id: string; tileId: string }) => void;
+  /**
+   * §12.3 — mark the shared Family Goal done. Only ever passed for the Centre, and only
+   * when this Member may do it; `undefined` renders the state as a fact instead.
+   */
+  onCompleteFamilyGoal?: (() => void) | undefined;
 }
 
 const dateOf = (iso: string): string =>
@@ -87,6 +92,7 @@ export function TileSheet({
   onClose,
   onLog,
   onDelete,
+  onCompleteFamilyGoal,
 }: Props) {
   const [note, setNote] = useState('');
   const canLog = blocked === null;
@@ -168,22 +174,49 @@ export function TileSheet({
           </View>
 
           {tile.isCentre ? (
-            // §4.3's "We did it" — the app's only plural. Not a control yet: marking a
-            // Family Goal done is §12.3, and a button that answered every press with an
-            // error would be worse than none. Stated as a fact instead, which is what the
-            // rest of the Centre's copy does (§0.3).
-            <Text
-              style={{
-                ...styles.body,
-                color: color.ink2,
-                marginTop: space.lg,
-                textAlign: 'center',
-              }}
-            >
-              {complete
-                ? 'We did it — your family finished this one together.'
-                : 'Your family decides when this one is done.'}
-            </Text>
+            complete || onCompleteFamilyGoal === undefined ? (
+              <Text
+                style={{
+                  ...styles.body,
+                  color: color.ink2,
+                  marginTop: space.lg,
+                  textAlign: 'center',
+                }}
+              >
+                {complete
+                  ? 'We did it — your family finished this one together.'
+                  : 'Your family decides when this one is done.'}
+              </Text>
+            ) : (
+              // §4.3: "the increment verb is the app's only plural — 'We did it'". It
+              // completes for every Member at once (§12.3), which is why the word is
+              // *we* and why this is the only button in the app that speaks for more
+              // than the person pressing it.
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`We did it. ${tile.text}`}
+                accessibilityHint="Marks the family's goal done for everyone"
+                onPressIn={() => {
+                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                }}
+                onPress={onCompleteFamilyGoal}
+                style={({ pressed }) => ({
+                  minHeight: size.controlPrimary,
+                  paddingVertical: space.sm,
+                  paddingHorizontal: space.md,
+                  marginTop: space.lg,
+                  borderRadius: radius.card,
+                  backgroundColor: color.clayDeep,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.85 : 1,
+                })}
+              >
+                <Text style={{ ...styles.action, color: color.paper, textAlign: 'center' }}>
+                  We did it
+                </Text>
+              </Pressable>
+            )
           ) : canLog ? (
             <>
               <Pressable

@@ -64,7 +64,17 @@ export interface BoardSummary {
 export const myBoardsKey = (yearId: string, accountId: string) =>
   ['boards', yearId, accountId] as const;
 
-export const boardKey = (boardId: string) => ['board', boardId] as const;
+/**
+ * Carries the Account for the same two reasons every other key here does.
+ *
+ * `tiles_read` is Family-wide, so these rows are not the same for every caller — and the
+ * query cannot run at all before a session exists. A bare key meant a cold deep link
+ * straight to `/board/[id]`, which is exactly what a magic link is, fired the Tiles read
+ * with no token, took a 401, and then never refetched: the key never changed when the
+ * session arrived, so the screen sat on a spinner until it was reopened by hand.
+ */
+export const boardKey = (boardId: string, accountId: string) =>
+  ['board', boardId, accountId] as const;
 /**
  * A prefix of its own rather than `['board', id, 'head']`. Invalidation is a prefix match,
  * so nesting it under `boardKey` would mean every Goal written refetched the Year and the
@@ -253,10 +263,12 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
  * Goals were written, since §4.1 is explicit that order is not priority and positions are
  * dealt at seal.
  */
-export function useBoard(boardId: string | undefined) {
+export function useBoard(boardId: string | undefined, accountId: string | undefined) {
   return useQuery({
-    queryKey: boardKey(boardId ?? 'none'),
-    enabled: boardId !== undefined,
+    queryKey: boardKey(boardId ?? 'none', accountId ?? 'anonymous'),
+    // Waits for the Account as well as the Board, like `useBoardHead`. Firing before the
+    // session resolves is a guaranteed 401 against RLS.
+    enabled: boardId !== undefined && accountId !== undefined,
     queryFn: async (): Promise<DraftTile[]> => {
       const { data, error } = await supabase
         .from('tiles')
@@ -389,7 +401,8 @@ export function useWriteGoal(boardId: string) {
       return data as Goal;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: boardKey(boardId) });
+      // Prefix match, so it clears the Board for whichever Account is holding it.
+      void queryClient.invalidateQueries({ queryKey: ['board', boardId] });
       // The count on the Family screen's Board rows moves with every write. A prefix match
       // rather than the exact key, because the Year and Account are not in scope here.
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
@@ -412,7 +425,8 @@ export function useClearGoal(boardId: string) {
       if (error !== null) throw error;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: boardKey(boardId) });
+      // Prefix match, so it clears the Board for whichever Account is holding it.
+      void queryClient.invalidateQueries({ queryKey: ['board', boardId] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
     },
   });

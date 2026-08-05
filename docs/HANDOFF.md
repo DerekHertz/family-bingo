@@ -26,7 +26,8 @@ verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 | 8–9 The Centre | Merged. Mode vote, Goal vote, proposals, Organizer tiebreak |
 | 10 Seal | Merged. The Board gets drawn, and has now been **looked at** in the Simulator |
 | 11 Log an Increment | Merged. Tile sheet, optimistic one-tap, delete; sealed Boards get a readable goal list |
-| 12–21 | **Not started** |
+| 12 Complete a Tile | Merged. "We did it" for the Family Goal; the celebration gated on the Milestone |
+| 13–21 | **Not started** |
 
 Suites: **411 Vitest · 794 pgTAP · 19 integration**, `tsc` clean. All three must pass
 before a merge.
@@ -125,6 +126,11 @@ against it.
   **The assistant can now see the app** via `xcrun simctl io booted screenshot`, which is a
   change from every previous session — the user no longer has to be the eyes.
   Expo Go on the user's iPhone 15 (iOS 26.6) and `--web` remain the other two previews.
+- **Two real Accounts exist on the live project for testing**: `derekhertzell@gmail.com`
+  and `ithertzalot@gmail.com`. They are what anything needing two people — an Invitation,
+  an approval, a Centre vote, a shared Family Goal — has to be exercised with, and they are
+  why `dev-login` exists (the default SMTP sends two emails an hour). See open item 1b:
+  `ithertzalot` has a Board in 2027 but not 2026.
 - **Expo Go must match the SDK exactly.** SDK 57 needs Expo Go **57.0.6** (iOS) /
   **57.0.3** (Android); an older client refuses with *"Project is incompatible with this
   version of Expo Go"*. An in-place App Store update can sit pending — deleting and
@@ -156,15 +162,20 @@ The whole loop, with no email and no live data:
    this must never be pointed at the live project.
 4. `npx expo start --ios`.
 5. Sign in with **no taps**: mint a session with the password grant and deep-link it into
-   `/auth/callback`. Use the **query string, not the fragment** — Expo Go drops the
-   fragment, and the callback then spins forever on a URL that never arrives, which looks
-   exactly like a hung network call.
+   `/auth/callback`. Two details, both of which cost time:
+
+   - **The query string, not the fragment.** Expo Go drops the fragment, and the callback
+     then spins forever on a URL that never arrives — which looks exactly like a hung
+     network call.
+   - **`127.0.0.1`, not the LAN IP.** Metro prints whatever address it bound to and that
+     changes with the network; the simulator shares the host's stack, so localhost always
+     works and the printed one sometimes does not.
 
    ```sh
    xcrun simctl openurl booted \
-     "exp://<lan-ip>:8081/--/auth/callback?access_token=$AT&refresh_token=$RT"
+     "exp://127.0.0.1:8081/--/auth/callback?access_token=$AT&refresh_token=$RT"
    ```
-6. Navigate the same way: `exp://<lan-ip>:8081/--/board/<id>`.
+6. Navigate the same way: `exp://127.0.0.1:8081/--/board/<id>`.
 
 Two traps that cost time here:
 
