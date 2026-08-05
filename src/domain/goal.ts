@@ -16,6 +16,8 @@
  * `incrementVerb` there for what the copy in this file got wrong.
  */
 
+import { BOARD_SIZE, CENTER_POSITION } from './lines';
+
 /** §6.1. The database checks the same numbers in `write_goal()`. */
 export const GOAL_TEXT = { min: 1, max: 200 } as const;
 export const UNIT_MAX = 30;
@@ -23,10 +25,28 @@ export const TARGET_MIN = 1;
 
 /**
  * Position 12 is the Centre and is not authored like the others (§6.5), which leaves 24.
- * Row-major, 0-indexed, and load-bearing for line detection — see §5.4 before touching it.
+ *
+ * **Re-exported, not declared.** `lines.ts` owns the twelve, because 12 is geometry rather
+ * than an authoring rule: it is the square `linesThrough(12)` puts on four Lines, and that
+ * is where it is tested. A `= 12` was written here too and the consumers split between the
+ * two copies at random — `components/Board.tsx` read lines.ts, `lib/queries/boards.ts` read
+ * this file, and neither reader could tell there was a second one. `theme/tokens.ts` makes
+ * exactly this argument about the Board's five: "a second copy is a copy that can disagree
+ * with line detection."
+ *
+ * Authoring still says `CENTER_POSITION` and finds it here, which is why the re-export
+ * exists rather than a note telling everyone to import from somewhere else.
  */
-export const CENTER_POSITION = 12;
-export const AUTHORABLE_TILES = 24;
+export { CENTER_POSITION };
+
+/**
+ * The 24 squares a Member writes: every position but the Centre (§6.5).
+ *
+ * Derived rather than typed. `24` and `12` are the same fact about a 5×5 stated twice, and
+ * a Board that ever stopped being 25 squares would have left this reading 24 with nothing
+ * to catch it.
+ */
+export const AUTHORABLE_TILES = BOARD_SIZE - 1;
 
 /**
  * What is wrong with this Goal's text, in words a Member can act on, or `null`.

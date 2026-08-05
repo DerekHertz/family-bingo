@@ -16,6 +16,13 @@
 
 export const BOARD_WIDTH = 5;
 export const BOARD_SIZE = 25;
+/**
+ * The Centre. Declared **here** and re-exported by `goal.ts`, because it is geometry
+ * before it is an authoring rule — `linesThrough(12)` is the four Lines a shared Family
+ * Goal advances at once, and it is tested in this file. `goal.ts` had a second `= 12`
+ * and the two answered different importers; `AUTHORABLE_TILES` is derived from
+ * `BOARD_SIZE` for the same reason.
+ */
 export const CENTER_POSITION = 12;
 
 /** Every position on a Board, in order. */
