@@ -28,6 +28,7 @@
 import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Switch, Text, View } from 'react-native';
+import { Loading } from '../../components/Screen';
 import { Button } from '../../components/Button';
 import { leaveTo } from '../../lib/leave';
 import { askForPush, pushPermission } from '../../lib/notifications';
@@ -167,15 +168,7 @@ export default function NotificationSettings() {
   if (session === null) return <Redirect href="/" />;
 
   if (session === undefined || preferences.isPending) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
-        <ActivityIndicator
-          color={color.ink3}
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading your notification settings"
-        />
-      </View>
-    );
+    return <Loading what="Loading your notification settings" />;
   }
 
   const chosen = preferences.data;
