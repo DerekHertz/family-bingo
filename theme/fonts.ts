@@ -61,5 +61,6 @@ export const styles = {
   meta: text(type.meta),
   ringCount: text(type.ringCount),
   ringOf: text(type.ringOf),
+  wrappedNumeral: text(type.wrappedNumeral),
   action: text(type.action),
 } as const;

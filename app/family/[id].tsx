@@ -219,6 +219,44 @@ export default function FamilyRoster() {
         />
       )}
 
+      {/* And the way into Wrapped (§20), which is the same Year seen from the other end.
+          Gated on the Freeze rather than on the status word, because `frozen_at` is the
+          fact `generate_wrapped()` itself requires — it refuses a Year that has not frozen
+          with PT403, and `wrapped` has no row until it runs. A button offered a moment
+          early would open a screen with nothing in it.
+
+          §20.10 keeps this here forever: a frozen Year and its Wrapped stay browsable as
+          family history, so this is not a notification that expires. Both buttons stand
+          together on a frozen Year — the Feed is what happened, Wrapped is what it added
+          up to, and a Family looking back wants either. */}
+      {/* One row per frozen Year, **not** one for `relevantYear`.
+          `relevantYear()` answers "which Year is happening" and returns exactly one — so
+          the moment the final Wrapped card's own button opens the next Year, `current`
+          becomes that Year, its `frozen_at` is null, and the button disappears. The
+          previous Year's Wrapped would then be unreachable from anywhere in the app: this
+          is its only navigation, and the §20.3 push carries no deep link. A Member would
+          have lost last year's Almanac by tapping the button on last year's Almanac.
+
+          §20.10 is explicit that a frozen Year and its Wrapped "stay browsable forever as
+          family history", so the list is the frozen Years, newest first — which is the
+          order `useYears` already returns. */}
+      {allYears
+        .filter((y) => y.frozen_at !== null)
+        .map((y) => (
+          <Button
+            key={y.id}
+            label={`${y.calendar_year} wrapped`}
+            accessibilityHint="Your year, the family's year, and the awards"
+            style={{ marginTop: space.md }}
+            onPress={() =>
+              router.push({
+                pathname: '/year/wrapped',
+                params: { yearId: y.id, familyId: id ?? '' },
+              })
+            }
+          />
+        ))}
+
       {/* The way onto a Board (§6). One row per Member the caller may author for, which is
           themselves plus any child they guard — a Guardian authoring for a Managed Member
           is the normal case, not an administrative one (§4.2). */}
