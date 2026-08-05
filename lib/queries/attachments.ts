@@ -244,6 +244,13 @@ export function useSignedPhotos(paths: readonly string[], accountId: string | un
     refetchInterval: SIGNED_URL_REFRESH_MS,
     // Keep signing while the app is backgrounded? No: nothing is on screen to expire, and
     // the refetch on foreground covers the return.
+    //
+    // That second clause was a claim about machinery that did not exist. react-query's own
+    // focus listener binds `visibilitychange` on `window`, which React Native has not got,
+    // so `refetchOnWindowFocus` was inert and this interval — which iOS suspends — was the
+    // only thing re-signing anything. Ten minutes in a pocket and the Feed came back a
+    // screen of hatches with nothing scheduled to fix it. `app/_layout.tsx` now wires
+    // `focusManager` to `AppState`, which is what makes the sentence above true.
     refetchIntervalInBackground: false,
     gcTime: SIGNED_URL_TTL_SECONDS * 1000,
     placeholderData: keepPreviousData,

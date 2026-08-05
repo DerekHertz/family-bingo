@@ -12,13 +12,14 @@ import {
   ZenKakuGothicNew_500Medium,
   ZenKakuGothicNew_700Bold,
 } from '@expo-google-fonts/zen-kaku-gothic-new';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, focusManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { AppState, Platform } from 'react-native';
 import { useNotificationTaps } from '../lib/notification-routing';
 import { persistOptions, persister } from '../lib/persist';
 import { clearQueue, useQueueDrain } from '../lib/queue';
@@ -29,6 +30,37 @@ import { color } from '../theme/tokens';
 
 // A rejection here is not worth crashing over: the splash simply hides on its own.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+/**
+ * Tell react-query what "focused" means on a handset.
+ *
+ * **`refetchOnWindowFocus` is on by default and was inert in this app**, because
+ * react-query's built-in listener binds `visibilitychange` on `window` — which React
+ * Native does not have. So every `refetchOnWindowFocus` in the codebase was a setting with
+ * nothing behind it, and the only thing that ever refetched on a return was `staleTime`
+ * expiring under whatever the next render asked for.
+ *
+ * Slice 16 is where that stopped being merely wasteful. `useSignedPhotos` re-signs on an
+ * interval and its comment said "the refetch on foreground covers the return" — there was
+ * no such refetch, and iOS suspends timers in the background, so a Feed left open while a
+ * phone went in a pocket for ten minutes came back to a screen of hatch placeholders with
+ * nothing scheduled to fix them. Every URL on it had expired (§16.2's five minutes) and
+ * the interval that would have replaced them had not run.
+ *
+ * Registered at module scope rather than in an effect: the manager is a singleton, this is
+ * a fact about the platform rather than about any tree, and a re-register on fast refresh
+ * would swap the listener out from under itself.
+ */
+if (Platform.OS !== 'web') {
+  focusManager.setEventListener((setFocused) => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      // `active` only. `inactive` is the app switcher and an incoming call, and treating
+      // that as a blur would refetch every time a Member glanced at Control Centre.
+      setFocused(state === 'active');
+    });
+    return () => subscription.remove();
+  });
+}
 
 export default function RootLayout() {
   // Bundled, never fetched (§8) — @expo-google-fonts ships the files and the OFL licence
