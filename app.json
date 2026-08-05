@@ -23,7 +23,15 @@
       "expo-font",
       "expo-notifications",
       "expo-splash-screen",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Family Bingo asks for your photos only when you tap \"Add a photo\" on something you've logged. The one you pick is visible to your family and nobody else.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

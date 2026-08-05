@@ -114,6 +114,50 @@ export const stepperHint = (
   `${targetSummary(target, unit)} · the button will say “${incrementVerb(unit, unitCanonical)}”`;
 
 /**
+ * When to say a tap happened — the device's clock, unless the device's clock would end the
+ * game.
+ *
+ * §17.3 is the reason the client sends `occurred_at` at all: a tap held in the offline
+ * queue for three days happened on Monday, and `useRecentIncrements` orders by this column
+ * precisely so a Member's week reads in the order they lived it. Before that the column
+ * default stamped it server-side and a wrong clock could not matter. Now it can, and
+ * `stamp_increment()` is deliberately asymmetric about which direction hurts:
+ *
+ *   - a **future** value is benign and is pulled back to `now()`;
+ *   - anything below `least(sealed_at, now())` raises `PT403`, because backdating past the
+ *     seal has no honest cause (§11.5).
+ *
+ * Which means a handset whose clock has reset to the factory date fails *every* tap:
+ * online with a message it cannot act on, and offline by being dropped at the next drain,
+ * since `classifyDelivery` correctly treats `PT403` as a refusal. One bad clock, and the
+ * Member cannot log anything for the rest of the Year.
+ *
+ * So the client applies the server's own rule at the end where the server's rule is fatal,
+ * and clamps **forward** to the seal. It never invents a date before the Year began, which
+ * is the only thing §11.5 actually forbids, and it keeps §17.3's real benefit intact for
+ * every handset whose clock is right — which is all of them but the broken one.
+ *
+ * **Clamped rather than omitted**, and the alternative was real: sending no `occurred_at`
+ * at all would let the column default stand, which is a truer timestamp than the seal. It
+ * would also make the value nullable in three places that lean on it being one string —
+ * the optimistic row, the queued row, and the row that eventually lands have to be the
+ * same row, or the sheet's Recent list reorders itself the moment a drain succeeds. A
+ * nullable column default is not worth that on the one handset whose clock is wrong.
+ */
+export const occurredAtFor = (deviceNow: string, sealedAt: string | null): string => {
+  // A Board that has not sealed takes no Increments at all — `tile_is_loggable()` refuses
+  // them — so there is no bound to clamp to and nothing to protect.
+  if (sealedAt === null) return deviceNow;
+  const device = Date.parse(deviceNow);
+  const sealed = Date.parse(sealedAt);
+  // Unparseable either way: leave it alone rather than guess. `stamp_increment()` still
+  // has the last word, and a client that invented a timestamp out of a string it could not
+  // read would be the worse of the two failures.
+  if (!Number.isFinite(device) || !Number.isFinite(sealed)) return deviceNow;
+  return device < sealed ? sealedAt : deviceNow;
+};
+
+/**
  * "3 of 144" — progress in words, for anything read aloud or read as a sentence.
  *
  * §3's ring label, and every accessibility label that states progress (§6 A1's *"96 of

@@ -21,6 +21,7 @@ import { Button } from '../../components/Button';
 import { Loading, Trouble } from '../../components/Screen';
 import { FeedRow } from '../../components/FeedRow';
 import { leaveTo } from '../../lib/leave';
+import { useSignedPhotos } from '../../lib/queries/attachments';
 import { useFamilies } from '../../lib/queries/families';
 import { useFeed } from '../../lib/queries/feed';
 import { useRoster } from '../../lib/queries/invitations';
@@ -63,6 +64,21 @@ export default function Feed() {
     memberId === null ? '' : (members.get(memberId)?.display_name ?? 'A member');
 
   const events: FeedEvent[] = (feed.data?.pages ?? []).flatMap((page) => page.events);
+
+  /**
+   * §16.2 — one short-TTL signed URL per photo, minted for the whole page in a single
+   * round trip and re-minted before it expires.
+   *
+   * The view hands out `attachment_path`, which is an object **key** and not a URL: there
+   * is no public URL to hand out, because the bucket is private and always will be
+   * (§16.2, ADR-0005, and the `attachments` bucket is created with `public = false`).
+   * Signing here rather than inside `<FeedRow>` is what keeps thirty rows to one request —
+   * see the note on `useSignedPhotos`, which also explains why an open Feed re-signs.
+   */
+  const photos = useSignedPhotos(
+    events.map((event) => event.attachmentPath).filter((path): path is string => path !== null),
+    session?.user.id,
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper, paddingTop: size.screenTop }}>
@@ -109,6 +125,11 @@ export default function Feed() {
                   : (members.get(item.memberId)?.is_managed ?? false)
               }
               lineNameOf={lineName}
+              photoUrl={
+                item.attachmentPath === null
+                  ? null
+                  : (photos.data?.[item.attachmentPath] ?? null)
+              }
             />
           )}
           onEndReachedThreshold={0.5}

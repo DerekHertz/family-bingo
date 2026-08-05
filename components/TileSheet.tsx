@@ -8,11 +8,25 @@
  * §3's parts, in order: the ring, the primary action, the optional secondary, and the last
  * three Increments. The only mutation an Increment permits is deletion (§11.3) — there is
  * no edit, and a mistake is corrected by removing the row rather than rewriting it.
+ *
+ * §3 lists **two** secondaries — "Add a note" / "Add a photo", 46pt, hairline outline,
+ * "Optional, always. Never required, never pre-focused." Both are disclosures rather than
+ * fields sitting open above the button, because a control waiting to be filled in is a
+ * control that reads as required.
+ *
+ * Picking the photo is called from here rather than passed in as a prop. It is a device
+ * interaction in the same family as `Haptics` and `Crypto.randomUUID()` above — a picker
+ * that returns to the caller — and not a data fetch: nothing is read from or written to
+ * Supabase until the log button is pressed. Holding it here also keeps the chosen photo
+ * beside the note it belongs with, in the one component that already owns "what this tap
+ * will say".
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -22,16 +36,31 @@ import {
 } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
+import {
+  photoPermissionCopy,
+  photoUnreadableCopy,
+} from '../src/domain/attachment';
 import { progressOf, stageOf } from '../src/domain/growth';
-import { incrementVerb } from '../src/domain/increment';
+import { incrementVerb, occurredAtFor } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
+import { queuedCopy } from '../src/domain/queue';
 import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space, stroke } from '../theme/tokens';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { ProgressRing } from './ProgressRing';
+import { discardPhoto, pickPhoto, type PickedPhoto } from '../lib/photo';
 import type { Increment, LogIncrement } from '../lib/queries/increments';
+
+/**
+ * The chosen photo's thumbnail, before it is anything at all.
+ *
+ * Deliberately not §3's 150pt: that is the Feed's size, where the photo is the point of
+ * the row. Here it is a confirmation that the right picture is attached, sitting beside a
+ * button, and 64 keeps the primary action on screen without scrolling.
+ */
+const PREVIEW = 64;
 
 export interface SheetTile {
   id: string;
@@ -56,6 +85,16 @@ export interface SheetTile {
 interface Props {
   tile: SheetTile | null;
   memberId: string;
+  /** The Family this Board belongs to — the first segment of an Attachment's key (§16.2). */
+  familyId: string;
+  /**
+   * When this Board sealed, and the floor under every `occurred_at` this sheet mints.
+   *
+   * Passed in because the sheet is the only place a tap's timestamp is decided and
+   * `stamp_increment()` refuses anything below the seal with `PT403` — see `occurredAtFor`
+   * for what a handset with a wrong clock does without it.
+   */
+  sealedAt: string | null;
   /** Whose Board this is, for the header — "Your goal" reads wrong on a child's Board. */
   ownerName: string | null;
   recent: Increment[];
@@ -71,6 +110,24 @@ interface Props {
   blocked: 'frozen' | 'not-yours' | null;
   /** Set when the last write failed. Already phrased — see `incrementFailureCopy`. */
   failure: string | null;
+  /**
+   * The soft half of the same story: the tap landed, something optional about it did not.
+   * Already phrased — see `photoOutcomeCopy`.
+   *
+   * Separate from `failure` because it gets a different treatment. A refusal sits in a
+   * `clayTint` block; this is `ink2` on the sheet's own ground, because §1.1 says a failed
+   * upload is plain words and because nothing here went wrong enough to be framed.
+   */
+  notice: string | null;
+  /**
+   * How many taps are waiting on this device (§17.3).
+   *
+   * Passed in rather than read here: a component in this codebase does no data fetching,
+   * and the count comes from `useQueuedCount()` on the screen. Shown at all because a
+   * Member who logged three walks underground and watched the ring move has no other way
+   * to know the app kept them.
+   */
+  queued: number;
   /**
    * §4.3 — the Family, in join order, for the shared Centre's contributors block.
    *
@@ -101,11 +158,15 @@ interface Props {
 export function TileSheet({
   tile,
   memberId,
+  familyId,
+  sealedAt,
   ownerName,
   recent,
   recentPending,
   blocked,
   failure,
+  notice,
+  queued,
   family,
   onClose,
   onLog,
@@ -116,6 +177,63 @@ export function TileSheet({
   const [note, setNote] = useState('');
   const canLog = blocked === null;
   const [noteOpen, setNoteOpen] = useState(false);
+  /** The photo chosen for the tap that has not happened yet (§16.1 — one, and optional). */
+  const [photo, setPhoto] = useState<PickedPhoto | null>(null);
+  /** What the picker had to say. Cleared the moment a photo is chosen. */
+  const [pickNotice, setPickNotice] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+
+  /**
+   * The chosen photo, mirrored where an unmount cleanup can still read it.
+   *
+   * A cleanup closes over the state it was rendered with, so a `[photo]` effect would run
+   * its cleanup on every *change* and a `[]` one would see `null` forever. The ref is the
+   * only way the last value survives to the teardown.
+   */
+  const chosen = useRef<PickedPhoto | null>(null);
+  useEffect(() => {
+    chosen.current = photo;
+  }, [photo]);
+
+  /**
+   * Leaving the sheet takes the picker's original with it (§7.6's instinct, `discardPhoto`).
+   *
+   * The sheet is keyed on the square in `app/board/[id].tsx`, so this fires when a Member
+   * opens a different Tile as well as when they close the sheet — and both are moments
+   * after which nothing will ever read that file again.
+   */
+  useEffect(
+    () => () => {
+      if (chosen.current !== null) discardPhoto(chosen.current);
+    },
+    [],
+  );
+
+  /**
+   * Say the two soft notices out loud.
+   *
+   * Both shipped carrying `accessibilityLiveRegion="polite"` and nothing else, which is
+   * **Android-only** — this codebase says so in `lib/announce.ts`, `components/Screen.tsx`
+   * and `app/year/wrapped.tsx`, and every screen that can refuse a Member pairs the region
+   * with an explicit announcement for exactly that reason. On iOS a VoiceOver Member was
+   * never told that their photo had failed, or that it had not been added because there
+   * was no connection: the one piece of feedback the sheet has, silent.
+   *
+   * `announceForAccessibility` alone rather than both, which is the choice
+   * `components/Screen.tsx` documents: on Android the pair announces twice.
+   */
+  useEffect(() => {
+    if (pickNotice !== null) AccessibilityInfo.announceForAccessibility(pickNotice);
+  }, [pickNotice]);
+  useEffect(() => {
+    if (notice !== null) AccessibilityInfo.announceForAccessibility(notice);
+  }, [notice]);
+
+  /** Put a chosen photo down: the state, and the full-resolution file behind it. */
+  const forgetPhoto = () => {
+    if (photo !== null) discardPhoto(photo);
+    setPhoto(null);
+  };
 
   if (tile === null) return null;
 
@@ -131,10 +249,51 @@ export function TileSheet({
       id: Crypto.randomUUID(),
       tileId: tile.id,
       memberId,
+      familyId,
       note: note.trim() === '' ? null : note.trim(),
+      // Minted here too, and for the same reason: this is when the Member says it
+      // happened, and a tap held in the queue for three days must still carry Monday
+      // (§17.3). Everything downstream — the optimistic row, the queued row, the replay —
+      // uses this one value.
+      //
+      // Through `occurredAtFor`, not raw, and that is not defensive tidying: sending this
+      // column at all is new in slice 17, and `stamp_increment()` refuses anything below
+      // `least(sealed_at, now())` with `PT403` — which `classifyDelivery` drops. A handset
+      // whose clock has reset to the factory date would fail every tap for the rest of the
+      // Year, online with an unhelpable message and offline in silence.
+      occurredAt: occurredAtFor(new Date().toISOString(), sealedAt),
+      photo,
     });
     setNote('');
     setNoteOpen(false);
+    // The upload reads `photo.body`, which is already in memory, so the picker's original
+    // has nothing left to do the moment the tap is handed over.
+    forgetPhoto();
+    setPickNotice(null);
+  };
+
+  /**
+   * §3's second secondary. The permission is asked here, at the moment it is needed, and
+   * a refusal is a Member's answer rather than an error (§0.3) — one plain sentence saying
+   * where the switch is, and no second ask.
+   */
+  const addPhoto = () => {
+    if (picking) return;
+    setPicking(true);
+    void pickPhoto()
+      .then((outcome) => {
+        if (outcome.kind === 'photo') {
+          setPhoto(outcome.photo);
+          setPickNotice(null);
+          return;
+        }
+        // Cancelling says nothing at all. Changing your mind is not an event.
+        if (outcome.kind === 'cancelled') return;
+        setPickNotice(
+          outcome.kind === 'denied' ? photoPermissionCopy : photoUnreadableCopy,
+        );
+      })
+      .finally(() => setPicking(false));
   };
 
   return (
@@ -291,6 +450,88 @@ export function TileSheet({
                   style={{ marginTop: space.md }}
                 />
               )}
+
+              {/* §3's other 46pt secondary, and §16.1's one optional photo. Beside "Add a
+                  note" and identical to it in weight, because they are the same kind of
+                  thing: something a Member may do and never has to. */}
+              {photo === null ? (
+                // The same control as "Add a note" above, and it was a hand-rolled
+                // `<Pressable>` beside it. §3 lists the two as one pair of secondaries —
+                // "46pt, hairline outline" — so two renderings of one thing is the app
+                // disagreeing with itself in the two rows where the disagreement is
+                // side by side: `body`/`ink2` against `action`/`ink`, and a literal
+                // `borderWidth: 1` where the token is `stroke.hairline`. `<Button>` is
+                // also where §6 A3's 44pt floor and §6 A4's growth live, both of which a
+                // fixed `minHeight` opted out of.
+                <Button
+                  label="Add a photo"
+                  height={size.controlSharpen}
+                  disabled={picking}
+                  onPress={addPhoto}
+                  style={{ marginTop: space.md }}
+                />
+              ) : (
+                /* What is about to be attached, and a way out of it. The thumbnail is the
+                   **original** local file rather than anything signed — nothing has been
+                   uploaded yet, and there is no URL to speak of until the tap lands. */
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: space.md,
+                    marginTop: space.md,
+                    padding: space.sm,
+                    borderRadius: radius.card,
+                    // The token, not a literal 1 — §1 gives the rule one width and this
+                    // row sits directly under a `<Button variant="outlined">` drawn from it.
+                    borderWidth: stroke.hairline,
+                    borderColor: color.hairline,
+                  }}
+                >
+                  <Image
+                    source={{ uri: photo.previewUri }}
+                    accessibilityIgnoresInvertColors
+                    // Decorative: the row's own label says a photo is attached, and a
+                    // Member cannot be told what is in their own picture by an app.
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={{
+                      width: PREVIEW,
+                      height: PREVIEW,
+                      borderRadius: radius.card,
+                      backgroundColor: color.paperSunk,
+                    }}
+                  />
+                  <Text style={{ ...styles.body, color: color.ink2, flex: 1 }}>
+                    A photo is attached.
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove the photo from this one"
+                    onPress={forgetPhoto}
+                    style={({ pressed }) => ({
+                      minHeight: size.minTouch,
+                      justifyContent: 'center',
+                      paddingHorizontal: space.sm,
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    {/* `clayDeep`, never red (§1.1). Same treatment as removing an
+                        Increment below, because it is the same kind of undoing. */}
+                    <Text style={{ ...styles.label, color: color.clayDeep }}>Remove</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {/* The picker's answer — a declined permission, or a file that would not
+                  read. §1.1: `ink2` and plain words, never colour, never a block. */}
+              {pickNotice === null ? null : (
+                // No live region: it is Android-only and would announce twice there
+                // alongside the effect above, which is the one that reaches iOS at all.
+                <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
+                  {pickNotice}
+                </Text>
+              )}
             </>
           ) : (
             <Text
@@ -382,6 +623,27 @@ export function TileSheet({
             >
               <Text style={{ ...styles.body, color: color.clayDeep }}>{failure}</Text>
             </View>
+          )}
+
+          {/* The tap landed and something optional about it did not — a photo that had no
+              connection to go over (§17.1), or an upload that failed. Plain `ink2` on the
+              sheet's own ground: §1.1 gives failed uploads and offline state words rather
+              than colour, and this is not a refusal to be framed like one. */}
+          {notice === null ? null : (
+            // Announced by the effect above rather than by a live region, which reaches
+            // Android only — see there.
+            <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
+              {notice}
+            </Text>
+          )}
+
+          {/* §17.3, said out loud. A standing fact rather than an event: it is here for as
+              long as there are taps on the device and disappears when they land. Not a
+              spinner, not a badge, and never a number the Member has to act on. */}
+          {queuedCopy(queued) === null ? null : (
+            <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
+              {queuedCopy(queued)}
+            </Text>
           )}
 
           <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xl }}>Recent</Text>

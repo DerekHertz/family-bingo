@@ -20,7 +20,7 @@
  */
 
 import { memo } from 'react';
-import { Text, View } from 'react-native';
+import { Image, Text, View, type ViewStyle } from 'react-native';
 import { feedCopy, feedLabel, toneOf, type FeedEvent } from '../src/domain/feed';
 import { shortDate } from '../src/domain/when';
 import { styles } from '../theme/fonts';
@@ -31,6 +31,9 @@ import { Sunflower } from './Sunflower';
 /** §3's "34pt leading slot". */
 const SLOT = 34;
 
+/** §3: "photo below at 150pt, `radius.card`". */
+const PHOTO = 150;
+
 interface Props {
   event: FeedEvent;
   /** The Member's name, or the honest fallback when they are no longer on the roster. */
@@ -38,9 +41,26 @@ interface Props {
   /** §4.7's clay dot, everywhere they appear. */
   managed: boolean;
   lineNameOf: (lineIndex: number) => string;
+  /**
+   * A short-TTL signed URL for `event.attachmentPath`, or `null` while one is being minted
+   * (§16.2).
+   *
+   * Passed in rather than fetched here for two reasons, and only the first is the house
+   * rule about components not fetching. The second is that signing is a **batch**: one
+   * round trip signs the whole page, because a `createSignedUrl` inside each row is thirty
+   * requests for thirty rows on a screen that exists to be scrolled, repeated every time a
+   * row re-renders. The screen owns the batch (`useSignedPhotos`); the row owns the frame.
+   */
+  photoUrl?: string | null;
 }
 
-export const FeedRow = memo(function FeedRow({ event, name, managed, lineNameOf }: Props) {
+export const FeedRow = memo(function FeedRow({
+  event,
+  name,
+  managed,
+  lineNameOf,
+  photoUrl = null,
+}: Props) {
   const tone = toneOf(event);
   const copy = feedCopy(event, () => name, lineNameOf);
   const when = shortDate(event.createdAt);
@@ -134,18 +154,97 @@ export const FeedRow = memo(function FeedRow({ event, name, managed, lineNameOf 
           </Text>
         )}
 
-        {/* §16's Attachment renders here as a 150pt image from a signed URL. Until slice 16
-            mints one, saying a photo exists is more honest than a broken frame — and §3's
-            placeholder rule (never a spinner, never a blur-up of a cached child's face)
-            is about loading, not about a feature that is not built. */}
+        {/* §16.1's Attachment. §3: "`<Image>` from a **signed URL with a short TTL**",
+            150pt, `radius.card`.
+
+            The frame is drawn whether or not the URL has arrived, and the placeholder is
+            §3's own: `paperSunk` with a diagonal hatch, "never a spinner, never a blur-up
+            of a cached child's face". A spinner would say the app is busy when it is
+            usually the network; a blur-up would mean the app kept a low-resolution copy of
+            somebody's child around to show while the real one loads, which is the one
+            thing §7.6 rules out in the plainest terms.
+
+            A row whose URL never arrives — RLS refused it, the reaper has already taken
+            the bytes (§16.6) — keeps the hatch. That is the honest picture: something was
+            here, and it is not being shown to you. */}
         {event.attachmentPath === null ? null : (
-          <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.sm }}>
-            With a photo
-          </Text>
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={{
+              width: PHOTO,
+              height: PHOTO,
+              marginTop: space.sm,
+              borderRadius: radius.card,
+              backgroundColor: color.paperSunk,
+              // The hatch lives inside the rounded frame, so the stripes cannot run past
+              // the corners.
+              overflow: 'hidden',
+            }}
+          >
+            <Hatch />
+            {photoUrl === null ? null : (
+              <Image
+                source={{ uri: photoUrl }}
+                // The palette is warm and low chroma "so member photos sit on them without
+                // clashing" (§1) — inverting the interface must not invert a photograph.
+                accessibilityIgnoresInvertColors
+                resizeMode="cover"
+                style={{ width: PHOTO, height: PHOTO }}
+              />
+            )}
+          </View>
         )}
 
         <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xs }}>{when}</Text>
       </View>
+    </View>
+  );
+});
+
+/**
+ * §3's placeholder: `paperSunk` with a diagonal hatch.
+ *
+ * Views and rotation, no SVG and no asset — the same argument §7.5 makes about the board,
+ * and the same primitive §2's completion hatch uses. Each bar is 1px of `hairline` twice
+ * the frame's width, rotated -45° and stepped down the box, so the ends are always outside
+ * the `overflow: hidden` frame and the stripes reach every corner.
+ *
+ * **This is thirty `<View>`s in every Feed row that has a photo, and `memo` does not change
+ * that.** The comment here used to say "rendered once and memoised", which is not what
+ * either word does: `memo` skips a *re-render* of a component whose props have not changed,
+ * and this one takes none, so it renders once **per mounting** — and it mounts once per
+ * row. Thirty rows with photos is nine hundred views behind nine hundred images that are
+ * about to cover them.
+ *
+ * It is kept anyway, because §3 asks for this placeholder by name and rules out both
+ * cheaper answers — "never a spinner, never a blur-up of a cached child's face" — and
+ * because a `FlatList` only mounts the rows near the viewport. What the note is for is the
+ * next person, who should know the cost is per row before they put a hatch anywhere denser
+ * than a 150pt frame. The style objects at least are built once at module scope rather than
+ * thirty times per row.
+ */
+const HATCH_STEP = 10;
+
+const HATCH_BARS: ViewStyle[] = Array.from(
+  { length: Math.ceil((PHOTO * 2) / HATCH_STEP) },
+  (_, i) => ({
+    position: 'absolute',
+    left: -PHOTO / 2,
+    top: i * HATCH_STEP - PHOTO / 2,
+    width: PHOTO * 2,
+    height: 1,
+    backgroundColor: color.hairline,
+    transform: [{ rotate: '-45deg' }],
+  }),
+);
+
+const Hatch = memo(function Hatch() {
+  return (
+    <View style={{ position: 'absolute', inset: 0 }}>
+      {HATCH_BARS.map((bar, i) => (
+        <View key={i} style={bar} />
+      ))}
     </View>
   );
 });

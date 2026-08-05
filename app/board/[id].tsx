@@ -26,10 +26,12 @@ import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import {
   incrementFailureCopy,
+  photoOutcomeCopy,
   useDeleteIncrement,
   useLogIncrement,
   useRecentIncrements,
 } from '../../lib/queries/increments';
+import { useQueuedCount } from '../../lib/queue';
 import {
   familyGoalFailureCopy,
   useCompleteFamilyGoal,
@@ -95,6 +97,9 @@ export default function DraftingTable() {
   );
   // §4.4: "One confirm sheet, then compose." This is the sheet's subject.
   const [swapping, setSwapping] = useState<SwapCandidate | null>(null);
+  // §17.3 — how many taps are on this handset rather than on the server. Read here rather
+  // than in the sheet because components in this codebase do no fetching of their own.
+  const queued = useQueuedCount();
   // §4.3's contributors block, and only for the shared Centre. `useRoster` already returns
   // Members in join order, which is the ordering §13.5 permits.
   const roster = useRoster(head.data?.familyId);
@@ -525,13 +530,31 @@ export default function DraftingTable() {
         </ScrollView>
 
         <TileSheet
+          /**
+           * Keyed on the square, so closing the sheet forgets what was half-written in it.
+           *
+           * The sheet holds a note and now a chosen photo, and one instance serves all 25
+           * Tiles — so without this, a photo picked for the walking goal and then
+           * abandoned is still attached when the reading goal's sheet opens, and gets
+           * uploaded against it. A note behaved the same way and nobody noticed, because
+           * a stale sentence is embarrassing and a stale photograph of somebody's child on
+           * the wrong Goal is not.
+           */
+          key={sheetTile?.id ?? 'closed'}
           tile={sheetTile}
           memberId={head.data.memberId}
+          familyId={head.data.familyId}
+          // The floor under every `occurred_at` the sheet mints (§11.5, `occurredAtFor`).
+          sealedAt={head.data.sealedAt}
           ownerName={head.data.isSelf ? null : head.data.memberName}
           recent={recent.data ?? []}
           recentPending={recent.isLoading}
           blocked={blocked}
           failure={writeFailure}
+          // The soft outcome of the last tap: it landed, and its photo did not (§16, §17.1).
+          // Separate from `failure`, which is a write the server refused outright.
+          notice={photoOutcomeCopy(logIncrement.data)}
+          queued={queued}
           family={(roster.data?.members ?? [])
             .filter((m) => m.status === 'active')
             .map((m) => ({
