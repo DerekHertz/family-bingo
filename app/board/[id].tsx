@@ -21,6 +21,7 @@ import { leaveTo } from '../../lib/leave';
 import { Board, type LineCelebration } from '../../components/Board';
 import { Button } from '../../components/Button';
 import { ErrorState, Loading } from '../../components/Screen';
+import { SwapSheet, type SwapCandidate } from '../../components/SwapSheet';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
 import {
@@ -34,6 +35,7 @@ import {
   useCompleteFamilyGoal,
 } from '../../lib/queries/family-goal';
 import { useBoardMilestones } from '../../lib/queries/milestones';
+import { useSwapBudget } from '../../lib/queries/swaps';
 import { useRoster } from '../../lib/queries/invitations';
 import { useSession } from '../../lib/session';
 import {
@@ -47,6 +49,7 @@ import {
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
 import { countCompact, countSummary } from '../../src/domain/increment';
+import { evaluateGoalRewrite } from '../../src/domain/swaps';
 import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
@@ -72,6 +75,14 @@ export default function DraftingTable() {
   const logIncrement = useLogIncrement(tileIds, session?.user.id);
   const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);
   const completeFamilyGoal = useCompleteFamilyGoal();
+  // §18.1's budget, for the confirm sheet's pips and for deciding whether to offer the row
+  // at all. Only meaningful on a sealed Board — a draft is free editing (§6.4).
+  const swapBudget = useSwapBudget(
+    head.data?.sealedAt === null ? undefined : id,
+    session?.user.id,
+  );
+  // §4.4: "One confirm sheet, then compose." This is the sheet's subject.
+  const [swapping, setSwapping] = useState<SwapCandidate | null>(null);
   // §4.3's contributors block, and only for the shared Centre. `useRoster` already returns
   // Members in join order, which is the ordering §13.5 permits.
   const roster = useRoster(head.data?.familyId);
@@ -276,6 +287,31 @@ export default function DraftingTable() {
           ? 'not-yours'
           : null;
 
+    // §4.4 — may this square be swapped at all?
+    //
+    // Asked with an unchanged Goal, so the answer is about the *square* rather than about
+    // any particular rewrite: `evaluateGoalRewrite` refuses a frozen Year, the shared
+    // Centre, a completed Tile and an exhausted budget regardless of what is being written,
+    // and those four are exactly the states in which the row must not appear. What a
+    // specific rewrite costs is the compose screen's question (§18.3).
+    const swapAllowed =
+      sheetTile !== null &&
+      blocked === null &&
+      head.data.sealedAt !== null &&
+      evaluateGoalRewrite(
+        {
+          sealed: true,
+          frozen: head.data.year.status === 'frozen',
+          swapsUsed: swapBudget.data ?? 0,
+          isSharedCenter: sheetTile.isCentre,
+          isComplete: isTileComplete(sheetTile.count, sheetTile.target),
+        },
+        { text: sheetTile.text, target: sheetTile.target },
+        // A rewrite that would cost a swap, so the budget check is exercised. Anything
+        // free would answer "allowed" on a Board with none left.
+        { text: `${sheetTile.text} `.trim() + '.', target: sheetTile.target },
+      ).allowed;
+
     // Whichever write failed last. Both mutations feed one line, because only one of them
     // can be in flight from a sheet showing a single Tile.
     const writeFailure =
@@ -479,6 +515,37 @@ export default function DraftingTable() {
                   })
               : undefined
           }
+          onSwap={
+            swapAllowed && sheetTile !== null
+              ? () => {
+                  // The tile sheet closes as the confirm sheet opens: two stacked modals
+                  // is one too many to dismiss, and the Member is being asked one question.
+                  setSwapping({
+                    tileId: sheetTile.id,
+                    position: sheetTile.position,
+                    text: sheetTile.text,
+                    target: sheetTile.target,
+                    count: sheetTile.count,
+                  });
+                  setOpenTileId(null);
+                }
+              : undefined
+          }
+        />
+
+        <SwapSheet
+          tile={swapping}
+          swapsUsed={swapBudget.data ?? 0}
+          onClose={() => setSwapping(null)}
+          onConfirm={() => {
+            const target = swapping;
+            setSwapping(null);
+            if (target === null) return;
+            router.push({
+              pathname: '/board/swap',
+              params: { boardId: id ?? '', tileId: target.tileId },
+            });
+          }}
         />
       </View>
     );

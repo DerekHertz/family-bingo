@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   SWAP_BUDGET,
-  type GoalRewriteContext,
   costOfRewrite,
   evaluateGoalRewrite,
+  swapConsequenceCopy,
+  swapRefusalCopy,
   swapsRemaining,
+  type GoalRewriteContext,
 } from './swaps';
 
 const sealed = (over: Partial<GoalRewriteContext> = {}): GoalRewriteContext => ({
@@ -173,5 +175,61 @@ describe('evaluateGoalRewrite', () => {
       0,
       'budget_exhausted',
     ]);
+  });
+});
+
+describe('swapRefusalCopy (§0.3, §18.5, §20.1)', () => {
+  it('has a distinct sentence for each of the four refusals', () => {
+    const said = (['year_frozen', 'budget_exhausted', 'shared_center_tile', 'tile_complete'] as const)
+      .map(swapRefusalCopy);
+    expect(new Set(said).size).toBe(4);
+    for (const s of said) expect(s.length).toBeGreaterThan(0);
+  });
+
+  // All four arrive from the server as `PT403` — one SQLSTATE for four different facts —
+  // which is why the discrimination has to happen client-side, before the request.
+  it('says the budget is spent without scolding, because scarcity is the feature', () => {
+    const said = swapRefusalCopy('budget_exhausted');
+    expect(said.toLowerCase()).toContain('no swaps left');
+    expect(said.toLowerCase()).not.toMatch(/should|shouldn|too many|wasted|careful/);
+  });
+
+  // §12.3 — one row referenced by every Board. Changing it would change everyone's.
+  it('explains the centre as shared rather than as forbidden', () => {
+    expect(swapRefusalCopy('shared_center_tile').toLowerCase()).toContain('family');
+  });
+
+  it('offers no retry for a frozen Year, because there is not one (§20.1)', () => {
+    const said = swapRefusalCopy('year_frozen').toLowerCase();
+    expect(said).not.toMatch(/try again|in a moment|later/);
+  });
+});
+
+describe('swapConsequenceCopy (§4.4, §7.10)', () => {
+  // The counter-intuitive part, and the whole reason §4.4 asks for a paragraph: the
+  // obvious reading of "swap" is "delete", and it is wrong. The retired Goal keeps its
+  // Increments and they still count for the year.
+  it('leads with the fact that nothing is deleted, at every count', () => {
+    for (const n of [0, 1, 2, 47]) {
+      expect(swapConsequenceCopy(n)).toContain('Nothing is deleted');
+    }
+  });
+
+  it('does not talk about Increments that do not exist', () => {
+    expect(swapConsequenceCopy(0)).not.toMatch(/\d/);
+  });
+
+  it('counts them when there are some, and reads correctly for one', () => {
+    expect(swapConsequenceCopy(1)).toContain('The one you logged');
+    expect(swapConsequenceCopy(9)).toContain('The 9 you logged');
+  });
+
+  // §7.10: "do not let any screen imply a Member gave up on the goal they set down."
+  it('never implies the Member gave up', () => {
+    for (const n of [0, 3]) {
+      expect(swapConsequenceCopy(n).toLowerCase()).not.toMatch(
+        /gave up|quit|failed|abandon|wasted|lost/,
+      );
+    }
   });
 });
