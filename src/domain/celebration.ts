@@ -29,18 +29,23 @@ export interface CelebratedMilestone {
 }
 
 /**
- * Milestones present now that were not present last time, in a stable order.
+ * Milestones present now that were not present last time, **in the order they were given**.
  *
  * `seen` is everything already celebrated **including anything that arrived before the
  * screen opened**. That is the load-bearing part: a Member opening a Board they finished
  * last week must not walk into five celebrations, so the first read seeds `seen` with
  * everything and celebrates none of it. Only what appears *afterwards* is new.
+ *
+ * The order is the caller's and is deliberately not re-sorted. An earlier version sorted
+ * on `id`, which is `gen_random_uuid()` — stable in the sense that the same input gives
+ * the same output, and meaningless in every other sense. It threw away the `created_at`
+ * ordering the query establishes, so when two Lines closed together the one whose random
+ * id happened to sort lower was the one drawn.
  */
 export const newlyCelebrated = <T extends { readonly id: string }>(
   current: readonly T[],
   seen: ReadonlySet<string>,
-): T[] =>
-  current.filter((m) => !seen.has(m.id)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+): T[] => current.filter((m) => !seen.has(m.id));
 
 /**
  * How much noise a Milestone is worth, and therefore which one speaks when several land
@@ -121,11 +126,67 @@ export const announcementFor = (
 };
 
 /**
- * The Milestone card on the Board screen (FRONTEND_DESIGN §4, "Milestone card").
+ * Everything a Member should be told about what just landed, as one sentence.
+ *
+ * The loudest Milestone speaks, and a Line that closed underneath it speaks too. §5's
+ * "one notification however many landed at once" is an argument about **haptics** — five
+ * buzzes read as a malfunction — and it does not transfer to speech: a screen-reader
+ * Member has no other channel for *"the top-left diagonal also closed"*, and §6 A5 asks
+ * for a Line to be announced on the tap that closed it.
+ *
+ * `null` when there is nothing worth saying, which is every tap that only moves a count.
+ */
+export const announcementOf = (
+  fresh: readonly CelebratedMilestone[],
+  name: (lineIndex: number) => string,
+): string | null => {
+  const loud = loudest(fresh);
+  if (loud === null) return null;
+  const line = loudest(fresh.filter((m) => m.lineIndex !== null));
+  const sentences = [
+    announcementFor(loud, name),
+    line === null || line.id === loud.id ? null : announcementFor(line, name),
+  ].filter((s): s is string => s !== null);
+  return sentences.length === 0 ? null : sentences.join(' ');
+};
+
+/**
+ * Whether a Milestone is one the card will show.
+ *
+ * Tiles are left out — twenty-five of them land over a Year, and a card that changed every
+ * few days would stop being read. Stated as its own predicate because two things need the
+ * same answer: the card's headline, and choosing *which* Milestone the card is about.
+ */
+export const cardWorthy = (milestone: CelebratedMilestone): boolean =>
+  milestone.type !== 'tile_completed';
+
+/**
+ * The Milestone the card should be about, out of everything on the Board.
+ *
+ * **Not simply the last row.** Every Milestone written by one tap shares a `created_at`,
+ * because `now()` is the transaction's timestamp and the tap that finishes a Board writes
+ * a Tile, up to four Lines and the Blackout in a single transaction. `order by created_at`
+ * has no tiebreaker inside that group, so "the last row" is whichever one the plan
+ * happened to return — and the card could read "Column 4" on the day somebody finished
+ * all twenty-five squares.
+ *
+ * So: the newest instant, then the loudest thing that happened in it.
+ */
+export const cardMilestone = <T extends CelebratedMilestone & { readonly createdAt: string }>(
+  all: readonly T[],
+): T | null => {
+  const eligible = all.filter(cardWorthy);
+  if (eligible.length === 0) return null;
+  const newest = eligible.reduce((a, b) => (b.createdAt > a.createdAt ? b : a)).createdAt;
+  return loudest(eligible.filter((m) => m.createdAt === newest));
+};
+
+/**
+ * What the card says (FRONTEND_DESIGN §4, "Milestone card").
  *
  * Deliberately not congratulatory and deliberately not a count: it states what happened
- * and nothing about how that compares to anyone (§13.5). Tiles are left out — twenty-five
- * of them land over a Year and a card that changed every few days would stop being read.
+ * and nothing about how that compares to anyone (§13.5). `null` for anything `cardWorthy`
+ * rejects.
  */
 export const milestoneHeadline = (
   milestone: CelebratedMilestone,

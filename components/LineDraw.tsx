@@ -16,6 +16,10 @@
  * Nothing here is interactive: `pointerEvents="none"` so the squares underneath keep
  * taking taps for the whole animation. A celebration that swallowed a tap would cost a
  * Member the Increment they were trying to log.
+ *
+ * Timing is §5's, exactly: the pulse phase is **5 × 60ms = 300ms** end to end — each
+ * square's own rise and fall fits inside its 60ms slot rather than trailing past it — and
+ * the hairline then draws over `motion.grow`.
  */
 
 import { memo, useEffect, useRef } from 'react';
@@ -45,8 +49,14 @@ interface Props {
   runKey: string;
   /** §5: everything collapses to a 150ms crossfade, and the pulses do not run at all. */
   reduceMotion: boolean;
-  /** Cleared when the drawing has finished so the caller can drop the overlay. */
-  onDone: () => void;
+  /**
+   * Called when the drawing has finished, so the caller can drop the overlay.
+   *
+   * Optional so the caller can pass its handler straight through. A `?? (() => …)` default
+   * at the call site mints a new function on every render, which defeats the `memo` below
+   * for no benefit.
+   */
+  onDone?: (() => void) | undefined;
 }
 
 export const LineDraw = memo(function LineDraw({
@@ -69,11 +79,21 @@ export const LineDraw = memo(function LineDraw({
   done.current = onDone;
 
   useEffect(() => {
+    // Nothing has been measured yet, so there is nowhere to draw. Running anyway would
+    // play the whole sequence invisibly and then report it done — and since the caller
+    // clears the celebration on `onDone`, and the Milestone is by then in the "seen" set,
+    // the Line would never be drawn at all. `width` is in the deps so the run happens when
+    // the measurement arrives instead.
+    if (width <= 0) return;
+
     for (const value of pulses) value.setValue(0);
     draw.setValue(0);
 
     const sequence = reduceMotion
-      ? // §5's fallback: no travelling pulse, one crossfade to the end state.
+      ? // §5's fallback: no travelling pulse, one crossfade to the end state. The transform
+        // below drops the sweep to match — a stroke that still travels the board is the
+        // exact motion this setting exists to suppress, and it is the longest journey any
+        // of the four animations makes.
         Animated.timing(draw, {
           toValue: 1,
           duration: motion.reduced.duration,
@@ -83,17 +103,20 @@ export const LineDraw = memo(function LineDraw({
       : Animated.sequence([
           Animated.stagger(
             motion.lineStep.duration,
+            // Rise and fall inside the square's own 60ms slot. §5 budgets "5 × 60ms" for
+            // the whole pulse phase, so a fall that outlasted its slot would push the
+            // hairline late and make the five squares blur into one wash.
             pulses.map((value) =>
               Animated.sequence([
                 Animated.timing(value, {
                   toValue: PULSE_OPACITY,
-                  duration: motion.lineStep.duration,
+                  duration: motion.lineStep.duration / 2,
                   easing: Easing.out(Easing.quad),
                   useNativeDriver: true,
                 }),
                 Animated.timing(value, {
                   toValue: 0,
-                  duration: motion.lineStep.duration * 2,
+                  duration: motion.lineStep.duration / 2,
                   easing: Easing.out(Easing.quad),
                   useNativeDriver: true,
                 }),
@@ -113,11 +136,11 @@ export const LineDraw = memo(function LineDraw({
     sequence.start(({ finished }) => {
       // An interrupted run is a screen that went away. Reporting it done would clear an
       // overlay that has already been unmounted, and on a remount would skip the animation.
-      if (finished) done.current();
+      if (finished) done.current?.();
     });
     return () => sequence.stop();
     // `runKey` is the restart signal; `pulses`/`draw` are refs and never change identity.
-  }, [runKey, lineIndex, reduceMotion, pulses, draw]);
+  }, [runKey, lineIndex, reduceMotion, width, pulses, draw]);
 
   // A width of zero is the first layout pass, before anything has been measured. Drawing
   // from it would put a zero-length hairline in the top-left corner for one frame.
@@ -160,19 +183,23 @@ export const LineDraw = memo(function LineDraw({
           // on any tile's ladder.
           backgroundColor: color.clay,
           opacity: draw,
-          transform: [
-            { rotate: `${segment.rotation}deg` },
-            // Drawn from its start rather than grown from the middle: the hairline follows
-            // the pulses that just travelled the same way. `translateX` compensates for
-            // `scaleX` being applied about the centre.
-            {
-              translateX: draw.interpolate({
-                inputRange: [0, 1],
-                outputRange: [-segment.length / 2, 0],
-              }),
-            },
-            { scaleX: draw },
-          ],
+          transform: reduceMotion
+            ? // §5: a crossfade between start and end state, and nothing that travels. The
+              // rotation stays because it is the hairline's shape, not its motion.
+              [{ rotate: `${segment.rotation}deg` }]
+            : [
+                { rotate: `${segment.rotation}deg` },
+                // Drawn from its start rather than grown from the middle: the hairline
+                // follows the pulses that just travelled the same way. `translateX`
+                // compensates for `scaleX` being applied about the centre.
+                {
+                  translateX: draw.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-segment.length / 2, 0],
+                  }),
+                },
+                { scaleX: draw },
+              ],
         }}
       />
     </View>

@@ -143,7 +143,7 @@ export function Board({
             gap={gap}
             runKey={celebrate.key}
             reduceMotion={reduceMotion}
-            onDone={onCelebrationDone ?? (() => undefined)}
+            onDone={onCelebrationDone}
           />
         )}
       </View>

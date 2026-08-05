@@ -36,7 +36,8 @@ import { useBoardMilestones } from '../../lib/queries/milestones';
 import { useRoster } from '../../lib/queries/invitations';
 import { useSession } from '../../lib/session';
 import {
-  announcementFor,
+  announcementOf,
+  cardMilestone,
   hapticFor,
   loudest,
   milestoneHeadline,
@@ -79,8 +80,12 @@ export default function DraftingTable() {
   //
   // Scoped to this Member and this Year: `milestones_read` is Family-wide, so an unscoped
   // read would celebrate a sibling's Bingo on this Board.
+  //
+  // Not read at all on a draft. A Board that has not sealed has no Milestones and never
+  // can — `tile_is_loggable()` refuses an Increment until `sealed_at is not null` — so
+  // asking is a round trip whose answer is known to be empty.
   const milestones = useBoardMilestones(
-    head.data?.memberId,
+    head.data?.sealedAt === null ? undefined : head.data?.memberId,
     head.data?.year.id,
     session?.user.id,
   );
@@ -108,13 +113,17 @@ export default function DraftingTable() {
     if (fresh.length === 0) return;
     for (const milestone of fresh) celebrated.current.seen.add(milestone.id);
 
-    // One haptic and one sentence however many Milestones landed at once, and they belong
-    // to the loudest of them. A tap that closes a Tile, three Lines and the Blackout is a
-    // single transaction server-side; five bursts of feedback for it reads as a
-    // malfunction rather than as a reward.
+    // **One** haptic however many Milestones landed at once, and it belongs to the loudest
+    // of them. A tap that closes a Tile, three Lines and the Blackout is a single
+    // transaction server-side; five bursts of feedback for it reads as a malfunction
+    // rather than as a reward.
+    //
+    // The sentence is not subject to that rule and `announcementOf` says why: §5's
+    // argument is about buzzes, and a Member listening rather than looking has no other
+    // way to learn that a Line closed underneath the Blackout (§6 A5).
     const loud = loudest(fresh);
     if (loud === null) return;
-    const cancel = celebrate(hapticFor(loud.type), announcementFor(loud, lineName));
+    const cancel = celebrate(hapticFor(loud.type), announcementOf(fresh, lineName));
 
     // The Line that just closed, which is not always the loudest Milestone: a Blackout
     // outranks the Bingo inside it and has no Line of its own to draw.
@@ -243,19 +252,12 @@ export default function DraftingTable() {
     // Milestone it earned stays, because it was pushed and cannot be unsent (§15.3).
     const lines = completedLines(completedOn(boardTiles));
 
-    // The newest Milestone the card is willing to show. `milestones.data` arrives oldest
-    // first, so the last match is the newest one; the headline is computed here rather
-    // than in the JSX so the "is there one at all" test and the text are the same call.
-    const cardMilestone = (() => {
-      const all = milestones.data ?? [];
-      for (let i = all.length - 1; i >= 0; i -= 1) {
-        const milestone = all[i];
-        if (milestone === undefined) continue;
-        const headline = milestoneHeadline(milestone, lineName);
-        if (headline !== null) return { milestone, headline };
-      }
-      return null;
-    })();
+    // The Milestone the card is about — the newest instant, then the loudest thing that
+    // happened in it. Not "the last row": one tap writes a Tile, its Lines and the
+    // Blackout in one transaction, and they all share a `created_at`, so row order inside
+    // that group is whatever the plan felt like.
+    const card = cardMilestone(milestones.data ?? []);
+    const cardHeadline = card === null ? null : milestoneHeadline(card, lineName);
 
     // An **empty** Tile opens nothing: it has no Goal to show and `tile_is_loggable()`
     // refuses Increments on it (§10.2), so a sheet there would be a sheet about nothing.
@@ -345,12 +347,10 @@ export default function DraftingTable() {
               the four or five things that happen rarely enough to still mean something.
 
               No count, no comparison, no "first" (§13.5): what happened, and when. */}
-          {cardMilestone === null ? null : (
+          {card === null || cardHeadline === null ? null : (
             <View
               accessible
-              accessibilityLabel={`${cardMilestone.headline}, ${longDate(
-                cardMilestone.milestone.createdAt,
-              )}`}
+              accessibilityLabel={`${cardHeadline}, ${longDate(card.createdAt)}`}
               style={{
                 marginTop: space.lg,
                 marginHorizontal: space.xl,
@@ -361,11 +361,9 @@ export default function DraftingTable() {
                 borderColor: color.hairline,
               }}
             >
-              <Text style={{ ...styles.cardHead, color: color.ink }}>
-                {cardMilestone.headline}
-              </Text>
+              <Text style={{ ...styles.cardHead, color: color.ink }}>{cardHeadline}</Text>
               <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xs }}>
-                {longDate(cardMilestone.milestone.createdAt)}
+                {longDate(card.createdAt)}
               </Text>
             </View>
           )}

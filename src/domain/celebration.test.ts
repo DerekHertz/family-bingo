@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   announcementFor,
+  announcementOf,
+  cardMilestone,
   hapticFor,
   loudest,
   milestoneHeadline,
@@ -57,11 +59,14 @@ describe('newlyCelebrated (§12.2, §5)', () => {
     }
   });
 
-  it('celebrates several at once in a stable order', () => {
+  // The caller's order is the server's `created_at` order. An earlier version sorted on
+  // `id`, which is a random uuid — so when two Lines closed together, the one drawn was
+  // whichever one won a coin toss.
+  it('celebrates several at once in the order it was given, not a sorted one', () => {
     expect(newlyCelebrated([tile('c'), tile('a'), tile('b')], new Set())).toEqual([
+      tile('c'),
       tile('a'),
       tile('b'),
-      tile('c'),
     ]);
   });
 
@@ -163,6 +168,75 @@ describe('announcementFor (§6 A5)', () => {
   // would render "Bingo. undefined complete." if one ever did not.
   it('survives a Line Milestone with no index', () => {
     expect(announcementFor({ ...bingo('a', 0), lineIndex: null }, lineName)).toBe('Bingo.');
+  });
+});
+
+describe('announcementOf (§5, §6 A5)', () => {
+  it('says nothing when nothing arrived', () => {
+    expect(announcementOf([], lineName)).toBeNull();
+  });
+
+  it('says nothing for a Tile alone — the square′s label already changed', () => {
+    expect(announcementOf([tile('a')], lineName)).toBeNull();
+  });
+
+  it('says the Bingo once when a Tile closed it', () => {
+    expect(announcementOf([tile('a'), bingo('b', 1)], lineName)).toBe(
+      'Bingo. Row 2 complete.',
+    );
+  });
+
+  // The finding this function exists for: a Blackout outranks the Bingo inside it, and a
+  // Member listening rather than looking would otherwise never learn a Line had closed.
+  it('names the Line that closed underneath a Blackout', () => {
+    expect(announcementOf([bingo('a', 4), blackout('b')], lineName)).toBe(
+      'Blackout. All twenty-five. Bingo. Row 5 complete.',
+    );
+  });
+
+  it('does not say the same Line twice when it is the loudest thing that happened', () => {
+    expect(announcementOf([line('a', 6)], lineName)).toBe('Column 2 complete.');
+  });
+
+  it('says the Blackout even when no Line came with it', () => {
+    expect(announcementOf([blackout('a')], lineName)).toBe('Blackout. All twenty-five.');
+  });
+});
+
+describe('cardMilestone (§4 Milestone card)', () => {
+  const at = (m: CelebratedMilestone, createdAt: string) => ({ ...m, createdAt });
+
+  it('is null on a Board with nothing but completed Tiles', () => {
+    expect(cardMilestone([at(tile('a'), '2026-03-01T00:00:00Z')])).toBeNull();
+  });
+
+  it('is null on an empty Board', () => {
+    expect(cardMilestone([])).toBeNull();
+  });
+
+  it('takes the newest instant', () => {
+    const older = at(bingo('a', 0), '2026-03-01T00:00:00Z');
+    const newer = at(line('b', 1), '2026-06-01T00:00:00Z');
+    expect(cardMilestone([older, newer])).toEqual(newer);
+    expect(cardMilestone([newer, older])).toEqual(newer);
+  });
+
+  // The whole point. One tap writes a Tile, its Lines and the Blackout in one transaction,
+  // and `now()` is the transaction's clock — so they share a `created_at` exactly and row
+  // order inside the group is whatever the query plan felt like. "The last row" could put
+  // "Column 4" on the card the day somebody finished all twenty-five squares.
+  it('takes the loudest of a group written by the same tap, in either row order', () => {
+    const stamp = '2026-12-20T09:00:00Z';
+    const group = [at(line('a', 4), stamp), at(bingo('b', 9), stamp), at(blackout('c'), stamp)];
+    expect(cardMilestone(group)?.type).toBe('blackout');
+    expect(cardMilestone([...group].reverse())?.type).toBe('blackout');
+  });
+
+  it('ignores a Tile that shares the instant a Line was closed in', () => {
+    const stamp = '2026-12-20T09:00:00Z';
+    expect(cardMilestone([at(tile('a'), stamp), at(line('b', 2), stamp)])?.type).toBe(
+      'line_completed',
+    );
   });
 });
 
