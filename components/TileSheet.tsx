@@ -24,6 +24,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Image,
   Modal,
@@ -207,6 +208,26 @@ export function TileSheet({
     },
     [],
   );
+
+  /**
+   * Say the two soft notices out loud.
+   *
+   * Both shipped carrying `accessibilityLiveRegion="polite"` and nothing else, which is
+   * **Android-only** — this codebase says so in `lib/announce.ts`, `components/Screen.tsx`
+   * and `app/year/wrapped.tsx`, and every screen that can refuse a Member pairs the region
+   * with an explicit announcement for exactly that reason. On iOS a VoiceOver Member was
+   * never told that their photo had failed, or that it had not been added because there
+   * was no connection: the one piece of feedback the sheet has, silent.
+   *
+   * `announceForAccessibility` alone rather than both, which is the choice
+   * `components/Screen.tsx` documents: on Android the pair announces twice.
+   */
+  useEffect(() => {
+    if (pickNotice !== null) AccessibilityInfo.announceForAccessibility(pickNotice);
+  }, [pickNotice]);
+  useEffect(() => {
+    if (notice !== null) AccessibilityInfo.announceForAccessibility(notice);
+  }, [notice]);
 
   /** Put a chosen photo down: the state, and the full-resolution file behind it. */
   const forgetPhoto = () => {
@@ -505,10 +526,9 @@ export function TileSheet({
               {/* The picker's answer — a declined permission, or a file that would not
                   read. §1.1: `ink2` and plain words, never colour, never a block. */}
               {pickNotice === null ? null : (
-                <Text
-                  accessibilityLiveRegion="polite"
-                  style={{ ...styles.body, color: color.ink2, marginTop: space.md }}
-                >
+                // No live region: it is Android-only and would announce twice there
+                // alongside the effect above, which is the one that reaches iOS at all.
+                <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
                   {pickNotice}
                 </Text>
               )}
@@ -610,10 +630,9 @@ export function TileSheet({
               sheet's own ground: §1.1 gives failed uploads and offline state words rather
               than colour, and this is not a refusal to be framed like one. */}
           {notice === null ? null : (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={{ ...styles.body, color: color.ink2, marginTop: space.md }}
-            >
+            // Announced by the effect above rather than by a live region, which reaches
+            // Android only — see there.
+            <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
               {notice}
             </Text>
           )}
