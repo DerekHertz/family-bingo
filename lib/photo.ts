@@ -20,7 +20,7 @@
  * anywhere another app could read it, not even for a second.
  */
 
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { ImageManipulator, SaveFormat, type ImageRef } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
@@ -114,6 +114,9 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
   if (asset === undefined) return { kind: 'cancelled' };
 
   let saved: { uri: string; width: number; height: number } | null = null;
+  // The two native bitmaps, held so the `finally` can hand them back — see the note there.
+  let decoded: ImageRef | null = null;
+  let rendered: ImageRef | null = null;
   try {
     // **The rendered image's own dimensions, not the picker's.** `ImagePickerAsset`
     // documents `width` as "can be `0` if the system did not provide the width", and
@@ -122,13 +125,20 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
     // photographs whose metadata the system could not read. Rendering first costs one
     // decode, which `saveAsync` was going to do anyway, and the resize below then works
     // on the already-decoded native image rather than re-reading the file.
-    const decoded = await ImageManipulator.manipulate(asset.uri).renderAsync();
+    decoded = await ImageManipulator.manipulate(asset.uri).renderAsync();
     const resize = resizeToFit(decoded.width, decoded.height);
 
-    const rendered =
-      resize === null
-        ? decoded
-        : await ImageManipulator.manipulate(decoded).resize(resize).renderAsync();
+    if (resize === null) {
+      rendered = decoded;
+    } else {
+      rendered = await ImageManipulator.manipulate(decoded).resize(resize).renderAsync();
+      // Let the full-size bitmap go the instant the scaled one exists, rather than at the
+      // end of the function. This is the moment both are alive, and on a 48 MP photograph
+      // that is roughly 190 MB of native heap plus the copy — which is the peak the
+      // `finally` alone would not have moved.
+      decoded.release();
+      decoded = null;
+    }
 
     // Always re-encoded, even when nothing was resized: this is the step that drops EXIF.
     saved = await rendered.saveAsync({
@@ -157,6 +167,29 @@ export const pickPhoto = async (): Promise<PickOutcome> => {
     // this is a "no photo", never an exception thrown at a screen.
     return { kind: 'unavailable' };
   } finally {
+    // **Hand the decoded bitmaps back to the native heap.**
+    //
+    // `ImageRef extends SharedRef<'image'>`, and `SharedObject.release()`'s own docs name
+    // "image bitmap" as the case manual release exists for: the JS object is a few bytes
+    // and the thing it holds is not, so a garbage collector with no reason to run leaves
+    // the pixels allocated. A 48 MP photograph is around 190 MB decoded, and during the
+    // resize there are two of them — which is a native-heap OOM on Android, from a path
+    // that cannot reproduce in Node and so cannot be caught by any suite here.
+    //
+    // A Set because `rendered === decoded` whenever nothing needed scaling, and releasing
+    // one object twice throws. When they do differ, `decoded` was released and nulled at
+    // the peak above and only `rendered` is left here.
+    const bitmaps = new Set<ImageRef>();
+    if (decoded !== null) bitmaps.add(decoded);
+    if (rendered !== null) bitmaps.add(rendered);
+    for (const bitmap of bitmaps) {
+      try {
+        bitmap.release();
+      } catch {
+        // Already released, or the native object is gone. Not worth failing a tap over.
+      }
+    }
+
     // The re-encoded copy has served its purpose the instant its bytes are in memory.
     // Leaving it in the cache directory means a photograph of a child sitting in a file
     // nothing will ever read again, until the OS decides to reclaim it — which is the
