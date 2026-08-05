@@ -216,7 +216,14 @@ export function useLogIncrement(tileIds: readonly string[], accountId: string | 
         { ignoreDuplicates: true },
       );
 
-      const verdict = classifyDelivery({ status, code: failure(error).code });
+      // `failed` matters as much as the status: postgrest-js sets `error` on an *ok*
+      // response whose body it could not parse — a captive portal, a TLS-inspecting proxy
+      // — and without it that reads as a landing and the tap is neither queued nor sent.
+      const verdict = classifyDelivery({
+        status,
+        code: failure(error).code,
+        failed: error !== null,
+      });
 
       if (verdict === 'drop') throw error ?? new IncrementRefused('log');
 

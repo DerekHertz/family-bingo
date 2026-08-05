@@ -6,10 +6,25 @@ import {
   isQueuedTap,
   queuedCopy,
   readTaps,
+  sameForEveryRow,
   withTap,
   type Delivery,
+  type DeliveryOutcome,
   type QueuedTap,
 } from './queue';
+
+/**
+ * An answer, spelled the way `send()` spells one.
+ *
+ * `failed` defaults to what supabase-js actually does — an error object accompanies every
+ * non-2xx and every request that got no answer — so a case only has to state it when the
+ * point of the case is that the two disagree.
+ */
+const answer = (
+  status: number | null | undefined,
+  code = '',
+  failed = code !== '' || status == null || status === 0 || status >= 300,
+): DeliveryOutcome => ({ status, code, failed });
 
 const tap = (id: string, over: Partial<QueuedTap> = {}): QueuedTap => ({
   id,
@@ -27,32 +42,32 @@ const tap = (id: string, over: Partial<QueuedTap> = {}): QueuedTap => ({
  * every launch, forever, and nothing ever shows a Member that it is happening.
  */
 describe('classifyDelivery — api.md §5.1', () => {
-  const cases: [string, { status: number | null | undefined; code: string }, Delivery][] = [
-    ['201, the ordinary landing', { status: 201, code: '' }, 'delivered'],
-    ['200', { status: 200, code: '' }, 'delivered'],
-    ['204, which upsert answers with Prefer: return=minimal', { status: 204, code: '' }, 'delivered'],
+  const cases: [string, DeliveryOutcome, Delivery][] = [
+    ['201, the ordinary landing', answer(201), 'delivered'],
+    ['200', answer(200), 'delivered'],
+    ['204, which upsert answers with Prefer: return=minimal', answer(204), 'delivered'],
 
     // Not delivered, and a later attempt could succeed.
-    ['no answer at all — airplane mode', { status: null, code: '' }, 'keep'],
-    ['status 0, how supabase-js reports a fetch failure', { status: 0, code: '' }, 'keep'],
-    ['undefined status, from a client path that never set one', { status: undefined, code: '' }, 'keep'],
-    ['500', { status: 500, code: '' }, 'keep'],
-    ['502 from a proxy in front of PostgREST', { status: 502, code: '' }, 'keep'],
-    ['503', { status: 503, code: '' }, 'keep'],
-    ['429, which is the server asking for a pause', { status: 429, code: '' }, 'keep'],
-    ['401, because supabase-js refreshes the token on its own', { status: 401, code: '' }, 'keep'],
+    ['no answer at all — airplane mode', answer(null), 'keep'],
+    ['status 0, how supabase-js reports a fetch failure', answer(0), 'keep'],
+    ['undefined status, from a client path that never set one', answer(undefined), 'keep'],
+    ['500', answer(500), 'keep'],
+    ['502 from a proxy in front of PostgREST', answer(502), 'keep'],
+    ['503', answer(503), 'keep'],
+    ['429, which is the server asking for a pause', answer(429), 'keep'],
+    ['401, because supabase-js refreshes the token on its own', answer(401), 'keep'],
 
     // Not delivered, and no attempt ever will be.
-    ['403 + 42501 — the Year froze while the queue was offline', { status: 403, code: '42501' }, 'drop'],
-    ['403 + PT403 — an Increment predating the seal', { status: 403, code: 'PT403' }, 'drop'],
-    ['403 with no code', { status: 403, code: '' }, 'drop'],
-    ['400 on a body PostgREST would not parse', { status: 400, code: '' }, 'drop'],
-    ['404 on a Tile that is no longer there', { status: 404, code: '' }, 'drop'],
-    ['422', { status: 422, code: '' }, 'drop'],
+    ['403 + 42501 — the Year froze while the queue was offline', answer(403, '42501'), 'drop'],
+    ['403 + PT403 — an Increment predating the seal', answer(403, 'PT403'), 'drop'],
+    ['400 on a body PostgREST would not parse', answer(400), 'drop'],
+    ['413 on a body that will be too large again', answer(413), 'drop'],
+    ['422', answer(422), 'drop'],
+    ['23502 — a column this build did not send', answer(400, '23502'), 'drop'],
 
     // Already there, which is a landing however it is spelled.
-    ['409 on the primary key, when the Prefer header went missing', { status: 409, code: '' }, 'delivered'],
-    ['23505, the same thing said in SQLSTATE', { status: 409, code: '23505' }, 'delivered'],
+    ['409 on the primary key, when the Prefer header went missing', answer(409), 'delivered'],
+    ['23505, the same thing said in SQLSTATE', answer(409, '23505'), 'delivered'],
   ];
 
   it.each(cases)('%s', (_name, outcome, expected) => {
@@ -62,23 +77,101 @@ describe('classifyDelivery — api.md §5.1', () => {
   it('reads the SQLSTATE even when the status is missing', () => {
     // Not every client path surfaces a status. The code is the part that carries the
     // meaning, so it is checked first and it wins.
-    expect(classifyDelivery({ status: null, code: '42501' })).toBe('drop');
-    expect(classifyDelivery({ status: undefined, code: 'PT403' })).toBe('drop');
+    expect(classifyDelivery(answer(null, '42501'))).toBe('drop');
+    expect(classifyDelivery(answer(undefined, 'PT403'))).toBe('drop');
   });
 
-  it('never answers "keep" to a 403, in any spelling', () => {
-    // The single most expensive mistake this file can make. A Year does not unfreeze.
-    for (const code of ['', '42501', 'PT403', 'anything']) {
-      expect(classifyDelivery({ status: 403, code })).not.toBe('keep');
+  it('never answers "keep" to a 403 that RLS sent', () => {
+    // The single most expensive mistake in this direction. A Year does not unfreeze, and
+    // a queue that retries a frozen Year retries it on every launch forever.
+    for (const code of ['42501', 'PT403']) {
+      expect(classifyDelivery(answer(403, code))).toBe('drop');
     }
+  });
+
+  it('keeps a bare 403, because RLS always names itself', () => {
+    // Was `drop`. PostgREST answers an RLS refusal with `42501` in the body — a 403 with
+    // no code at all is a gateway or a WAF in front of it, which is a fact about the
+    // request's route and not about the tap, and which stops being true.
+    expect(classifyDelivery(answer(403, ''))).toBe('keep');
+  });
+
+  it('keeps a 404, because it is the route and never the row', () => {
+    // The defect this test exists to stop coming back. 404 was dropped as "a Tile that was
+    // removed" — but a missing Tile is a foreign-key violation, which PostgREST answers
+    // 409 with `23503`. Every 404 this request can receive is `PGRST205`, "could not find
+    // the table in the schema cache", during the seconds after a migration deploy, or a
+    // paused project. Dropping it silently deletes every queued tap on the handset.
+    expect(classifyDelivery(answer(404))).toBe('keep');
+  });
+
+  it('drops a 409 that is a foreign-key violation, not just the PK collision', () => {
+    // PostgREST maps `23503` to 409 as well, so without the code this read as a landing —
+    // and in the online path that then uploaded a photo against an Increment that does
+    // not exist.
+    expect(classifyDelivery(answer(409, '23503'))).toBe('drop');
+  });
+
+  it('does not believe a 2xx that came with an error on it', () => {
+    // postgrest-js sets `error` on an *ok* response whose body is not JSON: a captive
+    // portal's login page, a TLS-inspecting proxy's interstitial. Status 200, no code, and
+    // the tap is on no server anywhere. Reporting it as delivered deletes it from the only
+    // place it exists.
+    expect(classifyDelivery({ status: 200, code: '', failed: true })).toBe('keep');
+    expect(classifyDelivery({ status: 201, code: '', failed: true })).toBe('keep');
   });
 
   it('never answers "drop" to something that was never sent', () => {
     // The other direction, and it loses a Member's real progress rather than wasting
     // battery: a tap that got no answer may not have landed.
     for (const status of [null, undefined, 0]) {
-      expect(classifyDelivery({ status, code: '' })).toBe('keep');
+      expect(classifyDelivery(answer(status))).toBe('keep');
     }
+  });
+
+  it('drops only the statuses that are about these exact bytes', () => {
+    // The invariant behind the rewrite: `drop` is enumerated and `keep` is the
+    // fallthrough, because a kept tap is bounded by MAX_QUEUED and a dropped tap is
+    // bounded by nothing. Any 4xx nobody has thought about yet has to be kept.
+    for (const status of [402, 405, 406, 410, 415, 418, 428, 431, 451]) {
+      expect(classifyDelivery(answer(status))).toBe('keep');
+    }
+  });
+});
+
+/**
+ * Whether the drain should stop, which used to be "the first `keep`" and is now a question
+ * about what the answer was *about*.
+ */
+describe('sameForEveryRow — when the drain should stop rather than move on', () => {
+  it('stops for the answers that are about the connection or the route', () => {
+    for (const outcome of [
+      answer(null),
+      answer(undefined),
+      answer(0),
+      answer(500),
+      answer(503),
+      answer(429),
+      answer(401),
+      answer(404),
+      answer(403),
+      { status: 200, code: '', failed: true },
+    ]) {
+      expect(sameForEveryRow(outcome)).toBe(true);
+    }
+  });
+
+  it('moves on for an answer the server gave about one row', () => {
+    // A single row the server keeps refusing used to sit at the head of the queue and
+    // block every tap behind it, on every drain, forever — because the loop broke on any
+    // `keep` at all.
+    for (const outcome of [answer(405), answer(410), answer(418), answer(451)]) {
+      expect(sameForEveryRow(outcome)).toBe(false);
+    }
+  });
+
+  it('does not stop on a plain landing', () => {
+    expect(sameForEveryRow(answer(201))).toBe(false);
   });
 });
 

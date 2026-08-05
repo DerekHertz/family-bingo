@@ -45,8 +45,10 @@ import {
   afterDrain,
   classifyDelivery,
   readTaps,
+  sameForEveryRow,
   withTap,
   type Delivery,
+  type DeliveryOutcome,
   type QueuedTap,
 } from '../src/domain/queue';
 import { failure } from './failure';
@@ -184,7 +186,7 @@ export interface DrainResult {
  * UPDATE on and fails the first time it retries in production —
  * `supabase/tests/integration/offline_sync.test.ts` pins both halves over the wire.
  */
-const send = async (tap: QueuedTap): Promise<Delivery> => {
+const send = async (tap: QueuedTap): Promise<DeliveryOutcome> => {
   try {
     const { error, status } = await supabase.from('increments').upsert(
       {
@@ -196,17 +198,21 @@ const send = async (tap: QueuedTap): Promise<Delivery> => {
         // `useRecentIncrements` orders by this column precisely so a Member's week reads
         // in the order they lived it. `stamp_increment()` still has the last word: a
         // future value is pulled back to now(), and anything before the Board's seal is
-        // refused with PT403 — which `classifyDelivery` drops rather than retries.
+        // refused with PT403 — which is why `occurredAtFor` clamped this past the seal
+        // before it was ever queued.
         occurred_at: tap.occurredAt,
       },
       { ignoreDuplicates: true },
     );
-    return classifyDelivery({ status, code: failure(error).code });
+    // The raw answer rather than a verdict, because the caller needs two things from it:
+    // what became of this row, and whether the next row would be told the same. Both are
+    // pure functions in `src/domain/queue.ts`; this is only the request.
+    return { status, code: failure(error).code, failed: error !== null };
   } catch (thrown) {
     // supabase-js normally returns rather than throws, but a fetch that rejects before it
     // is caught — an aborted request, a DNS failure inside a polyfill — must read as "not
     // delivered", never as "drop".
-    return classifyDelivery({ status: null, code: failure(thrown).code });
+    return { status: null, code: failure(thrown).code, failed: true };
   }
 };
 
@@ -227,8 +233,18 @@ const send = async (tap: QueuedTap): Promise<Delivery> => {
  * that had already landed costs nothing, because §17.4's idempotency means the queue never
  * knew which of its rows were already there.
  *
- * Concurrent calls collapse into the one already running: launch and foreground can fire
- * together, and two drains would double every request.
+ * Concurrent calls are **serialised**, not collapsed — `exclusively` is a chain, and two
+ * drains fired within a frame of each other both run, one after the other. That is the
+ * behaviour worth having rather than an accident of the lock: a drain triggered *after* a
+ * tap was enqueued has to see that tap, so folding it into a drain that started before the
+ * tap existed would lose it until the next launch. The second run finds an emptier queue
+ * and usually sends nothing at all, which is the cheap half of the trade.
+ *
+ * **Stopping is decided by `sameForEveryRow`, not by the first `keep`.** Breaking on any
+ * kept row means one row the server keeps answering badly about sits at the head of the
+ * queue and blocks every tap behind it, on every drain, forever. Breaking on nothing means
+ * a phone in airplane mode spends a request per queued row to learn the same thing once.
+ * The distinction is whether the answer was about the connection or about the row.
  */
 export const drainQueue = (): Promise<DrainResult> =>
   exclusively(async () => {
@@ -240,14 +256,16 @@ export const drainQueue = (): Promise<DrainResult> =>
     let dropped = 0;
 
     for (const tap of current) {
-      const verdict = await send(tap);
+      const outcome = await send(tap);
+      const verdict = classifyDelivery(outcome);
       verdicts.set(tap.id, verdict);
       if (verdict === 'delivered') delivered += 1;
       if (verdict === 'drop') dropped += 1;
-      // A dropped connection partway through: stop, keep the rest untouched, and let the
-      // next trigger pick up where this left off. Carrying on would spend a request per
-      // remaining row to learn the same thing.
-      if (verdict === 'keep') break;
+      // A dropped connection, a 5xx, a paused project: stop, keep the rest untouched, and
+      // let the next trigger pick up where this left off. Carrying on would spend a
+      // request per remaining row to learn the same thing. A kept row the *server* had
+      // something to say about is not that, and the drain moves past it.
+      if (verdict === 'keep' && sameForEveryRow(outcome)) break;
     }
 
     const left = afterDrain(current, verdicts);
