@@ -43,7 +43,7 @@ import {
   sealCopy,
 } from '../../src/domain/year';
 import { draftProgress } from '../../src/domain/goal';
-import { joinedMarker } from '../../src/domain/joining';
+import { joinedMarkerInline } from '../../src/domain/joining';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space } from '../../theme/tokens';
 
@@ -248,9 +248,13 @@ export default function FamilyRoster() {
         <Pressable
           key={b.id}
           accessibilityRole="button"
-          accessibilityLabel={`${b.memberName}: ${draftProgress(b.written)} goals written${
-            b.joinedLateAt === null ? '' : `, ${joinedMarker(b.joinedLateAt, timezone).toLowerCase()}`
-          }`}
+          // Mirrors the visible text below, including the seal. It said "3 of 24 goals
+          // written" on a sealed Board where the screen said "sealed" — a screen reader
+          // saying something different from the screen is two different apps (§6 A1), and
+          // this file already makes that argument about "frozen" versus "finished".
+          accessibilityLabel={`${b.memberName}: ${
+            b.sealedAt === null ? `${draftProgress(b.written)} goals written` : 'board sealed'
+          }${b.joinedLateAt === null ? '' : `, ${joinedMarkerInline(b.joinedLateAt, timezone)}`}`}
           accessibilityHint="Opens the drafting table"
           onPress={() => router.push({ pathname: '/board/[id]', params: { id: b.id } })}
           style={({ pressed }) => ({
@@ -279,7 +283,7 @@ export default function FamilyRoster() {
                 b.sealedAt === null ? draftProgress(b.written) : 'sealed',
                 b.joinedLateAt === null
                   ? null
-                  : joinedMarker(b.joinedLateAt, timezone).toLowerCase(),
+                  : joinedMarkerInline(b.joinedLateAt, timezone),
               ]
                 .filter((part) => part !== null)
                 .join(' · ')}

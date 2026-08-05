@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { joinedMarker, joinedMonth, lateJoinerNote } from './joining';
+import { joinedMarker, joinedMarkerInline, joinedMonth, lateJoinerNote } from './joining';
 
 describe('joinedMonth (§21.4, §8.3 T1)', () => {
   it('names the month a Member arrived', () => {
@@ -37,9 +37,37 @@ describe('joinedMarker (§21.4, §21.5)', () => {
   });
 });
 
+describe('joinedMarkerInline (§21.4)', () => {
+  // The obvious `joinedMarker(...).toLowerCase()` downcases the month with the sentence,
+  // and it was doing so at all four places the marker appears — so the capital was never
+  // once seen in the product. Only the leading word is a common noun.
+  it('lowercases the leading word and leaves the month alone', () => {
+    expect(joinedMarkerInline('2026-07-14T12:00:00Z', 'UTC')).toBe('joined in July');
+  });
+
+  it('names the same month as the standalone marker, for every month', () => {
+    for (let m = 1; m <= 12; m += 1) {
+      const at = `2026-${String(m).padStart(2, '0')}-15T12:00:00Z`;
+      expect(joinedMarkerInline(at, 'UTC')).toContain(joinedMonth(at, 'UTC'));
+      expect(joinedMarker(at, 'UTC')).toContain(joinedMonth(at, 'UTC'));
+    }
+  });
+});
+
 describe('lateJoinerNote (§21.1, §21.2, §21.5, §0.3)', () => {
-  it('explains the deadline nobody else has', () => {
-    expect(lateJoinerNote(false)).toContain('seven days');
+  it('explains that the deadline is their own', () => {
+    expect(lateJoinerNote(false)).toContain('its own window');
+  });
+
+  // Migration 29 §8 clamps the window with `least(now() + 7 days, freeze_instant(...))`,
+  // because a Member approved on 28 December would otherwise get one that outlived the
+  // Year. So a late-December joiner has three days — and the meta line directly above this
+  // card already says so. A card insisting on seven would be consecutive lines of the same
+  // screen contradicting each other.
+  it('never commits to a number of days, because the window is clamped', () => {
+    for (const note of [lateJoinerNote(true), lateJoinerNote(false)]) {
+      expect(note.toLowerCase()).not.toMatch(/seven|three|[0-9]/);
+    }
   });
 
   // §21.2 — the Centre Vote is not reopened, so the middle square arrives filled in and

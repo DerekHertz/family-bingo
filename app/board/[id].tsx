@@ -45,7 +45,7 @@ import {
 } from '../../src/domain/celebration';
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
-import { joinedMarker, lateJoinerNote } from '../../src/domain/joining';
+import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
@@ -203,10 +203,12 @@ export default function DraftingTable() {
   // §21.4 — the marker, on both faces of this route. A Board with eleven empty squares in
   // September reads as neglect until you know it started in July, and that is the only job
   // this string has: §21.5 forbids anything that would make it a comparison.
+  // Two spellings, because the marker appears both as its own line and mid-sentence, and
+  // lowercasing the whole string would downcase the month with it.
   const joined =
     head.data.joinedLateAt === null
       ? null
-      : joinedMarker(head.data.joinedLateAt, head.data.timezone);
+      : joinedMarkerInline(head.data.joinedLateAt, head.data.timezone);
 
   /**
    * Sealed Boards are drawn; drafts are listed.
@@ -327,7 +329,7 @@ export default function DraftingTable() {
           <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
             {joined === null
               ? head.data.year.calendarYear
-              : `${head.data.year.calendarYear} · ${joined.toLowerCase()}`}
+              : `${head.data.year.calendarYear} · ${joined}`}
           </Text>
         </View>
 
@@ -528,7 +530,7 @@ export default function DraftingTable() {
         {draftProgress(written.length)}
         {' · '}
         {sealed ? 'the board has sealed' : sealCopy(new Date(), new Date(deadline), head.data.timezone)}
-        {joined === null ? '' : ` · ${joined.toLowerCase()}`}
+        {joined === null ? '' : ` · ${joined}`}
       </Text>
 
       {/* §21.4, and the two facts that would otherwise look like bugs: a deadline nobody

@@ -38,24 +38,43 @@ export const joinedMarker = (joinedLateAt: string, timeZone: string): string =>
   `Joined in ${joinedMonth(joinedLateAt, timeZone)}`;
 
 /**
+ * The same marker, for the middle of a sentence.
+ *
+ * Its own function because the obvious `joinedMarker(...).toLowerCase()` downcases the
+ * month too, and "joined in july" was rendering at every one of the four places this
+ * appears — the marker's capital was never actually seen anywhere in the product. Only
+ * the leading word is a common noun; July is not.
+ */
+export const joinedMarkerInline = (joinedLateAt: string, timeZone: string): string =>
+  `joined in ${joinedMonth(joinedLateAt, timeZone)}`;
+
+/**
  * The one paragraph a late joiner's drafting table adds, and what it must and must not say.
  *
  * It says two things, because they are the two facts that would otherwise look like bugs:
  *
  *   - **Their deadline is not the Family's.** Everyone else's Board sealed on 1 January;
- *     theirs seals seven days from approval (§21.1). Without this the screen shows a date
- *     nobody else has and no reason for it.
+ *     theirs is its own window (§21.1). Without this the screen shows a date nobody else
+ *     has and no reason for it.
  *   - **The Centre is already decided** (§21.2). The Centre Vote is not reopened — doing so
  *     would alter a Tile on every already-sealed Board — so the middle square arrives
  *     filled in and un-votable, which looks broken until it is explained.
  *
- * What it does not say: how much of the Year is left, how far ahead anyone else is, or
- * anything a Member could read as being behind (§0.3, §21.5).
+ * **It does not say "seven days", though §21.1 does.** Migration 29 §8 clamps the window
+ * with `least(now() + 7 days, freeze_instant(...))`, because a Member approved on 28
+ * December would otherwise get a window that outlived the Year and a Board that could
+ * never be played. A late-December joiner therefore has three days, and the meta line
+ * directly above this card already says so — a card underneath it insisting on seven
+ * would be the screen contradicting itself in consecutive lines. The window's length is
+ * the deadline's business; this only says the window is theirs.
+ *
+ * What it also does not say: how much of the Year is left, how far ahead anyone else is,
+ * or anything a Member could read as being behind (§0.3, §21.5).
  */
 export const lateJoinerNote = (centreIsShared: boolean): string =>
   centreIsShared
-    ? 'You joined partway through this year, so your board has its own seven days rather ' +
-      'than the family’s. The middle square was decided before you arrived and is already ' +
+    ? 'You joined partway through this year, so your board has its own window rather than ' +
+      'the family’s. The middle square was decided before you arrived and is already ' +
       'filled in.'
-    : 'You joined partway through this year, so your board has its own seven days rather ' +
-      'than the family’s. Everything else works the same way it does for everyone.';
+    : 'You joined partway through this year, so your board has its own window rather than ' +
+      'the family’s. Everything else works the same way it does for everyone.';
