@@ -8,7 +8,10 @@
 --   2. A switch turning a push off — which is a fact about whether the outbox row is
 --      WRITTEN, not about whether it is sent.
 --   3. Quiet hours holding a send, and the boundary — which is a fact about WHEN, decided
---      at drain time in the Family's timezone (§8.3 T1).
+--      at drain time in the ACCOUNT's timezone. Not the Family's: preferences hang off the
+--      Account because a handset has one notification tray, and a window over that one tray
+--      cannot have two answers. §8.3 T1 governs Family-scoped domain time — deadlines,
+--      freeze, which week a Digest is about — and does not reach a handset's night.
 --
 -- Milestones are inserted directly rather than earned through 24 Goals and a seal. What
 -- is under test is the fan-out and the preference in front of it; the path from an
@@ -16,7 +19,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(60);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -148,6 +151,19 @@ select is(
     where p.account_id = '00000000-0000-4000-8000-0000000000a1'),
   '21:00:00-07:00:00', 'and the window §4.8 names is what they hold when switched on');
 
+-- The clock that window is read on. Seeded from the first Family the Account joined, which
+-- is the only guess available before a picker exists — and then it is the ACCOUNT's, which
+-- is the whole correction: an Account in a Tokyo Family used to be woken at 03:00 where
+-- they were standing, because Tokyo said 16:00.
+select is((select p.timezone from notification_preferences p
+            where p.account_id = '00000000-0000-4000-8000-0000000000a1'),
+  'America/New_York',
+  'the zone quiet hours resolve on is seeded from the first Family the Account joined');
+select is((select p.timezone from notification_preferences p
+            where p.account_id = '00000000-0000-4000-8000-0000000000a3'),
+  'Europe/London',
+  'a different first Family, a different clock — one per Account, not one per Family');
+
 -- Preferences hang off the Account, so a Managed Member cannot have any: they have no
 -- Account at all. FRONTEND_DESIGN §4.7's "Managed Members receive no notifications" is a
 -- consequence of the schema here rather than a rule restated in it.
@@ -201,6 +217,57 @@ select throws_ok($$
    where account_id = '00000000-0000-4000-8000-0000000000a2'
 $$, '23514', null,
   'and a zero-length quiet window is refused rather than silently meaning never or always');
+
+-- The grant on this table is deliberately not column-scoped, so `authenticated` can write
+-- the zone. An unparseable one is not one bad row: `at time zone 'Middle/Earth'` raises,
+-- and pending_notifications() evaluates it for every row in the batch — so one Member's
+-- typo would stop the outbox for everybody. Refused at the write instead.
+select act_as('00000000-0000-4000-8000-0000000000a2');
+select throws_ok($$
+  update notification_preferences set timezone = 'Middle/Earth'
+   where account_id = '00000000-0000-4000-8000-0000000000a2'
+$$, '22023', null,
+  'NEGATIVE: a zone that is not a zone is refused, rather than breaking every other '
+  'Account''s drain at 07:00');
+
+-- ---------------------------------------------------------------------------------
+-- One token, one Account — §8.1 crossed by a handset rather than by a query
+-- ---------------------------------------------------------------------------------
+--
+-- `device_tokens` shipped as `unique (account_id, token)`. The ordinary sign-out defeats
+-- it: an Account whose OS permission has since been revoked cannot re-mint its token, so
+-- nothing is deleted, and the next Account to sign in on that handset registers the same
+-- token beside it. Two rows, one tray, and one Family's news on another Family's phone.
+
+select act_as_cron();
+delete from device_tokens;
+insert into device_tokens (account_id, token, platform)
+values ('00000000-0000-4000-8000-0000000000a1', 'ExponentPushToken[one-handset]', 'ios');
+
+select throws_ok($$
+  insert into device_tokens (account_id, token, platform)
+  values ('00000000-0000-4000-8000-0000000000a2', 'ExponentPushToken[one-handset]', 'android')
+$$, '23505', null,
+  'NEGATIVE: one handset''s token cannot belong to two Accounts at once');
+
+-- The upsert the client makes on sign-in. It MOVES the handset rather than joining it.
+insert into device_tokens (account_id, token, platform, last_seen_at)
+values ('00000000-0000-4000-8000-0000000000a2', 'ExponentPushToken[one-handset]', 'android', now())
+    on conflict (token) do update
+       set account_id   = excluded.account_id,
+           platform     = excluded.platform,
+           last_seen_at = excluded.last_seen_at;
+
+select is((select count(*)::int from device_tokens
+            where token = 'ExponentPushToken[one-handset]'), 1,
+  'signing in on a handset moves it rather than adding a second row against the same token');
+select is((select d.account_id from device_tokens d
+            where d.token = 'ExponentPushToken[one-handset]'),
+  '00000000-0000-4000-8000-0000000000a2'::uuid,
+  'and it belongs to whoever is signed in now — which is also what makes the notify '
+  'function''s delete-by-token prune exactly the row it meant');
+
+delete from device_tokens;
 
 -- ---------------------------------------------------------------------------------
 -- The window wraps midnight, and the boundary is where that gets decided
@@ -291,6 +358,38 @@ select is(queued_for('00000000-0000-4000-8000-0000000000a2', 'wrapped'), 0,
   'and not while it is off — generate_wrapped() writes this row directly, so a filter '
   'inside notify_family() would have left this switch controlling nothing');
 
+-- No preferences row at all, which the trigger and the backfill both say cannot happen —
+-- and which the function has to survive anyway, because the cost of being wrong is silence.
+--
+-- `wants_notification` used to put its coalesce() INSIDE the select list, where it rescues
+-- a NULL column and cannot rescue a query returning NO ROWS. A `returns boolean language
+-- sql` body that matches nothing answers NULL, and `if wants_notification(…) then` reads
+-- NULL as false — so every kind was dropped, including the three whose own comments say
+-- they must never sit behind a switch.
+select act_as_cron();
+delete from notifications;
+delete from notification_preferences where account_id = '00000000-0000-4000-8000-0000000000a3';
+
+select is(wants_notification('00000000-0000-4000-8000-0000000000a3', 'join_approved'), true,
+  'an Account with no preferences row reads as the defaults, not as NULL');
+
+insert into notifications (account_id, family_id, kind)
+values ('00000000-0000-4000-8000-0000000000a3', family_named('Okonkwo Family'), 'join_approved');
+select is(queued_for('00000000-0000-4000-8000-0000000000a3', 'join_approved'), 1,
+  'so the answer to a question the recipient asked is still written — the one kind whose '
+  'own note says it can never be left behind a switch');
+
+-- Put it back, with an `updated_at` no client should be able to choose. The touch trigger
+-- was BEFORE UPDATE only, so the insert path of the client's upsert could write anything
+-- into the column a later last-write-wins sync would trust.
+insert into notification_preferences (account_id, timezone, updated_at)
+values ('00000000-0000-4000-8000-0000000000a3', 'Europe/London', timestamptz '2000-01-01');
+
+select ok(
+  (select p.updated_at from notification_preferences p
+    where p.account_id = '00000000-0000-4000-8000-0000000000a3') > now() - interval '1 minute',
+  'and updated_at is the server''s on the INSERT path as well as the UPDATE path');
+
 -- ---------------------------------------------------------------------------------
 -- Quiet hours decide WHEN, at drain time, in the Family's timezone (§8.3 T1)
 -- ---------------------------------------------------------------------------------
@@ -338,17 +437,89 @@ select is(
     where p.recipient_account = '00000000-0000-4000-8000-0000000000a2'), false,
   'a row written at noon is not, however many of them there are');
 
--- The clock that matters is the FAMILY's, not the server's and not the recipient's.
+-- "Held" means the window held it, not that it was written inside one. Those come apart
+-- the moment a drain misses a row before 21:00 — and `drain-notifications` runs every
+-- minute, so missing one is ordinary rather than exotic. Under the old definition the 20:00
+-- row below reported `was_held = false`, the notify function left it out of the batch, and
+-- because that dropped the held count to one the batching path was skipped entirely: the
+-- Member got two separate pushes at seven in the morning, which is the failure quiet hours
+-- exist to prevent, moved by ten hours.
+select act_as_cron();
+delete from notifications;
+insert into notifications (account_id, family_id, year_id, kind)
+values ('00000000-0000-4000-8000-0000000000a2', family_named('Hertzell Family'),
+        year_of('Hertzell Family'), 'tile_completed');
+update notifications set created_at = new_york('2027-03-15 20:00')
+ where account_id = '00000000-0000-4000-8000-0000000000a2';
+
+select is(
+  (select p.was_held from pending_notifications(100, 5, new_york('2027-03-16 07:00')) p
+    where p.recipient_account = '00000000-0000-4000-8000-0000000000a2'), true,
+  'a row written at eight — an hour before the window opens — and still pending at seven '
+  'spent the night behind it, and belongs in the same one line (§4.8)');
+
+-- Ten hours is exactly long enough for somebody to change their mind, and the switch has
+-- to mean "and the ones already queued" or it means "from tomorrow".
+select is(due_for('00000000-0000-4000-8000-0000000000a2', new_york('2027-03-16 07:00')), 1,
+  'with the switch still on, the held row goes out at seven');
+
+select act_as('00000000-0000-4000-8000-0000000000a2');
+update notification_preferences set tile_completed = false
+ where account_id = '00000000-0000-4000-8000-0000000000a2';
+
+select act_as_cron();
+select is(due_for('00000000-0000-4000-8000-0000000000a2', new_york('2027-03-16 07:00')), 0,
+  'and a switch turned off at six stops the row quiet hours had been holding since eight');
+
+select act_as('00000000-0000-4000-8000-0000000000a2');
+update notification_preferences set tile_completed = true
+ where account_id = '00000000-0000-4000-8000-0000000000a2';
+
+-- The clock that matters is the ACCOUNT's — not the server's, not the Family's.
 -- 18:30 in New York is 22:30 in London on this date, and only one of them is asleep.
+select act_as_cron();
 insert into notifications (account_id, family_id, kind)
 values ('00000000-0000-4000-8000-0000000000a3', family_named('Okonkwo Family'), 'setup_closing');
 update notification_preferences set quiet_hours = true
  where account_id = '00000000-0000-4000-8000-0000000000a3';
 
 select is(due_for('00000000-0000-4000-8000-0000000000a2', new_york('2027-03-15 18:30')), 1,
-  'half past six in New York is not quiet');
+  'half past six for an Account whose clock is New York is not quiet');
 select is(due_for('00000000-0000-4000-8000-0000000000a3', new_york('2027-03-15 18:30')), 0,
-  'and the same instant in London is — quiet hours resolve in the Family''s zone (§8.3 T1)');
+  'and the same instant for an Account whose clock is London is');
+
+-- ---------------------------------------------------------------------------------
+-- ONE Account, TWO Families, TWO zones — the case the pair above never reaches
+-- ---------------------------------------------------------------------------------
+--
+-- The assertions above use two DIFFERENT Accounts in two Families, so they pass just as
+-- well when the window is resolved per Family. This is the one that does not. Preferences
+-- are Account-scoped precisely because "a phone cannot be told about Alice-in-the-Hertzells
+-- while staying quiet about Alice-in-the-Okonkwos — there is one notification tray"; quiet
+-- hours are a property of that tray, so the same Account must get the same window whichever
+-- Family the news came from.
+
+select act_as_cron();
+delete from notifications;
+insert into members (family_id, account_id, display_name, role, status)
+values (family_named('Okonkwo Family'), '00000000-0000-4000-8000-0000000000a2',
+        'Bob abroad', 'member', 'active');
+
+select is((select p.timezone from notification_preferences p
+            where p.account_id = '00000000-0000-4000-8000-0000000000a2'), 'America/New_York',
+  'joining a second Family does not move an Account''s night — the zone is seeded once');
+
+delete from notifications;
+insert into notifications (account_id, family_id, kind) values
+  ('00000000-0000-4000-8000-0000000000a2', family_named('Hertzell Family'), 'setup_closing'),
+  ('00000000-0000-4000-8000-0000000000a2', family_named('Okonkwo Family'),  'setup_closing');
+
+select is(due_for('00000000-0000-4000-8000-0000000000a2', new_york('2027-03-16 03:00')), 0,
+  'NEGATIVE: three in the morning where the phone is holds BOTH Families'' news — read in '
+  'London the Okonkwo row says 07:00 and would have buzzed at 03:00 local');
+select is(due_for('00000000-0000-4000-8000-0000000000a2', new_york('2027-03-15 20:00')), 2,
+  'and eight in the evening releases both — read in London that row says midnight and '
+  'would have been held until 02:00 for the phone doing the buzzing');
 
 -- ---------------------------------------------------------------------------------
 -- §4.8 — "a tap opens the Tile the notification is about, not the app"
