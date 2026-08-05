@@ -41,6 +41,19 @@ export const color = {
   sun: '#C9A05A',
 
   /**
+   * The top and bottom edge of the Feed's one tinted row (§3 `<FeedRow>`).
+   *
+   * > `tile_completed` … **`mossTint` row background**, top and bottom `#C8D2BC` border.
+   * > The only tinted row type.
+   *
+   * §3 names this hex and §1's table does not, which is not a contradiction: it is
+   * `mossTint` one step darker, and it exists so the one row type that carries a
+   * background does not float. It has exactly one job — do not reach for it as a general
+   * moss border, and do not put it on a second row type.
+   */
+  mossTintEdge: '#C8D2BC',
+
+  /**
    * Behind a sheet: the board dimmed to 35% (§3 `<TileSheet>`).
    *
    * `ink` at 35%, as a token rather than an `rgba()` written into a component — a literal
