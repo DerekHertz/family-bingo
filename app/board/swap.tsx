@@ -20,9 +20,10 @@
  */
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AccessibilityInfo,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -55,13 +56,35 @@ export default function ComposeSwap() {
   const tile = (board.data ?? []).find((t) => t.id === tileId) ?? null;
   const before = tile?.goal ?? null;
 
-  // Seeded from the Goal being replaced, and only once — `useState`'s initialiser runs on
-  // the first render, so a refetch landing mid-edit cannot overwrite what is being typed.
-  // The Member is *rewriting*, not writing: starting from a blank field would make them
-  // retype a sentence they mostly want to keep.
-  const [text, setText] = useState(() => before?.text ?? '');
-  const [target, setTarget] = useState(() => before?.target ?? 1);
+  // Seeded from the Goal being replaced. The Member is *rewriting*, not writing: starting
+  // from a blank field would make them retype a sentence they mostly want to keep.
+  //
+  // **Not a `useState` initialiser.** That runs on the first render, when `board.data` is
+  // still `undefined` — so the field would have been empty forever, and the whole screen
+  // would have looked like it had lost the Goal it is about. Seeded once, when the data
+  // arrives, and keyed on the Tile so navigating to a different square re-seeds; after
+  // that a refetch cannot overwrite what is being typed.
+  const [draft, setDraft] = useState<{ tileId: string; text: string; target: number } | null>(
+    null,
+  );
   const [trouble, setTrouble] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tile === undefined || tile === null) return;
+    if (draft !== null && draft.tileId === tile.id) return;
+    setDraft({
+      tileId: tile.id,
+      text: tile.goal?.text ?? '',
+      target: tile.goal?.target ?? 1,
+    });
+  }, [tile, draft]);
+
+  const text = draft?.text ?? '';
+  const target = draft?.target ?? 1;
+  const setText = (next: string) =>
+    setDraft((d) => (d === null ? d : { ...d, text: next }));
+  const setTarget = (next: (n: number) => number) =>
+    setDraft((d) => (d === null ? d : { ...d, target: next(d.target) }));
 
   const say = (message: string) => {
     setTrouble(message);
@@ -109,6 +132,40 @@ export default function ComposeSwap() {
       },
     );
   };
+
+  // Nothing is rendered against data that has not arrived. Without this the screen shows
+  // an empty field, a target of 1 and a cost preview built from a budget of 0 — four
+  // confident falsehoods about the Goal a Member is deciding whether to set down.
+  if (head.isPending || board.isPending || counts.isLoading || budget.isPending) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
+        <ActivityIndicator
+          color={color.ink3}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Loading the goal"
+        />
+      </View>
+    );
+  }
+
+  // A square this route cannot act on. Reachable by a deep link, by a stale cache, or by
+  // a Board that sealed or froze between the confirm sheet and this screen — and §0.3
+  // says to state the reason rather than offer a retry that cannot work.
+  if (head.data === null || head.data === undefined || tile === null || decision === null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, padding: space.xl, paddingTop: size.screenTop }}>
+        <Text style={{ ...styles.body, color: color.ink2 }}>
+          Couldn’t open that square just now. Try again in a moment.
+        </Text>
+        <Button
+          label="Back"
+          variant="text"
+          style={{ marginTop: space.lg, alignItems: 'flex-start' }}
+          onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
+        />
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
