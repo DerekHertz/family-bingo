@@ -64,6 +64,18 @@ language sql stable as $dealt$
          end
 $dealt$;
 
+-- "A Tile that sealed empty" (§10.2). After the deal that is no longer a fixed square, so
+-- it is found by what is on it — nothing — rather than by where it sits.
+create or replace function tile_empty(name text) returns uuid
+language sql stable as $empty$
+  select t.id from tiles t
+    join boards b on b.id = t.board_id
+   where b.member_id = member_of(name)
+     and t.goal_id is null and t.family_goal_id is null and t.position <> 12
+   order by t.position
+   limit 1
+$empty$;
+
 -- The literal square, for the assertions that mean one. A Line is five squares (§13.1),
 -- whichever Goals the layout put on them.
 create or replace function tile_at(name text, pos int) returns uuid
@@ -157,50 +169,7 @@ update votes set closes_at = now() - interval '1 minute'
 
 select act_as_cron();
 
--- ---------------------------------------------------------------------------------
--- The squares are dealt at seal (§4.1), so from here a Tile is found by its Goal
--- ---------------------------------------------------------------------------------
---
--- `positions are dealt at seal, so no Member can place the easy one in a corner`. Every
--- assertion below means "the Tile carrying the Goal I wrote to that square", never "square
--- N" — so that is what tile_of() now answers. Squares nothing was written to, including
--- the Centre at 12, still resolve literally: that is what the empty-Tile assertions of
--- §10.2 are about.
--- "A Tile that sealed empty", which after the deal is no longer a fixed square (§10.2).
-create or replace function tile_empty(name text) returns uuid
-language sql stable as $empty$
-  select t.id from tiles t
-    join boards b on b.id = t.board_id
-   where b.member_id = member_of(name)
-     and t.goal_id is null and t.family_goal_id is null and t.position <> 12
-   order by t.position
-   limit 1
-$empty$;
 
-create or replace function tile_of(name text, pos int) returns uuid
-language sql stable as $dealt$
-  select coalesce(
-    (select t.id
-       from tiles t
-       join boards b on b.id = t.board_id
-       join goals  g on g.id = t.goal_id
-      where b.member_id = member_of(name)
-        and g.text = (select m.txt from (values
-                ('Alice', 0, 'Walk the dog'),
-                ('Alice', 1, 'Read a book'),
-                ('Alice', 2, 'Swim'),
-                ('Alice', 3, 'Cook something new'),
-                ('Alice', 4, 'Call Mum'),
-                ('Alice', 5, 'Something easy'),
-                ('Carol', 0, 'Run a marathon')
-              ) as m(nm, ps, txt)
-             where m.nm = name and m.ps = pos)),
-    (select t.id
-       from tiles t
-       join boards b on b.id = t.board_id
-      where b.member_id = member_of(name) and t.position = pos)
-  )
-$dealt$;
 
 select is(seal_due_boards(), 2, 'both Boards seal — everything after this costs a Swap');
 
@@ -291,8 +260,10 @@ select lives_ok(
   $$select swap_tile(tile_of('Alice', 5), 'Learn to juggle', 1)$$,
   'swap_tile will, at the price of a Swap (§18.5)');
 select is(swaps_used_by('Alice'), 3, 'the third and last');
-select is((select before_text from revisions r
-            where r.tile_id = tile_of('Alice', 5)), null,
+-- By the Revision the Swap just wrote, not by re-deriving the Tile. Re-deriving means
+-- resolving a square again after the Board has been dealt (§4.1) and after earlier Swaps
+-- have filled squares — two moving parts to identify one row that is already unambiguous.
+select is((select before_text from revisions r where r.after_text = 'Learn to juggle'), null,
   'the Revision records that there was nothing there before');
 
 -- ---------------------------------------------------------------------------------

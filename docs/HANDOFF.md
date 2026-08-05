@@ -244,6 +244,14 @@ back to the system font. `theme/fonts.test.ts` greps for the mistake.
 
 ---
 
+- **A helper defined twice in one test file is a trap that hides for weeks.** Ten pgTAP
+  files define `tile_of()` **twice** — once near the top and once again lower down, after
+  the second Family is introduced. An abandoned third definition committed by mistake sat
+  between them, so the *middle* one was silently overwritten by the original, and every
+  assertion after that point resolved Tiles by the wrong rule. It failed roughly one run
+  in eight, looked like flaky infrastructure, and cost an evening. `grep -c 'function
+  tile_of' supabase/tests/*.test.sql` should read 2 for those files and nothing higher.
+
 ## Open items, none blocking
 
 0. **Positions are never dealt at seal, and §4.1 says they are.** *"The list stays in the
