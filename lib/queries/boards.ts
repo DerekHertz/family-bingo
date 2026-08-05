@@ -75,6 +75,15 @@ export const myBoardsKey = (yearId: string, accountId: string) =>
  */
 export const boardKey = (boardId: string, accountId: string) =>
   ['board', boardId, accountId] as const;
+
+/**
+ * The prefix every Account's copy of a Board shares.
+ *
+ * Invalidation is a prefix match, and a Board changing is a fact about the Board rather
+ * than about whoever is holding it — so writes clear all of them rather than guessing
+ * which Account's key to name.
+ */
+export const boardPrefix = (boardId: string) => ['board', boardId] as const;
 /**
  * A prefix of its own rather than `['board', id, 'head']`. Invalidation is a prefix match,
  * so nesting it under `boardKey` would mean every Goal written refetched the Year and the
@@ -401,8 +410,7 @@ export function useWriteGoal(boardId: string) {
       return data as Goal;
     },
     onSuccess: () => {
-      // Prefix match, so it clears the Board for whichever Account is holding it.
-      void queryClient.invalidateQueries({ queryKey: ['board', boardId] });
+      void queryClient.invalidateQueries({ queryKey: boardPrefix(boardId) });
       // The count on the Family screen's Board rows moves with every write. A prefix match
       // rather than the exact key, because the Year and Account are not in scope here.
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
@@ -425,8 +433,7 @@ export function useClearGoal(boardId: string) {
       if (error !== null) throw error;
     },
     onSuccess: () => {
-      // Prefix match, so it clears the Board for whichever Account is holding it.
-      void queryClient.invalidateQueries({ queryKey: ['board', boardId] });
+      void queryClient.invalidateQueries({ queryKey: boardPrefix(boardId) });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
     },
   });

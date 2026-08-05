@@ -18,7 +18,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { failedWith } from '../failure';
 import { supabase } from '../supabase';
-import { boardKey } from './boards';
 
 /**
  * Why marking it done was refused, phrased for a Member.
@@ -35,7 +34,7 @@ export const familyGoalFailureCopy = (thrown: unknown): string => {
   return 'That didn’t save. Have another go in a moment.';
 };
 
-export function useCompleteFamilyGoal(boardId: string) {
+export function useCompleteFamilyGoal() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { yearId: string; memberId: string }): Promise<void> => {
@@ -46,13 +45,14 @@ export function useCompleteFamilyGoal(boardId: string) {
       if (error !== null) throw error;
     },
     onSuccess: () => {
-      // The Centre's state lives on the Tiles read, not on the counts — `completed_at` is
-      // what makes it complete, and no Increment will ever appear for it.
-      // Prefix match, so it clears the Board for whichever Account is holding it.
-      void queryClient.invalidateQueries({ queryKey: ['board', boardId] });
-      // Every Board in the Year now shows it complete (§12.3), including the ones this
-      // screen is not looking at.
+      // **Every** Board, not just this one. §12.3 completes the shared Centre "for every
+      // Member simultaneously", so naming one Board would leave every sibling's Tile 12
+      // stale for a minute of `staleTime` — on the one square whose whole point is that
+      // it moves for everybody at once.
+      void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
+      // The Milestone the celebration is gated on (§12.2).
+      void queryClient.invalidateQueries({ queryKey: ['milestones'] });
     },
   });
 }

@@ -29,7 +29,7 @@ verified end to end (`select * from edge_wiring_status()` returns HTTP 2xx).
 | 12 Complete a Tile | Merged. "We did it" for the Family Goal; the celebration gated on the Milestone |
 | 13–21 | **Not started** |
 
-Suites: **411 Vitest · 794 pgTAP · 19 integration**, `tsc` clean. All three must pass
+Suites: **453 Vitest · 817 pgTAP · 19 integration**, `tsc` clean. All three must pass
 before a merge.
 
 ### Where slice 10 got to

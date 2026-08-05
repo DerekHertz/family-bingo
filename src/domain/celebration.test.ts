@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEveryTileComplete, newlyCelebrated } from './celebration';
+import { newlyCelebrated } from './celebration';
 
 describe('newlyCelebrated (§12.2, §5)', () => {
   it('celebrates nothing when nothing has changed', () => {
@@ -40,20 +40,5 @@ describe('newlyCelebrated (§12.2, §5)', () => {
     newlyCelebrated(current, seen);
     expect([...current]).toEqual(['a', 'b']);
     expect([...seen]).toEqual(['a']);
-  });
-});
-
-describe('isEveryTileComplete (§13.3)', () => {
-  it('is true only when every authorable Tile is done', () => {
-    expect(isEveryTileComplete(new Set(['a', 'b']), ['a', 'b'])).toBe(true);
-    expect(isEveryTileComplete(new Set(['a']), ['a', 'b'])).toBe(false);
-  });
-
-  it('is false for a Board with nothing on it, rather than vacuously true', () => {
-    expect(isEveryTileComplete(new Set(), [])).toBe(false);
-  });
-
-  it('ignores completions that are not on this Board', () => {
-    expect(isEveryTileComplete(new Set(['a', 'b', 'z']), ['a', 'b'])).toBe(true);
   });
 });

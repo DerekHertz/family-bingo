@@ -25,14 +25,3 @@ export const newlyCelebrated = (
   current: ReadonlySet<string>,
   seen: ReadonlySet<string>,
 ): string[] => [...current].filter((id) => !seen.has(id)).sort();
-
-/**
- * Whether the whole Board is done, for the one celebration that outranks a Tile.
- *
- * Blackout is §13.3 and its own slice; this is here so the two are decided by the same
- * kind of function rather than by a component counting things in a render.
- */
-export const isEveryTileComplete = (
-  completed: ReadonlySet<string>,
-  authorable: readonly string[],
-): boolean => authorable.length > 0 && authorable.every((id) => completed.has(id));

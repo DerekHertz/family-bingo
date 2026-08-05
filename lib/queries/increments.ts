@@ -189,6 +189,13 @@ export function useLogIncrement(tileIds: readonly string[], accountId: string | 
       void queryClient.invalidateQueries({
         queryKey: recentIncrementsKey(tap.tileId, accountId ?? 'anonymous'),
       });
+      // **The Milestone, which is what the celebration is gated on (§12.2, §5).**
+      //
+      // Without this the gate is built and never fed: the tap that completes a Tile
+      // writes the Milestone server-side, the client keeps its pre-write set for a minute
+      // of `staleTime`, and the celebration the whole slice exists for simply never
+      // happens. Nothing else in the app invalidates this key.
+      void queryClient.invalidateQueries({ queryKey: ['milestones'] });
     },
   });
 }
@@ -254,6 +261,10 @@ export function useDeleteIncrement(tileIds: readonly string[], accountId: string
       void queryClient.invalidateQueries({
         queryKey: recentIncrementsKey(increment.tileId, accountId ?? 'anonymous'),
       });
+      // A deleted Increment can drop a Tile back below its Target. The Milestone stays —
+      // it was pushed and cannot be unsent (§15.3) — but the client should be reading the
+      // server's answer rather than its own guess about it.
+      void queryClient.invalidateQueries({ queryKey: ['milestones'] });
     },
   });
 }

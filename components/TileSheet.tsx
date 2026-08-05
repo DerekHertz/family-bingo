@@ -27,6 +27,7 @@ import { incrementVerb } from '../src/domain/increment';
 import { columnOf, rowOf } from '../src/domain/lines';
 import { styles } from '../theme/fonts';
 import { color, radius, size, space } from '../theme/tokens';
+import { Avatar } from './Avatar';
 import { ProgressRing } from './ProgressRing';
 import type { Increment, LogIncrement } from '../lib/queries/increments';
 
@@ -44,8 +45,8 @@ export interface SheetTile {
    *
    * It also takes no Increments at all: `tile_is_loggable()` refuses them because a Family
    * Goal has no Target and is *marked done* by any Member, completing for everyone at once
-   * (§12.3). Marking it is slice 12; until then this sheet reads rather than writes, which
-   * is still far better than what it replaced — tapping the Centre did nothing whatsoever.
+   * (§12.3) — which is what `onCompleteFamilyGoal` does, and why the Centre carries no
+   * ring count: there is nothing to count toward.
    */
   isCentre: boolean;
 }
@@ -68,6 +69,14 @@ interface Props {
   blocked: 'frozen' | 'not-yours' | null;
   /** Set when the last write failed. Already phrased — see `incrementFailureCopy`. */
   failure: string | null;
+  /**
+   * §4.3 — the Family, in join order, for the shared Centre's contributors block.
+   *
+   * "**no counts, no ordering** (§13.5)": they are shown because the square is theirs, not
+   * because of anything they did more or less of than each other. Join order is the one
+   * ordering that says nothing about achievement.
+   */
+  family?: readonly { id: string; name: string; managed: boolean }[] | undefined;
   onClose: () => void;
   onLog: (tap: LogIncrement) => void;
   onDelete: (increment: { id: string; tileId: string }) => void;
@@ -89,6 +98,7 @@ export function TileSheet({
   recentPending,
   blocked,
   failure,
+  family,
   onClose,
   onLog,
   onDelete,
@@ -196,8 +206,12 @@ export function TileSheet({
                 accessibilityRole="button"
                 accessibilityLabel={`We did it. ${tile.text}`}
                 accessibilityHint="Marks the family's goal done for everyone"
+                // `light`, not `success`. §5 gives `success` to *tile complete*, which is
+                // the Milestone landing — and this fires on touch-down, before the RPC has
+                // been answered, so a refused press would otherwise congratulate a Member
+                // for something that did not happen.
                 onPressIn={() => {
-                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
                 onPress={onCompleteFamilyGoal}
                 style={({ pressed }) => ({
@@ -306,6 +320,36 @@ export function TileSheet({
                 : `${ownerName ?? 'This member'} logs progress on this one.`}
             </Text>
           )}
+
+          {/* §4.3: "Contributors render as faces in join order inside a `clayTint` block:
+              no counts, no ordering (§13.5)." The shared Centre belongs to the Family
+              rather than to whoever proposed it or whoever pressed the button, so the
+              block is everyone — and it is deliberately not a leaderboard of who did what.
+              Clay, because clay means family and nothing else (§1.1). */}
+          {tile.isCentre && family !== undefined && family.length > 0 ? (
+            <View
+              style={{
+                marginTop: space.lg,
+                padding: space.md,
+                borderRadius: radius.card,
+                backgroundColor: color.clayTint,
+              }}
+            >
+              <Text style={{ ...styles.meta, color: color.clayDeep }}>Together</Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  flexWrap: 'wrap',
+                  gap: space.sm,
+                  marginTop: space.md,
+                }}
+              >
+                {family.map((member) => (
+                  <Avatar key={member.id} name={member.name} size={34} managed={member.managed} />
+                ))}
+              </View>
+            </View>
+          ) : null}
 
           {/* A refused write said nothing at all before this: the optimistic count rolled
               back and the Member watched their tap quietly undo itself. `PT403` and
