@@ -54,6 +54,14 @@ export interface BoardSummary {
   isManaged: boolean;
   sealedAt: string | null;
   written: number;
+  /**
+   * §21.4's marker, on the row as well as on the Board itself.
+   *
+   * A Guardian looking at the Family screen in September sees "3 of 24" against a child
+   * who was approved in July, and without this there is nothing on that row to say why.
+   * The Board screen explains itself once opened; this is the same fact one level up.
+   */
+  joinedLateAt: string | null;
 }
 
 /**
@@ -223,7 +231,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
         // render one or two rows. Deliberate: narrowing it would mean first fetching which
         // Members the caller controls, and a second round trip costs more than the rows.
         // RLS permits every one of them — nothing here is a leak, only weight.
-        .select('id, member_id, sealed_at, created_at, member:member_id (id, display_name, account_id, guardian_account_id, status), tiles (position, goal_id)')
+        .select('id, member_id, sealed_at, joined_late_at, created_at, member:member_id (id, display_name, account_id, guardian_account_id, status), tiles (position, goal_id)')
         .eq('year_id', yearId ?? '')
         .order('created_at', { ascending: true });
       if (error !== null) throw error;
@@ -252,6 +260,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
             memberName: member.display_name,
             isManaged: member.account_id === null,
             sealedAt: row.sealed_at as string | null,
+            joinedLateAt: row.joined_late_at as string | null,
             // The Centre is never authored here (§6.5), so counting it would put the
             // drafting table at "1 of 24" before a word had been written.
             written: tiles.filter(
