@@ -23,6 +23,7 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 import {
   PHOTO_CONTENT_TYPE,
   PHOTO_QUALITY,
@@ -59,17 +60,25 @@ export type PickOutcome =
   | { kind: 'unavailable' };
 
 /**
- * Ask for the photo library **at the moment it is needed**, and never before.
+ * Ask for the photo library **only where the picker actually needs it**, and then only at
+ * the moment it is needed.
  *
- * Not at launch, not on the Board, not when the sheet opens — when the Member taps "Add a
- * photo". A permission prompt with no visible cause is the one most likely to be refused,
- * and the refusal is permanent in practice: iOS answers every later `request` from cache
- * without showing anything, so the app gets exactly one ask and spends it here.
+ * **Not on iOS, and asking there was a real cost rather than a harmless extra tap.**
+ * `launchImageLibraryAsync`'s own docstring in the installed package says the permission is
+ * *"Required on iOS 10 only"*: every modern iOS uses `PHPickerViewController`, which runs
+ * out of process, hands back the one asset the Member chose, and needs no grant at all. So
+ * the branch this replaces prompted for **full camera-roll access** — a much larger thing
+ * than the app was doing — and then hard-gated the picker on the answer, which made a
+ * refusal permanent: iOS answers every later `request` from cache without showing
+ * anything, so a Member who declined could never add a photo again on a path that would
+ * have worked without ever asking.
  *
- * On the platforms where the system picker needs no permission at all this returns granted
- * immediately, which is why it is asked unconditionally rather than gated on a `get`.
+ * Where it is still asked, it is asked at the moment the Member taps "Add a photo" and
+ * never before. A permission prompt with no visible cause is the one most likely to be
+ * refused, and the app gets exactly one ask.
  */
 const permitted = async (): Promise<boolean> => {
+  if (Platform.OS === 'ios') return true;
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   return permission.granted;
 };
