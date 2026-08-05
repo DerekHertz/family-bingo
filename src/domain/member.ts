@@ -89,3 +89,40 @@ export const isControlledBy = (
  * Member comes back as `(display_name, account_id)` and nothing more.
  */
 export const isManaged = (member: MemberAccount): boolean => member.account_id === null;
+
+/** One entry in §4.3's "Voting as" row. */
+export interface Voter {
+  id: string;
+  name: string;
+  isManaged: boolean;
+}
+
+/**
+ * Who this Account may cast a Ballot as: themselves, plus every child they guard (§4.3).
+ *
+ * A projection rather than a query, which is the point. The Centre used to read `members`
+ * a second time to answer this, one column apart from the roster's read of the same rows
+ * into a second cache entry with a second shape. It is the roster's list, narrowed — and
+ * because the narrowing is by Account it must be done **here, on the way out**, never
+ * baked into a cache entry keyed by Family alone.
+ *
+ * Order is whatever order the caller supplied, which is join order (§7.2, §13.5) and is
+ * the one ordering that says nothing about achievement. Pending Members drop out through
+ * `isControlledBy`: a Member the Organizer has not let in yet has no vote (§3.3).
+ *
+ * **Scope the list to one Family before calling this.** `controlled_member_ids()` is not
+ * Family-scoped and neither is this: somebody in two Families is two Members and both
+ * match `account_id`, so an unscoped list would offer a chip for the wrong Family's Member
+ * and `cast_ballot()` would refuse every Ballot cast with it.
+ */
+export const votersFor = <T extends MemberStanding & { id: string; display_name: string }>(
+  members: readonly T[],
+  accountId: string | null | undefined,
+): Voter[] =>
+  members
+    .filter((member) => isControlledBy(member, accountId))
+    .map((member) => ({
+      id: member.id,
+      name: member.display_name,
+      isManaged: isManaged(member),
+    }));
