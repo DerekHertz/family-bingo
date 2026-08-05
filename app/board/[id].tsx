@@ -59,7 +59,9 @@ import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
 
 export default function DraftingTable() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `tile` is optional and comes from one place: a tapped notification (§4.8 — "a tap opens
+  // the Tile the notification is about, not the app"). Nothing in the app links with it.
+  const { id, tile } = useLocalSearchParams<{ id: string; tile?: string }>();
   const router = useRouter();
   const session = useSession();
   const head = useBoardHead(id, session?.user.id);
@@ -71,6 +73,16 @@ export default function DraftingTable() {
   // sheet re-reads the live count after a tap instead of showing the snapshot it opened
   // with — the ring has to move under the finger or the tap looks lost.
   const [openTileId, setOpenTileId] = useState<string | null>(null);
+
+  // An effect rather than an initial state, because the param can arrive on a screen that
+  // is already mounted: tapping a second notification while looking at the first one's
+  // Board re-renders this route with a new `tile` and never remounts it. An id that names
+  // no Tile on this Board resolves to `null` further down and the Board opens whole, which
+  // is what a stale notification should do.
+  useEffect(() => {
+    if (tile !== undefined && tile !== '') setOpenTileId(tile);
+  }, [tile]);
+
   const recent = useRecentIncrements(openTileId ?? undefined, session?.user.id);
   const logIncrement = useLogIncrement(tileIds, session?.user.id);
   const deleteIncrement = useDeleteIncrement(tileIds, session?.user.id);

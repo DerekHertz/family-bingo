@@ -15,6 +15,7 @@
 
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import { forgetThisDevice } from './queries/device-tokens';
 import { supabase } from './supabase';
 
 export type Provider = 'apple' | 'google';
@@ -199,7 +200,25 @@ export const signInWithoutEmail = async (email: string): Promise<void> => {
   if (verifyError !== null) throw verifyError;
 };
 
+/**
+ * Signing out, and un-registering the handset first.
+ *
+ * The order is the whole point. `device_tokens_self_all` is `account_id = auth.uid()`, so
+ * the delete has to happen while there is still a session to match on — after
+ * `auth.signOut()` it matches nothing, answers 204, and the row survives. A row that
+ * survives is this phone still receiving the previous Account's Family news, which is §8.1
+ * broken by a handset rather than by a query. That is also why the `SIGNED_OUT` handler in
+ * `app/_layout.tsx` clears the query cache and nothing more.
+ *
+ * The read is best-effort: `forgetThisDevice` swallows its own failures, because nothing
+ * about a network call is worth keeping a Member signed in for, and a token that outlives
+ * its Account is pruned the first time Expo answers `DeviceNotRegistered` (§15.4).
+ */
 export const signOut = async (): Promise<void> => {
+  const { data } = await supabase.auth.getSession();
+  const accountId = data.session?.user.id;
+  if (accountId !== undefined) await forgetThisDevice(accountId);
+
   const { error } = await supabase.auth.signOut();
   if (error !== null) throw error;
 };

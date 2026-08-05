@@ -18,6 +18,8 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { useNotificationTaps } from '../lib/notification-routing';
+import { registerThisDevice } from '../lib/queries/device-tokens';
 import { supabase } from '../lib/supabase';
 import { color } from '../theme/tokens';
 
@@ -63,12 +65,36 @@ export default function RootLayout() {
   // Account to use the handset inherits whatever the last one fetched — Family names,
   // Members' names, eventually a Board. Keys carry the Account id as well; this is the
   // belt to that pair of braces, and it is the one that catches a key someone forgets.
+  //
+  // The device token is **not** removed here, and that is deliberate. `SIGNED_OUT` fires
+  // after the session is gone, and `device_tokens_self_all` is `account_id = auth.uid()` —
+  // so a delete issued from this handler matches nothing, answers 204, and leaves the row
+  // behind for the next Account on this handset to receive news from. It is removed in
+  // `signOut()` instead, before the session is torn down; see lib/queries/device-tokens.ts.
   useEffect(() => {
-    const { data } = supabase.auth.onAuthStateChange((event) => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') queryClient.clear();
+
+      // §15.4 — "device tokens refreshed on launch". `INITIAL_SESSION` is launch: it fires
+      // once, with whatever was in the keychain. `SIGNED_IN` covers the magic link landing
+      // minutes later on a cold app.
+      //
+      // Deliberately not on `TOKEN_REFRESHED`, which fires roughly hourly for the whole
+      // life of the session and would turn one write per launch into one per hour.
+      //
+      // This never prompts. `registerThisDevice` reads a permission that already exists
+      // and mints a token only if it was granted — §15.3's one-way door is opened from the
+      // notifications screen and nowhere else.
+      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session !== null) {
+        void registerThisDevice(session.user.id).catch(() => undefined);
+      }
     });
     return () => data.subscription.unsubscribe();
   }, [queryClient]);
+
+  // §4.8 — a tap opens the Tile the notification is about. Both the running app and the
+  // cold start, which are different code paths (lib/notification-routing.ts).
+  useNotificationTaps();
 
   // Holding the splash rather than rendering in a fallback face: the wordmark is Shippori
   // at 38pt, and the substitution would be the first thing anyone saw.
