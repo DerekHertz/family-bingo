@@ -15,7 +15,50 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { failedWith } from '../failure';
 import { supabase } from '../supabase';
+
+/**
+ * Why a switch would not move, phrased for the Member who moved it.
+ *
+ * Here rather than on `app/account/notifications.tsx`, for the reason `incrementFailureCopy`
+ * is in `increments.ts`: the module that owns the write owns the sentence for its refusals.
+ *
+ * This existed nowhere until the review. `useSetPreference` rolled its optimistic update
+ * back `onError` and said nothing at all — the switch slid, sprang back, and the screen was
+ * silent, which is the one failure a settings screen cannot afford, because the Member's
+ * only evidence is the control moving. `useSetDigestOptIn` threw a message that nothing
+ * displayed.
+ *
+ * Matched on the SQLSTATE through `lib/failure.ts`, never on message text: PostgREST
+ * rejects with a plain object whose `code` carries the state, and the state never appears
+ * in the sentence.
+ *
+ * Both named refusals are permanent — neither is fixed by trying again — which is why one
+ * "have another go" for all of them would be advice that cannot work (§0.3).
+ */
+export const preferenceFailureCopy = (thrown: unknown): string => {
+  // `notification_preferences_self_all` and `members_self_update` are both
+  // `account_id = auth.uid()`, so this is a session that has expired underneath the screen
+  // rather than a Member reaching for somebody else's row — nothing on this screen can
+  // even draw a switch belonging to anyone else.
+  if (failedWith(thrown, '42501')) {
+    return 'You’re signed out. Sign in again and the switch will hold.';
+  }
+  // `quiet_window_is_not_empty` (20260801000036). Unreachable from this screen today — it
+  // sends booleans and never a time — and kept for the picker §4.8 leaves room for, which
+  // is exactly when a start equal to an end becomes typeable.
+  if (failedWith(thrown, '23514')) {
+    return 'Quiet hours need a start and an end that differ.';
+  }
+  return 'That didn’t save. Have another go in a moment.';
+};
+
+/** What a screen says when it could not read the switches at all. */
+export const PREFERENCES_UNREADABLE = 'Couldn’t read your settings just now. Try again in a moment.';
+
+/** And when it could read them but not the Families the Digest belongs to (§19.1). */
+export const DIGEST_CHOICES_UNREADABLE = 'Couldn’t read your families just now.';
 
 /** One row of `notification_preferences`, as the screen reads it. */
 export interface NotificationPreferences {
@@ -198,7 +241,13 @@ export function useSetDigestOptIn(accountId: string | undefined) {
         .eq('id', memberId)
         .select('id');
       if (error !== null) throw error;
-      if ((data ?? []).length === 0) throw new Error('the server refused that change');
+      // Thrown in the shape PostgREST rejects in — a plain object with a `code` — rather
+      // than as an `Error`, so `preferenceFailureCopy` reads it through the same SQLSTATE
+      // branch as a real refusal. It used to be `new Error('the server refused that
+      // change')`, which carried no code, matched nothing, and was displayed by nobody.
+      // Zero rows here IS 42501: `members_self_update` is a `using` policy, so a refusal
+      // touches no rows and answers 204 rather than an error.
+      if ((data ?? []).length === 0) throw { code: '42501', message: 'row not updatable' };
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: digestChoicesKey(accountId ?? 'anonymous') });

@@ -27,13 +27,17 @@
 
 import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, Switch, Text, View } from 'react-native';
-import { Loading } from '../../components/Screen';
+import { ScrollView, Switch, Text, View } from 'react-native';
+import { Loading, Trouble } from '../../components/Screen';
 import { Button } from '../../components/Button';
+import { useAnnounce } from '../../lib/announce';
 import { leaveTo } from '../../lib/leave';
 import { askForPush, pushPermission } from '../../lib/notifications';
 import { registerDevice } from '../../lib/queries/device-tokens';
 import {
+  DIGEST_CHOICES_UNREADABLE,
+  PREFERENCES_UNREADABLE,
+  preferenceFailureCopy,
   useDigestChoices,
   useNotificationPreferences,
   useSetDigestOptIn,
@@ -64,13 +68,11 @@ function SwitchRow({
   detail,
   value,
   onValueChange,
-  disabled = false,
 }: {
   title: string;
   detail: string;
   value: boolean;
   onValueChange: (next: boolean) => void;
-  disabled?: boolean;
 }) {
   return (
     <View
@@ -92,10 +94,12 @@ function SwitchRow({
         <Text style={{ ...styles.body, color: color.ink }}>{title}</Text>
         <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>{detail}</Text>
       </View>
+      {/* No `disabled` prop. One was declared here and never passed, which is a control
+          this screen has no state for: the switches describe what would be SENT, and they
+          hold whether or not this handset is currently allowed to show anything (§4.8). */}
       <Switch
         value={value}
         onValueChange={onValueChange}
-        disabled={disabled}
         accessibilityLabel={title}
         accessibilityHint={detail}
         // §1.1: no state colours exist in this palette. `ink` on, `hairline` off — the same
@@ -115,6 +119,14 @@ export default function NotificationSettings() {
   const setPreference = useSetPreference(accountId);
   const digests = useDigestChoices(accountId);
   const setDigest = useSetDigestOptIn(accountId);
+
+  // One line, on screen and spoken — the whole of this screen's failure surface (§6 A6).
+  //
+  // A settings screen needs it more than most: the only evidence a Member has that a
+  // preference took is the switch staying where they put it, and both mutations here roll
+  // back optimistically. Without a sentence, a refusal is a switch sliding, springing back,
+  // and silence, which reads as a broken control rather than as something that did not save.
+  const { trouble, say, clear } = useAnnounce();
 
   // Whether this handset may show anything at all. `undefined` while it is being read —
   // rendering "you have notifications switched off" for one frame at every open would be a
@@ -172,7 +184,13 @@ export default function NotificationSettings() {
   }
 
   const chosen = preferences.data;
-  const update = (change: PreferenceUpdate) => setPreference.mutate(change);
+  // The copy lives beside the mutation, so it is read against the migration rather than
+  // against this screen (`preferenceFailureCopy`). `clear()` first, so a refusal cannot
+  // outlive the switch that caused it.
+  const update = (change: PreferenceUpdate) => {
+    clear();
+    setPreference.mutate(change, { onError: (e) => say(preferenceFailureCopy(e)) });
+  };
 
   return (
     <ScrollView
@@ -188,9 +206,9 @@ export default function NotificationSettings() {
       </Text>
 
       {preferences.isError || chosen === null || chosen === undefined ? (
-        <Text style={{ ...styles.body, color: color.ink2, marginTop: space.lg }}>
-          Couldn&rsquo;t read your settings just now. Try again in a moment.
-        </Text>
+        // `live` stays on: nothing announced this one, because it is a read that failed
+        // rather than a refusal that came back through `say()` (components/Screen.tsx).
+        <Trouble message={PREFERENCES_UNREADABLE} style={{ marginTop: space.lg }} />
       ) : (
         <>
           {/* This handset's permission, stated once and never as a switch. */}
@@ -261,16 +279,9 @@ export default function NotificationSettings() {
           </Text>
 
           {digests.isPending ? (
-            <ActivityIndicator
-              color={color.ink3}
-              accessibilityRole="progressbar"
-              accessibilityLabel="Loading your families"
-              style={{ marginTop: space.md, alignSelf: 'flex-start' }}
-            />
+            <Loading what="Loading your families" inline />
           ) : digests.isError ? (
-            <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
-              Couldn&rsquo;t read your families just now.
-            </Text>
+            <Trouble message={DIGEST_CHOICES_UNREADABLE} />
           ) : (digests.data ?? []).length === 0 ? (
             <Text style={{ ...styles.body, color: color.ink2, marginTop: space.md }}>
               Nothing to summarise yet — this arrives once you&rsquo;re in a Family.
@@ -282,12 +293,21 @@ export default function NotificationSettings() {
                 title={choice.familyName}
                 detail={DIGEST_DETAIL}
                 value={choice.optedIn}
-                onValueChange={(next) =>
-                  setDigest.mutate({ memberId: choice.memberId, optedIn: next })
-                }
+                onValueChange={(next) => {
+                  clear();
+                  setDigest.mutate(
+                    { memberId: choice.memberId, optedIn: next },
+                    { onError: (e) => say(preferenceFailureCopy(e)) },
+                  );
+                }}
               />
             ))
           )}
+
+          {/* Why a switch did not hold, below both groups of them and before the closing
+              lines. `live={false}` because `say()` has already spoken it, and on Android a
+              live region as well would announce it twice (components/Screen.tsx). */}
+          <Trouble message={trouble} live={false} style={{ marginTop: space.lg }} />
 
           {/* §4.8, and it has to be on the screen rather than merely true of the code. */}
           <Text style={{ ...styles.body, color: color.ink2, marginTop: space.xl }}>
