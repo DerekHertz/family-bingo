@@ -13,7 +13,6 @@ import { Redirect, useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { Loading } from '../components/Screen';
-import { signOut } from '../lib/auth';
 import { useFamilies } from '../lib/queries/families';
 import { usePendingMemberships } from '../lib/queries/invitations';
 import { useSession } from '../lib/session';
@@ -122,22 +121,16 @@ export default function Home() {
         <Button label="Join a Family" onPress={() => router.push('/family/join')} />
       </View>
 
-      {/* §4.6 puts this under an Account screen ("Families → people you look after → this
-          handset"), which is not built yet and belongs to another slice. Until it is, the
-          notifications screen needs a door, and this is the only screen in the app that is
-          about the Account rather than about one Family. */}
+      {/* §4.6's Account screen, which now exists — so this points at it rather than
+          straight past it at the notifications screen, and the handset's settings sit
+          where §4.6 orders them: Families, then the people you look after, then this
+          handset. This is still the only screen in the app that is about the Account
+          rather than about one Family, which is why the door is here. */}
       <Button
-        label="Notifications"
+        label="You"
         variant="text"
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
-        onPress={() => router.push('/account/notifications')}
-      />
-
-      <Button
-        label="Sign out"
-        variant="text"
-        style={{ marginTop: space.sm, alignItems: 'flex-start' }}
-        onPress={() => void signOut().then(() => router.replace('/'))}
+        onPress={() => router.push('/account')}
       />
     </ScrollView>
   );
