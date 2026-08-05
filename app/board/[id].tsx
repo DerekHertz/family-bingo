@@ -45,6 +45,7 @@ import {
 } from '../../src/domain/celebration';
 import { completedOn, renderTiles } from '../../src/domain/board';
 import { isTileComplete } from '../../src/domain/growth';
+import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
@@ -199,6 +200,16 @@ export default function DraftingTable() {
 
   const title = head.data.isSelf ? 'Your goals' : `${head.data.memberName}’s goals`;
 
+  // §21.4 — the marker, on both faces of this route. A Board with eleven empty squares in
+  // September reads as neglect until you know it started in July, and that is the only job
+  // this string has: §21.5 forbids anything that would make it a comparison.
+  // Two spellings, because the marker appears both as its own line and mid-sentence, and
+  // lowercasing the whole string would downcase the month with it.
+  const joined =
+    head.data.joinedLateAt === null
+      ? null
+      : joinedMarkerInline(head.data.joinedLateAt, head.data.timezone);
+
   /**
    * Sealed Boards are drawn; drafts are listed.
    *
@@ -316,7 +327,9 @@ export default function DraftingTable() {
             {title}
           </Text>
           <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
-            {head.data.year.calendarYear}
+            {joined === null
+              ? head.data.year.calendarYear
+              : `${head.data.year.calendarYear} · ${joined}`}
           </Text>
         </View>
 
@@ -517,7 +530,32 @@ export default function DraftingTable() {
         {draftProgress(written.length)}
         {' · '}
         {sealed ? 'the board has sealed' : sealCopy(new Date(), new Date(deadline), head.data.timezone)}
+        {joined === null ? '' : ` · ${joined}`}
       </Text>
+
+      {/* §21.4, and the two facts that would otherwise look like bugs: a deadline nobody
+          else has, and a middle square that arrives filled in and un-votable (§21.2).
+
+          `paperRaised` and not `clayTint` — clay means family and this is a fact about one
+          Member's Board. Deliberately not a warning, not a countdown and not an apology:
+          §21.5 removed proration precisely because §13.5 removed ranking, so there is
+          nothing here to be behind in and nothing for this card to reassure anyone about. */}
+      {joined === null || sealed || !head.data.controlled ? null : (
+        <View
+          style={{
+            marginTop: space.lg,
+            padding: space.md,
+            backgroundColor: color.paperRaised,
+            borderRadius: radius.card,
+            borderWidth: 1,
+            borderColor: color.hairline,
+          }}
+        >
+          <Text style={{ ...styles.body, color: color.ink2 }}>
+            {lateJoinerNote(head.data.year.centerMode === 'shared')}
+          </Text>
+        </View>
+      )}
 
       {/* The 24-pip strip. One pip per authorable Tile, ink3 when written and hairline
           when not — never moss (§4.1). Decorative: the count above already says it, and
