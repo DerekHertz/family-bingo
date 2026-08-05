@@ -20,8 +20,8 @@
  *     client to sign, and a row pointing at another Family's object would get their path
  *     rendered inside this Family's Feed.
  *
- * **There is no delete in this file, and that is §16.6 being satisfied rather than
- * ignored.** Deleting an Increment cascades to its `attachments` row
+ * **Nothing in this file calls `storage.remove()`, and that is §16.6 being satisfied
+ * rather than ignored.** Deleting an Increment cascades to its `attachments` row
  * (`increment_id … on delete cascade`), the `attachments_orphan_object` trigger records
  * the owed removal in `orphaned_objects` in that same commit, and the `reap-attachments`
  * Edge Function removes the bytes through the Storage API on a `pg_cron` schedule.
@@ -29,9 +29,10 @@
  * included. A client-side `remove()` alongside the row delete would be a second, racing
  * deleter with no transaction around it: if it ran and the row delete did not, the Feed
  * would hand out a path with no bytes behind it; if it failed and the row delete
- * succeeded, the reaper would do it anyway. The one place `remove()` *is* correct is the
- * compensation in `attachPhoto` below, where there is no row yet for the trigger to fire
- * on.
+ * succeeded, the reaper would do it anyway.
+ *
+ * `attachPhoto` used to be the one exception. It is not any more, and the reason is the
+ * whole of the note above it.
  */
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
@@ -71,7 +72,7 @@ export interface AttachPhoto {
 }
 
 /**
- * Upload the bytes, then write the row that points at them.
+ * Write the row that points at the bytes, then put the bytes there.
  *
  * **The order, and why this one.** Three things have to happen and they cannot be one
  * transaction, because one of them is not in Postgres at all:
@@ -79,34 +80,55 @@ export interface AttachPhoto {
  *   1. the Increment row (`useLogIncrement` — it has to be first regardless, since
  *      `attachments.increment_id` is a foreign key and `attachments_own_insert` checks
  *      the Increment's Member),
- *   2. the object,
- *   3. the `attachments` row.
+ *   2. the `attachments` row,
+ *   3. the object.
  *
- * Given 1, the choice is whether 3 comes before or after 2, and both orders can break:
+ * Given 1, the choice is whether 2 comes before or after 3, and both orders can break.
+ * **This was object-first and has been reversed**, because object-first has a failure the
+ * ADR names outright and row-first does not:
  *
- *   - **Row first.** If the upload then fails, the Feed carries an `attachment_path` for
- *     bytes that do not exist. Every Member of the Family sees a photo that never loads,
- *     forever — a visible, permanent wound that only a delete can clear, and the delete
- *     available is deleting the Increment.
- *   - **Object first.** If the row insert then fails, the object is invisible: nothing
- *     reads `storage.objects` directly, the Feed reads `attachment_path` from a row that
- *     does not exist, and — this is the part that decides it — **the reaper will never
- *     collect it**, because `orphaned_objects` is only ever written by a trigger on an
- *     `attachments` row being *deleted*. An orphan created this way is invisible to
- *     everyone and owed to no one: a photograph of a child sitting in a bucket that
- *     nothing will ever clean up, which ADR-0005 names as the worst version of this
- *     feature.
+ *   - **Object first.** The compensating `remove()` only ran when the insert *returned an
+ *     error*. It could not run when the JavaScript never reached the insert at all: a slow
+ *     upload on a train, the Member switching apps, iOS terminating the process. The
+ *     object is then in the bucket and nothing anywhere knows: the Feed LEFT JOINs
+ *     `attachments` and never shows it, `orphaned_objects` is written **only** by
+ *     `attachments_orphan_object` — an AFTER DELETE trigger on a row that was never
+ *     written — so the reaper is never told, nothing sweeps `storage.objects` against
+ *     `attachments`, and the next tap mints a fresh uuid so the key is never named again.
+ *     A photograph of a child sitting in a bucket that nothing can ever remove, which is
+ *     word for word what ADR-0005 calls the worst version of this feature.
+ *   - **Row first.** If the upload then fails, or the process dies between the two, the
+ *     Feed carries an `attachment_path` for bytes that are not there yet. `<FeedRow>`
+ *     already draws that as §3's hatch placeholder — "never a spinner, never a blur-up" —
+ *     so it degrades to *the photo is still arriving* rather than to a broken frame. It is
+ *     visible, it is bounded, and a Member can clear it by removing the Increment, which
+ *     cascades the row and hands anything that did land to the reaper.
  *
- * So: object first, **and compensate**. If the row insert fails, this removes the object
- * it just uploaded, through the Storage API and under `attachments_family_delete` —
- * legitimate here precisely because there is no `attachments` row for the orphan trigger
- * to have fired on, so there is nothing to race with. If the compensation itself fails
- * the outcome is the orphan described above, which is why it is attempted before the
- * error is re-thrown rather than left to a later cleanup that does not exist.
+ * So: **row first**. The exchange is a wound anybody can see and anybody can undo, in
+ * place of one nobody can see and nobody can undo. It also makes the invariant structural
+ * rather than compensatory — *every object in the bucket is named by a live `attachments`
+ * row, or by an `orphaned_objects` row the reaper owns* — and no interruption anywhere in
+ * this function can break it, because the row is written before the bytes exist.
  *
- * Both steps are idempotent, because the whole path is derived from the Increment's
- * client-generated uuid (§11.2): a retry uploads to the same key and inserts the same
- * row, and both say "already there" rather than making a second copy.
+ * The alternative considered and rejected was keeping object-first and adding a
+ * service-role sweep: list the bucket hourly, enqueue anything older than an hour with no
+ * matching `storage_path`. It needs a migration, a scheduled job, and a heuristic age
+ * threshold that races every slow upload — machinery to detect a state this ordering
+ * cannot produce.
+ *
+ * **The compensation is now unconditionally safe, which the old one was not.** Deleting
+ * the row on an upload failure fires the orphan trigger, so if the upload's response was
+ * merely *lost* and the bytes did land, the reaper collects them; and if the upload really
+ * failed, `remove()` in the reaper does not mind an object that is already absent. The old
+ * compensation had no such property: postgrest-js reports a lost response as
+ * `{status: 0, code: ''}`, indistinguishable from a request that never left, so a
+ * committed INSERT whose response was dropped had its object deleted out from under a live
+ * row — every Member of the Family served a path with no bytes, forever, with no retry
+ * path, while the Member who took the photo was told it had not uploaded.
+ *
+ * Both steps stay idempotent, because the whole path is derived from the Increment's
+ * client-generated uuid (§11.2): a retry inserts the same row and uploads to the same key,
+ * and both say "already there" rather than making a second copy.
  */
 export const attachPhoto = async ({
   familyId,
@@ -114,6 +136,22 @@ export const attachPhoto = async ({
   photo,
 }: AttachPhoto): Promise<string> => {
   const path = attachmentPath(familyId, incrementId);
+
+  const { error: rowError } = await supabase.from('attachments').insert({
+    increment_id: incrementId,
+    storage_path: path,
+    // §20.4 counts photos and Wrapped may want the shape of them; they are also the only
+    // record of what was uploaded once the bytes are behind a signed URL.
+    width: photo.width,
+    height: photo.height,
+    bytes: photo.bytes,
+  });
+  // Nothing has been uploaded at this point, so there is nothing to compensate and — the
+  // part that matters — nothing that could become an orphan. An ambiguous failure here
+  // (a lost response over a committed insert) leaves at worst a row with no bytes, which
+  // is the hatch. Uploading anyway to cover that case is what would reintroduce the
+  // orphan, because the row may equally not be there.
+  if (rowError !== null && failure(rowError).code !== ALREADY_THERE) throw rowError;
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
@@ -127,28 +165,36 @@ export const attachPhoto = async ({
       // Increment's own photo.
       upsert: false,
     });
-  if (uploadError !== null && !isDuplicateObject(uploadError)) throw uploadError;
+  if (uploadError === null || isDuplicateObject(uploadError)) return path;
 
-  const { error: rowError } = await supabase.from('attachments').insert({
-    increment_id: incrementId,
-    storage_path: path,
-    // §20.4 counts photos and Wrapped may want the shape of them; they are also the only
-    // record of what was uploaded once the bytes are behind a signed URL.
-    width: photo.width,
-    height: photo.height,
-    bytes: photo.bytes,
-  });
+  // Compensate by withdrawing the row, never by removing the object — see above, and
+  // §16.6: the cascade and the reaper own object deletion, and this hands them the job
+  // rather than doing it here.
+  //
+  // `.select()` is not decoration. `attachments_own_delete` is a `using` policy, so a
+  // refused DELETE matches nothing and PostgREST answers 204 with **no error object** —
+  // the same trap `useDeleteIncrement` documents. Asking for the deleted rows makes an
+  // empty result the failure it is.
+  const { data: withdrawn, error: withdrawError } = await supabase
+    .from('attachments')
+    .delete()
+    .eq('increment_id', incrementId)
+    .select('increment_id');
 
-  if (rowError !== null && failure(rowError).code !== ALREADY_THERE) {
-    // Compensate — see the comment above this function.
-    await supabase.storage
-      .from(BUCKET)
-      .remove([path])
-      .catch(() => undefined);
-    throw rowError;
+  // Not swallowed. The old compensation ended in `.catch(() => undefined)`, which was dead
+  // code twice over: `remove()` resolves to `{data, error}` rather than rejecting, so the
+  // catch never ran, and the `error` it resolved with was discarded unread — the one
+  // outcome worth knowing about was the one nothing could see.
+  if (withdrawError !== null || (withdrawn ?? []).length === 0) {
+    throw new Error(
+      'the photo did not upload and its Attachment row could not be withdrawn — the Feed ' +
+        `will show the hatch for this Increment until it is deleted (upload: ${
+          failure(uploadError).message || 'no message'
+        }; withdraw: ${failure(withdrawError).message || 'nothing was deleted'})`,
+    );
   }
 
-  return path;
+  throw uploadError;
 };
 
 /**
