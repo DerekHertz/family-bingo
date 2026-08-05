@@ -19,6 +19,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isControlledBy, isManaged } from '../../src/domain/member';
 import { supabase } from '../supabase';
 
 export const MAX_PROPOSALS_PER_MEMBER = 3;
@@ -170,7 +171,9 @@ export function useCentre(
             return {
               memberId: b.member_id as string,
               memberName: member?.display_name ?? '',
-              isManaged: member?.account_id === null,
+              // A Ballot whose Member row RLS withheld is nobody's child: a missing row
+              // means "we cannot see them", not "no Account".
+              isManaged: member == null ? false : isManaged(member),
               choiceMode: b.choice_mode as 'shared' | 'personal' | null,
               proposalId: b.proposal_id as string | null,
             };
@@ -183,13 +186,13 @@ export function useCentre(
         modeBallots: ballotsFor(modeVote?.id),
         goalBallots: ballotsFor(goalVote?.id),
         voters: (memberRows ?? [])
-          .filter(
-            (m) => m.account_id === accountId || m.guardian_account_id === accountId,
-          )
+          // `controlled_member_ids()` — one function now (src/domain/member.ts) rather
+          // than a third hand-written copy of the same three columns.
+          .filter((m) => isControlledBy(m, accountId))
           .map((m) => ({
             id: m.id as string,
             name: m.display_name as string,
-            isManaged: m.account_id === null,
+            isManaged: isManaged(m),
           })),
       };
     },

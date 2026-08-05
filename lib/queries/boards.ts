@@ -11,6 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CENTER_POSITION } from '../../src/domain/goal';
+import { isControlledBy, isManaged } from '../../src/domain/member';
 import { supabase } from '../supabase';
 
 export interface Goal {
@@ -188,11 +189,9 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         memberId: data.member_id as string,
         memberName: member.display_name,
         isSelf: member.account_id !== null && member.account_id === accountId,
-        // The same predicate as `controlled_member_ids()` and as `useMyBoards`. Three
-        // copies of one rule is two too many, but the third is SQL and cannot be shared.
-        controlled:
-          member.status === 'active' &&
-          (member.account_id === accountId || member.guardian_account_id === accountId),
+        // `controlled_member_ids()`, client-side — and one function now rather than the
+        // three hand-written copies this rule was spread across (see src/domain/member.ts).
+        controlled: isControlledBy(member, accountId),
         joinedLateAt: data.joined_late_at as string | null,
         personalSetupDeadline: data.personal_setup_deadline as string | null,
         year: {
@@ -247,10 +246,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
         if (member === null) return [];
         // Exactly `controlled_member_ids()`, which is what write_goal() checks. Keeping
         // the two the same shape means a row that renders is a row the server will accept.
-        const controlled =
-          member.status === 'active' &&
-          (member.account_id === accountId || member.guardian_account_id === accountId);
-        if (!controlled) return [];
+        if (!isControlledBy(member, accountId)) return [];
 
         const tiles = (row.tiles ?? []) as { position: number; goal_id: string | null }[];
         return [
@@ -258,7 +254,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
             id: row.id as string,
             memberId: member.id,
             memberName: member.display_name,
-            isManaged: member.account_id === null,
+            isManaged: isManaged(member),
             sealedAt: row.sealed_at as string | null,
             joinedLateAt: row.joined_late_at as string | null,
             // The Centre is never authored here (§6.5), so counting it would put the

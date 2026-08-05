@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { normalizeCode } from '../../src/domain/invitation';
+import { isManaged } from '../../src/domain/member';
 import { supabase } from '../supabase';
 
 export { CODE_LENGTH, codeProblem, normalizeCode } from '../../src/domain/invitation';
@@ -21,6 +22,16 @@ export interface RosterMember {
   role: 'organizer' | 'member';
   status: 'pending' | 'active';
   is_managed: boolean;
+  /**
+   * Who backs this Member — the two columns `controlled_member_ids()` is built from
+   * (`src/domain/member.ts`).
+   *
+   * Carried rather than reduced to a boolean here, because "may *I* act as them" is an
+   * answer about the caller and this list is cached per Family, not per Account. Any
+   * screen wanting that answer runs `isControlledBy` over these.
+   */
+  account_id: string | null;
+  guardian_account_id: string | null;
 }
 
 export interface OpenInvitation {
@@ -70,7 +81,11 @@ export function useRoster(familyId: string | undefined) {
       const [members, invitations] = await Promise.all([
         supabase
           .from('members')
-          .select('id, display_name, role, status, guardian_account_id')
+          // `account_id` is what `isManaged` and `isControlledBy` read (§4.4,
+          // `controlled_member_ids()`). It was missing, so this list had to spell
+          // "is a child" its own second way — `guardian_account_id !== null` — and could
+          // not answer "may this Account act as them" at all.
+          .select('id, display_name, role, status, account_id, guardian_account_id')
           .eq('family_id', familyId ?? '')
           .order('joined_at', { ascending: true }),
         supabase
@@ -95,8 +110,13 @@ export function useRoster(familyId: string | undefined) {
             display_name: m.display_name as string,
             role: m.role as 'organizer' | 'member',
             status: m.status as 'pending' | 'active',
-            // The clay dot follows a Managed Member everywhere they appear (§3).
-            is_managed: m.guardian_account_id !== null,
+            // The clay dot follows a Managed Member everywhere they appear (§3), and it
+            // is the same predicate everywhere too — this row used to say
+            // `guardian_account_id !== null` while the Board and Centre queries said
+            // `account_id === null` about the same person.
+            is_managed: isManaged(m),
+            account_id: m.account_id as string | null,
+            guardian_account_id: m.guardian_account_id as string | null,
           }),
         ),
         invitations: (invitations.data ?? []) as OpenInvitation[],
