@@ -162,38 +162,7 @@ update votes set closes_at = now() - interval '1 minute'
 
 select act_as_cron();
 
--- ---------------------------------------------------------------------------------
--- The squares are dealt at seal (§4.1), so from here a Tile is found by its Goal
--- ---------------------------------------------------------------------------------
---
--- `positions are dealt at seal, so no Member can place the easy one in a corner`. Every
--- assertion below means "the Tile carrying the Goal I wrote to that square", never "square
--- N" — so that is what tile_of() now answers. Squares nothing was written to, including
--- the Centre at 12, still resolve literally: that is what the empty-Tile assertions of
--- §10.2 are about.
-create or replace function tile_of(name text, pos int) returns uuid
-language sql stable as $dealt$
-  select coalesce(
-    (select t.id
-       from tiles t
-       join boards b on b.id = t.board_id
-       join goals  g on g.id = t.goal_id
-      where b.member_id = member_of(name)
-        and g.text = (select m.txt from (values
-                ('Alice', 0, 'Walk the dog'),
-                ('Alice', 1, 'Read a book'),
-                ('Alice', 2, 'Something unmeasured'),
-                ('Bob', 0, 'Swim'),
-                ('Carol', 0, 'Read a book'),
-                ('Dele', 0, 'Draw')
-              ) as m(nm, ps, txt)
-             where m.nm = name and m.ps = pos)),
-    (select t.id
-       from tiles t
-       join boards b on b.id = t.board_id
-      where b.member_id = member_of(name) and t.position = pos)
-  )
-$dealt$;
+
 
 select is(seal_due_boards(), 4, 'four Boards seal — the Year the acceptance test wants');
 
