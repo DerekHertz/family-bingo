@@ -440,33 +440,24 @@ export default function ComposeGoal() {
       ) : null}
 
       {canSharpen ? (
-        <Pressable
-          accessibilityRole="button"
-          // Matches the visible text rather than staying fixed at "Sharpen it" — a
-          // label that says one thing while the button says another is §6 A1's exact
-          // failure, and it was also the only signal a screen-reader Member could have
-          // had that the call had started.
-          accessibilityLabel={sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
+        // `<Button variant="outlined">` is exactly what this was hand-rolling: the same
+        // `paperRaised` inside a hairline, the same press opacity, the same 17pt/700. The
+        // only thing it needed was §4.1's 46pt, which is a `height` now rather than a
+        // fifth variant.
+        //
+        // The accessible label is the visible one, which is why it is not passed: it moves
+        // with the text rather than staying fixed at "Sharpen it". A label saying one
+        // thing while the button says another is §6 A1's exact failure, and it was also
+        // the only signal a screen-reader Member had that the call had started.
+        <Button
+          label={sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
+          height={size.controlSharpen}
           accessibilityHint="Suggests a countable version. Your own wording is always kept as an option."
           // Never disabled while the call is out (§4.2, "no disabled control"). Tapping
           // again during a call is harmless: the mutation replaces its own result.
           onPress={() => void askToSharpen()}
-          style={({ pressed }) => ({
-            height: size.controlSharpen,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginTop: space.lg,
-            borderRadius: radius.card,
-            backgroundColor: color.paperRaised,
-            borderWidth: 1,
-            borderColor: color.hairline,
-            opacity: pressed ? 0.7 : 1,
-          })}
-        >
-          <Text style={{ ...styles.heading, fontSize: 17, color: color.ink }}>
-            {sharpen.isPending ? 'Sharpening…' : 'Sharpen it'}
-          </Text>
-        </Pressable>
+          style={{ marginTop: space.lg }}
+        />
       ) : null}
 
       {/* The "Working" pill (§4.2). `ink3`, no overlay, nothing disabled — the Member can
