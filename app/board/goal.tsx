@@ -57,10 +57,10 @@ import {
   GOAL_TEXT,
   UNIT_MAX,
   goalTextProblem,
-  stepperHint,
   targetProblem,
   unitProblem,
 } from '../../src/domain/goal';
+import { stepperHint } from '../../src/domain/increment';
 import { type Suggestion, authoredFrom, keepOwnWords } from '../../src/domain/sharpen';
 import { failure } from '../../lib/failure';
 import { styles } from '../../theme/fonts';
@@ -472,12 +472,23 @@ export default function ComposeGoal() {
 
         {/* §4.1: the resulting increment verb, previewed beside the stepper.
 
+            The unit AND the existing Goal's `unit_canonical` both go in, because the
+            preview has to be the same function the tile sheet's button calls. Passing the
+            target alone reached a second rule that answered "+1" for anything above one,
+            so a Goal with unit "books" was promised "+1" here and shipped "Read one" for
+            the Year. `unit_canonical` is read from the saved Goal rather than the field:
+            it is Sharpening's (§7.10) and is never typed.
+
             Deliberately NOT a live region. It was one, and on Android that meant the whole
             sentence was announced on every keystroke in the unit field — "1 b · the button
             will say Did it", "1 bo · …". The text sits directly under the controls that
             change it and is read on focus like any other label. */}
         <Text style={{ ...styles.label, color: color.ink2, marginTop: space.md }}>
-          {stepperHint(target, unit.trim() === '' ? null : unit)}
+          {stepperHint(
+            target,
+            unit.trim() === '' ? null : unit,
+            existing?.unit_canonical ?? null,
+          )}
         </Text>
 
         {/* §4.2, "Sharpen it". 46pt, and below the fields rather than beside them: it acts

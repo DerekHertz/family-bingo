@@ -6,9 +6,7 @@ import {
   UNIT_MAX,
   draftProgress,
   goalTextProblem,
-  incrementVerb,
   remainingCopy,
-  stepperHint,
   targetProblem,
   targetSummary,
   unitProblem,
@@ -72,17 +70,6 @@ describe('targetProblem (§6.1, §6.2)', () => {
   });
 });
 
-describe('incrementVerb (§4.1, §11.1)', () => {
-  it('says the whole event for a one-shot Goal', () => {
-    expect(incrementVerb(1)).toBe('Did it');
-  });
-
-  it('counts for everything else', () => {
-    expect(incrementVerb(2)).toBe('+1');
-    expect(incrementVerb(144)).toBe('+1');
-  });
-});
-
 describe('targetSummary', () => {
   it('reads a one-shot Goal as an occasion', () => {
     expect(targetSummary(1)).toBe('once');
@@ -105,13 +92,6 @@ describe('targetSummary', () => {
   it('treats an empty or blank unit as no unit', () => {
     expect(targetSummary(1, '')).toBe('once');
     expect(targetSummary(5, '   ')).toBe('5 times');
-  });
-});
-
-describe('stepperHint (§4.1)', () => {
-  it('previews the verb beside the target', () => {
-    expect(stepperHint(1)).toBe('once · the button will say “Did it”');
-    expect(stepperHint(300, 'walks')).toBe('300 walks · the button will say “+1”');
   });
 });
 
