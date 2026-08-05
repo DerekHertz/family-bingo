@@ -16,7 +16,7 @@
  */
 
 import { useLocalSearchParams } from 'expo-router';
-import { ActivityIndicator, FlatList, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
 import { Button } from '../../components/Button';
 import { FeedRow } from '../../components/FeedRow';
 import { leaveTo } from '../../lib/leave';
@@ -25,7 +25,7 @@ import { useFeed } from '../../lib/queries/feed';
 import { useRoster } from '../../lib/queries/invitations';
 import { useYears } from '../../lib/queries/years';
 import { useSession } from '../../lib/session';
-import { feedKey, type FeedEvent } from '../../src/domain/feed';
+import { feedRowKey, type FeedEvent } from '../../src/domain/feed';
 import { lineName } from '../../src/domain/lines';
 import { styles } from '../../theme/fonts';
 import { color, size, space } from '../../theme/tokens';
@@ -86,7 +86,16 @@ export default function Feed() {
             accessibilityLabel="Loading the feed"
           />
         </View>
-      ) : feed.isError ? (
+      ) : /* `isLoadingError`, not `isError`. On an infinite query `isError` goes true when
+            **any** page fails, including a `fetchNextPage` — so three hundred rows a
+            Member had already scrolled would vanish and be replaced by one sentence
+            because page eleven timed out in a tunnel. `isLoadingError` is true only when
+            there is nothing to show. A failed later page is a footer, below.
+
+            `roster.isError` belongs here too: without the roster every row's name falls
+            back to "A member", which is a confident wrong answer rather than a missing
+            one — the same trap `board.isError` exists to catch on the Board screen. */
+        feed.isLoadingError || roster.isError ? (
         <View style={{ paddingHorizontal: space.xl }}>
           <Text style={{ ...styles.body, color: color.ink2 }}>
             Couldn’t reach the feed just now. Try again in a moment.
@@ -96,7 +105,7 @@ export default function Feed() {
         <FlatList
           data={events}
           // The view's `id` is the source row's id, unique only together with `kind`.
-          keyExtractor={feedKey}
+          keyExtractor={feedRowKey}
           renderItem={({ item }) => (
             <FeedRow
               event={item}
@@ -136,6 +145,25 @@ export default function Feed() {
                 accessibilityLabel="Loading more"
                 style={{ marginVertical: space.lg }}
               />
+            ) : feed.isFetchNextPageError ? (
+              // A page that failed is a footer, never a replacement for the list. Tappable
+              // because scrolling to the bottom again would not retry on its own — and
+              // `fetchNextPage` is the only recovery, since there is nothing to refresh.
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Try loading more again"
+                onPress={() => void feed.fetchNextPage()}
+                style={({ pressed }) => ({
+                  minHeight: size.minTouch,
+                  justifyContent: 'center',
+                  paddingHorizontal: space.xl,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ ...styles.body, color: color.ink2 }}>
+                  Couldn’t load any more just now. Tap to try again.
+                </Text>
+              </Pressable>
             ) : (
               <View style={{ height: space.xxl }} />
             )

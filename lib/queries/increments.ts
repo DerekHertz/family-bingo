@@ -196,6 +196,11 @@ export function useLogIncrement(tileIds: readonly string[], accountId: string | 
       // of `staleTime`, and the celebration the whole slice exists for simply never
       // happens. Nothing else in the app invalidates this key.
       void queryClient.invalidateQueries({ queryKey: ['milestones'] });
+      // And the Feed, which every Increment adds a row to (§14.2). With a minute of
+      // `staleTime` and no invalidation, the common path — log a tap, go Back, open
+      // "What's happened" — showed a Feed with the tap missing from it. On a tap that
+      // closed a Tile it hid the loudest six rows the Feed will ever carry.
+      void queryClient.invalidateQueries({ queryKey: ['feed'] });
     },
   });
 }
@@ -265,6 +270,9 @@ export function useDeleteIncrement(tileIds: readonly string[], accountId: string
       // it was pushed and cannot be unsent (§15.3) — but the client should be reading the
       // server's answer rather than its own guess about it.
       void queryClient.invalidateQueries({ queryKey: ['milestones'] });
+      // The Feed loses the row (§11.3 makes deleting the only mutation an Increment
+      // permits, and the Feed reads `increments` directly).
+      void queryClient.invalidateQueries({ queryKey: ['feed'] });
     },
   });
 }

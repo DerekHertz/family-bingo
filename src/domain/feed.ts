@@ -68,7 +68,7 @@ export type FeedTone = 'plain' | 'complete' | 'seal' | 'quiet';
  * only **together with `kind`** — two different tables could in principle answer with the
  * same uuid, and a React key that collided would drop a row silently.
  */
-export const feedKey = (event: FeedEvent): string => `${event.kind}:${event.id}`;
+export const feedRowKey = (event: FeedEvent): string => `${event.kind}:${event.id}`;
 
 export const toneOf = (event: FeedEvent): FeedTone => {
   if (event.kind === 'member_joined') return 'quiet';
@@ -134,12 +134,37 @@ export const feedCopy = (
       }
 
     case 'swap':
-      // §4.4: "do not let any screen imply a Member gave up on the goal they set down."
-      // "Set down" is the word §4.4 itself uses, and it is doing real work here.
-      return {
-        headline: `${who} set a goal down`,
-        detail: event.afterText,
-      };
+      // Three different things arrive as a `swap`, and one sentence for all of them says
+      // something false about two.
+      //
+      //   - **Nothing was set down.** `swap_tile()` writes a Revision with a null
+      //     `before_text` when the Tile was empty — an unfinished Board seals with empty
+      //     squares (§10.2) and filling one later costs a Swap (§18.5). "Set a goal down"
+      //     there invents an abandonment that never happened.
+      //   - **The words are the same and the Target moved.** §18.5 is the reason Swaps are
+      //     visible at all: *"anyone could lower a Target from 144 to 90 in November and
+      //     manufacture a Bingo. Scarcity plus visibility closes that."* The Feed is the
+      //     visibility half — so for the exact manoeuvre §18.5 names, it has to say the
+      //     number changed, or it shows the same sentence twice and hides the only fact
+      //     that matters.
+      //   - A genuine replacement, which is the case "set down" was written for. §4.4's
+      //     own words, and §7.10 forbids any screen implying they gave up on it.
+      if (event.beforeText === null) {
+        return { headline: `${who} filled an empty square`, detail: event.afterText };
+      }
+      if (
+        event.afterText !== null &&
+        event.beforeText.trim() === event.afterText.trim() &&
+        event.beforeTarget !== null &&
+        event.afterTarget !== null &&
+        event.beforeTarget !== event.afterTarget
+      ) {
+        return {
+          headline: `${who} changed a target`,
+          detail: `${event.afterText}: ${event.beforeTarget} → ${event.afterTarget}`,
+        };
+      }
+      return { headline: `${who} set a goal down`, detail: event.afterText };
 
     case 'vote_resolved':
       // No author, and no margin. §7.9 forbids showing a vote count as a numeral, and the
@@ -172,7 +197,18 @@ export const feedLabel = (
   managed: boolean,
 ): string => {
   const parts: string[] = [copy.headline];
-  if (event.kind === 'swap' && event.beforeText !== null) {
+  // Only for a replacement. A filled-in empty square has nothing to have come *from*, and
+  // a Target change already carries both numbers in its detail — announcing a move between
+  // two identical sentences would read as a change that did not happen.
+  //
+  // (Written without the obvious phrasing on purpose: `src/domain/boundaries.test.ts`
+  // greps this directory for import syntax, and the natural wording of that sentence
+  // contains one.)
+  if (
+    event.kind === 'swap' &&
+    event.beforeText !== null &&
+    event.beforeText.trim() !== (event.afterText ?? '').trim()
+  ) {
     parts.push(`from “${event.beforeText}” to “${event.afterText ?? ''}”`);
   } else if (copy.detail !== null) {
     parts.push(copy.detail);

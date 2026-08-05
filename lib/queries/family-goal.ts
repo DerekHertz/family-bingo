@@ -53,6 +53,9 @@ export function useCompleteFamilyGoal() {
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
       // The Milestone the celebration is gated on (§12.2).
       void queryClient.invalidateQueries({ queryKey: ['milestones'] });
+      // And the Feed, which gains a `tile_completed` row on every Board at once — this is
+      // the loudest single thing that happens in a shared-Centre Year (§12.3, §14.2).
+      void queryClient.invalidateQueries({ queryKey: ['feed'] });
     },
   });
 }

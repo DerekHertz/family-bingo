@@ -58,20 +58,31 @@ export const FeedRow = memo(function FeedRow({ event, name, managed, lineNameOf 
         paddingVertical: space.md,
         paddingHorizontal: space.xl,
         alignItems: 'flex-start',
-        borderTopWidth: 1,
-        borderTopColor: color.hairline,
-        // §3: the only tinted row type. Its own top and bottom edge in `mossTintEdge`
-        // rather than the `hairline` every other row divides with.
+        // §3: "`hairline` divider **between**" — so the divider is the row's bottom edge,
+        // not its top. As a top border the first row draws a rule directly under the
+        // header where §3 asks for none, and the tinted row below gets a doubled 2pt rule:
+        // its own `mossTintEdge` bottom plus the next row's `hairline` top, stacked. The
+        // one row type §3 singles out for clean edges owns both of its own.
+        borderBottomWidth: 1,
+        borderBottomColor: color.hairline,
+        // §3's backgrounds. An Increment and a seal both sit on `paperRaised`; only the
+        // tinted row departs from it, and it is the only one that may.
+        backgroundColor:
+          tone === 'complete'
+            ? color.mossTint
+            : tone === 'quiet'
+              ? color.paper
+              : color.paperRaised,
         ...(tone === 'complete'
           ? {
-              backgroundColor: color.mossTint,
+              borderTopWidth: 1,
               borderTopColor: color.mossTintEdge,
-              borderBottomWidth: 1,
               borderBottomColor: color.mossTintEdge,
             }
           : null),
-        // §3: a Member arriving renders at 75%. It is the quietest thing that happens.
-        opacity: tone === 'quiet' ? 0.75 : 1,
+        // §3's 75% for a Member arriving is carried by the empty avatar's own `pending`
+        // dimming (see `Leading`), so the row does not apply it again — two 75%s compound
+        // to 56% and the row all but disappears.
       }}
     >
       <View style={{ width: SLOT, alignItems: 'center' }}>
@@ -260,9 +271,21 @@ function Leading({
 
   // An Increment, or a Member arriving — which §3 renders as an *empty* circle, because
   // there is nothing they have done yet.
+  //
+  // `pending` is what draws that circle: a transparent ground with a hairline ring and no
+  // glyph. Passing an empty `name` alone does not, because `<Avatar>` falls back to '?' —
+  // so the row welcoming somebody rendered the one mark in the app that reads as "unknown
+  // person". `pending` also dims to 75%, which the row is already doing, so the row's own
+  // opacity comes off rather than compounding to 56%.
+  const joining = kind === 'member_joined';
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      <Avatar name={kind === 'member_joined' ? '' : name} size={SLOT} managed={managed} />
+      <Avatar
+        name={joining ? '' : name}
+        pending={joining}
+        size={SLOT}
+        managed={managed}
+      />
     </View>
   );
 }

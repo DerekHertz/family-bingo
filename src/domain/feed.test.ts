@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCopy, feedKey, feedLabel, toneOf, type FeedEvent } from './feed';
+import { feedCopy, feedRowKey, feedLabel, toneOf, type FeedEvent } from './feed';
 import { lineName } from './lines';
 
 const base: FeedEvent = {
@@ -28,12 +28,12 @@ const milestone = (type: string, over: Partial<FeedEvent> = {}): FeedEvent =>
 const named = (name: string) => () => name;
 const copyOf = (e: FeedEvent, name = 'Ada') => feedCopy(e, named(name), lineName);
 
-describe('feedKey (§14.1)', () => {
+describe('feedRowKey (§14.1)', () => {
   // The view's `id` is the source row's id, so it identifies a row only together with the
   // table it came from. A colliding React key drops a row without saying so.
   it('is unique across kinds that share an id', () => {
-    expect(feedKey(event({ id: 'x', kind: 'increment' }))).not.toBe(
-      feedKey(event({ id: 'x', kind: 'swap' })),
+    expect(feedRowKey(event({ id: 'x', kind: 'increment' }))).not.toBe(
+      feedRowKey(event({ id: 'x', kind: 'swap' })),
     );
   });
 });
@@ -111,7 +111,7 @@ describe('feedCopy — Milestones (§13.2, §13.4)', () => {
   });
 });
 
-describe('feedCopy — Swaps (§4.4, §7.10)', () => {
+describe('feedCopy — Swaps (§4.4, §7.10, §18.5)', () => {
   const swap = event({
     kind: 'swap',
     beforeText: 'Run a marathon',
@@ -125,6 +125,35 @@ describe('feedCopy — Swaps (§4.4, §7.10)', () => {
     expect(copy.headline).toBe('Ada set a goal down');
     expect(copy.detail).toBe('Walk every day');
     expect(copy.headline.toLowerCase()).not.toMatch(/gave up|quit|failed|abandon|deleted/);
+  });
+
+  // `swap_tile()` writes a Revision with a null `before_text` when the Tile was empty:
+  // an unfinished Board seals with empty squares (§10.2) and filling one costs a Swap
+  // (§18.5). "Set a goal down" there invents an abandonment that never happened.
+  it('does not claim a goal was set down when there was not one', () => {
+    const copy = copyOf(
+      event({ kind: 'swap', beforeText: null, beforeTarget: null, afterText: 'Learn chess', afterTarget: 1 }),
+    );
+    expect(copy.headline).toBe('Ada filled an empty square');
+    expect(copy.detail).toBe('Learn chess');
+  });
+
+  // §18.5 is the whole reason Swaps are visible: "anyone could lower a Target from 144 to
+  // 90 in November and manufacture a Bingo. Scarcity plus visibility closes that." The
+  // Feed is the visibility half, so for that exact manoeuvre it has to show the number.
+  it('shows the number when a Target moved and the words did not', () => {
+    const copy = copyOf(
+      event({
+        kind: 'swap',
+        beforeText: 'Read 24 books',
+        beforeTarget: 24,
+        afterText: 'Read 24 books',
+        afterTarget: 12,
+      }),
+    );
+    expect(copy.headline).toBe('Ada changed a target');
+    expect(copy.detail).toContain('24');
+    expect(copy.detail).toContain('12');
   });
 });
 
@@ -193,6 +222,22 @@ describe('feedLabel (§6, §4.7)', () => {
     expect(say(swap)).toBe(
       'Ada set a goal down. from “Run a marathon” to “Walk every day”. 14 Mar',
     );
+  });
+
+  // "from X to X" would announce a change that did not happen — the words are identical
+  // and it is the Target that moved, which the detail already carries.
+  it('does not say from-and-to when only the Target moved', () => {
+    const said = say(
+      event({
+        kind: 'swap',
+        beforeText: 'Read 24 books',
+        beforeTarget: 24,
+        afterText: 'Read 24 books',
+        afterTarget: 12,
+      }),
+    );
+    expect(said).not.toContain('from “');
+    expect(said).toContain('24 → 12');
   });
 
   // §4.7: the clay dot is the only sign a Guardian tapped it, and a dot announces as
