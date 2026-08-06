@@ -138,16 +138,31 @@ jobs:
           # system fallback faces — on a product whose §1 is a type scale. It cost an hour
           # to find because nothing anywhere reports a failure.
           #
-          # Assets are vendored under `assets/fonts/` to avoid it. This asserts that nobody
-          # has reintroduced the shape by importing a face from a package again.
-          if find dist/assets -path '*node_modules*' -type f 2>/dev/null | grep -q .; then
-            echo "::error::dist/assets contains a node_modules path — Cloudflare Pages will"
-            echo "::error::silently drop those files. Vendor the asset instead of importing"
-            echo "::error::it from a package. See assets/fonts/ and app/_layout.tsx."
-            find dist/assets -path '*node_modules*' -type f | head -10
+          # **Fonts are fatal; other assets are usually not.** `expo-router` ships its own
+          # navigation icons under that path — back, forward, search, the sitemap glyph —
+          # and this app never renders one, because every screen sets `headerShown: false`.
+          # Failing on those would be failing on something that has never mattered, which
+          # is how a guard gets deleted rather than fixed. So: fonts fail, anything else
+          # warns and is left for a human to judge.
+          fonts=$(find dist/assets -path '*node_modules*' \
+                    \( -name '*.ttf' -o -name '*.otf' -o -name '*.woff' -o -name '*.woff2' \) \
+                    -type f 2>/dev/null || true)
+          if [ -n "$fonts" ]; then
+            echo "::error::A font is emitted under a node_modules path, which Cloudflare"
+            echo "::error::Pages silently drops — the app would render in fallback faces."
+            echo "::error::Vendor it under assets/fonts/ instead of importing it from a"
+            echo "::error::package. See app/_layout.tsx."
+            echo "$fonts"
             exit 1
           fi
-          echo "no node_modules paths under dist/assets"
+
+          others=$(find dist/assets -path '*node_modules*' -type f 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$others" -gt 0 ]; then
+            echo "::warning::$others non-font asset(s) sit under a node_modules path and"
+            echo "::warning::will not be uploaded. Expected: expo-router's unused header"
+            echo "::warning::icons. Check the list if anything looks like the app's own."
+          fi
+          echo "no fonts under a node_modules path"
 
       # Create the Pages project on first deploy, rather than making it a manual step.
       #
