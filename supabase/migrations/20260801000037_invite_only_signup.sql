@@ -16,17 +16,29 @@
 -- a check an attacker simply does not run: the Supabase auth endpoint is public and the
 -- anon key is in every bundle. Same argument as ADR-0004 makes about RLS.
 --
--- WHY `session_user`
+-- WHY `session_user`, AND WHAT IT CANNOT TELL YOU
 -- ---------------------------------------------------------------------------------------
 -- GoTrue connects as `supabase_auth_admin`. Verified empirically rather than assumed: a
 -- real signup against the local stack reports `session_user = supabase_auth_admin`, while
--- pgTAP's `insert into auth.users` reports `postgres`.
+-- a direct `insert into auth.users` reports `postgres`.
 --
--- So the gate applies to the public door and nothing else. Seeding a demo Account, an
--- operator adding somebody by hand, and 28 pgTAP files that create fixture users all
--- continue to work — which is not a loophole but the point. The roles that bypass it are
--- the ones that already have unrestricted access to the database; a caller cannot choose
--- to be one of them.
+-- So the gate separates **GoTrue** from **direct SQL**, and that is the only distinction
+-- available. It does *not* separate a public sign-up from an administrative one:
+-- `POST /auth/v1/admin/users` is served on the same connection, and the rows the two paths
+-- produce are byte-identical — same `raw_app_meta_data`, same confirmation columns, same
+-- `is_sso_user`, same `invited_at`. That was probed both ways rather than assumed, after
+-- an earlier version of this comment claimed otherwise and broke the integration suite.
+--
+-- The consequence is a property worth stating plainly rather than working around: **every
+-- identity GoTrue creates is gated, including one an operator creates with the service
+-- key.** An operator adds the address to the allowlist first. That is not a workaround, it
+-- is what invite-only means — and it costs one insert, which `scripts/seed-sealed-board.mjs`
+-- and the two integration suites now do.
+--
+-- Direct SQL is not gated, and cannot usefully be: `postgres` and `service_role` already
+-- have unrestricted access to this database, including to the allowlist itself. Gating
+-- them would protect nothing and would break 28 files of pgTAP fixtures. A caller arriving
+-- through the API cannot choose to be one of those roles.
 --
 -- FAIL CLOSED
 -- ---------------------------------------------------------------------------------------

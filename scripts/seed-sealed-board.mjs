@@ -84,6 +84,12 @@ const main = async () => {
     });
   }
 
+  // Invite-only sign-up (20260801000037) gates every identity GoTrue creates, including
+  // one made through the admin API — the two are indistinguishable at the database. The
+  // operator adds the address first, which is what invite-only means.
+  sql(`insert into signup_allowlist (email, note)
+       values ('${email}', 'local seed') on conflict (email) do nothing`);
+
   const created = await fetch(`${API}/auth/v1/admin/users`, {
     method: 'POST',
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'content-type': 'application/json' },

@@ -66,6 +66,13 @@ beforeAll(async () => {
   const email = `${randomUUID()}@example.test`;
   const password = randomUUID();
 
+  // Invite-only sign-up (20260801000037) gates **every** identity GoTrue creates. It
+  // cannot do otherwise: an admin-API create and a public sign-up arrive on the same
+  // connection as `supabase_auth_admin` and produce byte-identical rows, so the database
+  // has no signal to tell them apart — probed both ways to be sure. An operator adds the
+  // address first, and that is what invite-only means rather than a workaround.
+  sql(`insert into signup_allowlist (email, note) values ('${email}', 'integration test')`);
+
   const createUser = await fetch(`${API}/auth/v1/admin/users`, {
     method: 'POST',
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'content-type': 'application/json' },

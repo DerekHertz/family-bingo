@@ -86,6 +86,16 @@ const makeFamily = async (name: string): Promise<Player> => {
   const email = `${randomUUID()}@example.test`;
   const password = randomUUID();
 
+  // Invite-only sign-up (20260801000037) gates **every** identity GoTrue creates — and it
+  // cannot do otherwise: an admin-API create and a public sign-up arrive on the same
+  // connection as `supabase_auth_admin` and produce rows that are byte-identical, so the
+  // database has no signal to tell them apart. Probed both ways to be sure.
+  //
+  // So an operator adds the address first, and that is what "invite-only" means rather
+  // than a workaround. Doing it here keeps the local stack behaving exactly like the live
+  // project, which is worth more than the two lines it costs.
+  sql(`insert into signup_allowlist (email, note) values ('${email}', 'integration test')`);
+
   const createUser = await fetch(`${API}/auth/v1/admin/users`, {
     method: 'POST',
     headers: {
