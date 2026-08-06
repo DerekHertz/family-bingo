@@ -21,15 +21,59 @@ import { Redirect, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { useEffect, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
+import { Button } from '../../components/Button';
 import { Loading } from '../../components/Screen';
 import { SignInCancelled, sessionFromUrl } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
 import { styles } from '../../theme/fonts';
-import { color, space } from '../../theme/tokens';
+import { color, size, space } from '../../theme/tokens';
+
+/**
+ * Whether this callback is the invite-only gate turning somebody away.
+ *
+ * `handle_new_account()` (`20260801000037`) raises `42501` when the address is not on
+ * `signup_allowlist`, inside the same transaction as the `auth.users` insert — so GoTrue
+ * never finishes creating the identity and redirects back with an error rather than a
+ * session. There is no session, no half-made Account and nothing to retry, which is exactly
+ * why the screen must not offer a retry (§0.3).
+ *
+ * **Matched loosely, on purpose.** GoTrue does not forward the trigger's own message: what
+ * comes back is `error_code=unexpected_failure` with a description of "Database error saving
+ * new user", and that wording is GoTrue's rather than this project's — it can change with a
+ * platform upgrade. So either signal is enough, and the failure mode of a false positive is
+ * mild: somebody whose sign-in broke for an unrelated server reason is told sign-up is
+ * invite-only and offered the demo, which is true and useful either way.
+ *
+ * `sessionFromUrl` cannot answer this. It throws `SignInCancelled` for *any* `error`
+ * parameter — right for a provider sheet somebody backed out of, and wrong here, where
+ * "no problem, nothing was signed in" would be the app shrugging at the one refusal it
+ * knows the reason for. `lib/auth.ts` is deliberately not changed for this: parsing a
+ * refusal is this screen's job, and the two callers of `sessionFromUrl` that are not this
+ * screen have no use for it.
+ */
+const isInviteOnlyRefusal = (url: string): boolean => {
+  const hash = url.indexOf('#');
+  const query = url.indexOf('?');
+  // Both halves, like `sessionFromUrl`: the implicit flow puts a denial in the fragment and
+  // PKCE puts it in the query, and which one arrives depends on the provider.
+  const params = new URLSearchParams(hash >= 0 ? url.slice(hash + 1) : '');
+  const search = new URLSearchParams(
+    query >= 0 ? url.slice(query + 1, hash >= 0 ? hash : undefined) : '',
+  );
+  const read = (key: string) => (params.get(key) ?? search.get(key) ?? '').toLowerCase();
+
+  if (read('error') === '') return false;
+  return (
+    read('error_code') === 'unexpected_failure' ||
+    read('error_description').includes('database error') ||
+    read('error_description').includes('invite')
+  );
+};
 
 export default function AuthCallback() {
   const router = useRouter();
   const [failed, setFailed] = useState<string | null>(null);
+  const [inviteOnly, setInviteOnly] = useState(false);
   const [done, setDone] = useState(false);
 
   /**
@@ -81,6 +125,14 @@ export default function AuthCallback() {
 
     const consume = async (url: string | null) => {
       if (url === null || cancelled) return;
+      // Before `sessionFromUrl`, which collapses every refusal into one.
+      if (isInviteOnlyRefusal(url)) {
+        setInviteOnly(true);
+        setFailed(
+          'Sign-up here is invite-only, so that address was turned away. Nothing was created.',
+        );
+        return;
+      }
       try {
         const session = sessionFromUrl(url);
         if (session === null) return;
@@ -120,15 +172,41 @@ export default function AuthCallback() {
     >
       {/* Not `<Trouble>`: this is the whole screen rather than a line beside a form, and
           it carries its own way out. Not `<ErrorState>` either — the exit here is
-          `router.replace('/')` and not `leaveTo`, because a magic link cold-starts the app
-          and there is deliberately no history to unwind to. */}
-      <Text style={{ ...styles.body, color: color.ink2, textAlign: 'center' }}>{failed}</Text>
+          `router.replace` and not `leaveTo`, because a magic link cold-starts the app and
+          there is deliberately no history to unwind to. */}
+      <Text
+        style={{
+          ...styles.body,
+          color: color.ink2,
+          textAlign: 'center',
+          maxWidth: size.proseWidth,
+        }}
+      >
+        {failed}
+      </Text>
+
+      {/* **The dead end this screen used to be.**
+          Being refused by the invite gate is the one failure here that cannot be retried —
+          the address is not on the list and no amount of trying again puts it there — so a
+          screen offering only "back to sign in" sends somebody round a loop that has no
+          exit. The demo is the door that *is* open, and this is the moment it is worth
+          most: they came here wanting to see the thing. */}
+      {!inviteOnly ? null : (
+        <Button
+          label="See a demo instead"
+          variant="filled"
+          onPress={() => router.replace('/demo')}
+          accessibilityHint="Opens a family's finished year, which you can read but not change"
+          style={{ marginTop: space.lg, minWidth: size.formWidth }}
+        />
+      )}
+
       <Text
         accessibilityRole="button"
-        onPress={() => router.replace('/')}
+        onPress={() => router.replace(inviteOnly ? '/' : '/signin')}
         style={{ ...styles.body, color: color.ink, marginTop: space.lg }}
       >
-        Back to sign in
+        {inviteOnly ? 'Read about it first' : 'Back to sign in'}
       </Text>
     </View>
   );
