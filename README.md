@@ -151,7 +151,7 @@ Four steps, and only the first three need a human. Run them once per project.
 supabase login                      # opens a browser
 supabase link --project-ref <ref>   # the subdomain of your project URL
 supabase db push                    # applies every migration in supabase/migrations
-supabase functions deploy           # notify · reap-attachments · sharpen · wrap
+supabase functions deploy           # notify · reap-attachments · sharpen · wrap · demo-login
 ```
 
 With no function named, `deploy` deploys **everything** in `supabase/functions/` — which
@@ -258,6 +258,77 @@ supabase secrets unset DEV_LOGIN_SECRET
 
 The first Account for each address still has to be made the ordinary way, once: the
 function looks an address up and never creates one.
+
+## The public demo
+
+The site is linkable from a CV, and sign-up is **invite-only** — `handle_new_account()`
+refuses any address that is not on `signup_allowlist` (`20260801000037`). So a stranger
+cannot make an Account, by design, and the demo is what they see instead: one shared
+Account, in one Family, whose Year is **frozen**.
+
+**Frozen is the whole read-only mechanism, and it is not new code.** §20.1 says a frozen
+Year is "permanently read-only — no backdating", and that is already enforced and pgTAP-
+tested: `tile_is_loggable()` requires `frozen_at is null` and both `increments_own_insert`
+and `increments_own_delete` route through it, so the demo cannot log or delete an
+Increment at RLS; `swap_tile()`, `write_goal()` and `complete_family_goal()` each refuse a
+frozen Year themselves. `20260801000039` adds only the handful of writes that live
+*outside* a Year — creating a Family, joining one, adding a Member, renaming one, and
+deleting the Account — and the demo Member is deliberately not the Organizer, which is
+what refuses inviting, approving, removing and opening next Year for free.
+
+### Seeding it
+
+Once per project, by hand. The demo is **content, not schema**, so it is a script rather
+than a migration: a migration runs on every `db reset` and in CI, and several pgTAP suites
+do `select id from families limit 1` — a demo Family in every reset fails about thirty
+assertions for reasons unrelated to the change. The script's own header carries the rest of
+the argument.
+
+```sh
+# Local (uses the running stack, and `wrap` if `supabase functions serve` is up)
+node scripts/seed-demo-family.mjs
+
+# The live project. DEMO_DB_URL is the **session pooler** string, as used by backup.yml —
+# the direct db.<ref>.supabase.co host is IPv6-only.
+DEMO_DB_URL='postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres' \
+SUPABASE_URL='https://<ref>.supabase.co' \
+SUPABASE_SERVICE_ROLE_KEY='<the eyJ... service_role JWT>' \
+node scripts/seed-demo-family.mjs
+```
+
+It deletes and rebuilds the demo wholesale every run, so it is safe to repeat and there is
+no half-updated state to reason about. It seeds last calendar year, freezes it through
+`freeze_year()`, materialises Wrapped through `generate_wrapped()`, and then asks the
+`wrap` Edge Function for the Awards so `assignAwards()` stays the only thing that computes
+them. If `wrap` is unreachable, the hourly `finalize-wrapped` cron job does the same within
+the hour.
+
+`demo-login` needs no secret and no configuration — unlike `dev-login`, it takes no
+parameters at all, so there is nothing a caller could point at another Account. It is rate
+limited per caller and globally (`demo_login_allowed()`, `20260801000039`).
+
+### The walkthrough video
+
+The landing page has a slot for a screen recording and **neither file is in the
+repository**. Drop them here:
+
+| File | What |
+|---|---|
+| `public/demo.mp4` | The recording. Self-hosted — the CSP is `script-src 'self'`, so a YouTube or Vimeo embed would be an `<iframe>` loading a script the policy refuses |
+| `public/demo-poster.png` | The still shown before play. A placeholder board is committed; replace it with a frame from the recording |
+
+`public/` is copied into `dist/` verbatim by `expo export --platform web`, so nothing else
+has to change.
+
+**Until `demo.mp4` exists the section renders nothing at all**, and that is deliberate
+rather than accidental: `public/_redirects` rewrites every unmatched path to `index.html`
+with a **200**, so a missing `/demo.mp4` does not 404 — it answers with a page, and handing
+that to a `<video>` is a decode failure in the console and a broken frame on screen. The
+page asks for the file with a `HEAD` first and checks the **content type**, because the
+status is 200 either way.
+
+Keep it short and keep it quiet — it is `muted`, `playsinline` and `controls`, so nothing
+moves until somebody asks.
 
 ## Continuous integration, and the web deploy
 

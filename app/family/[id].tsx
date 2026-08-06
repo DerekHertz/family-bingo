@@ -18,6 +18,7 @@ import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { Loading, Trouble } from '../../components/Screen';
 import { SeatPips } from '../../components/SeatPips';
 import { useAnnounce } from '../../lib/announce';
+import { useIsDemo } from '../../lib/demo';
 import { failure } from '../../lib/failure';
 import { useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
@@ -68,6 +69,16 @@ export default function FamilyRoster() {
   // that did nothing on the deployed build — see components/ConfirmSheet.tsx.
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
   const { trouble, say, clear } = useAnnounce();
+  /**
+   * The public demo, which is the same screen with nothing on it that writes.
+   *
+   * Every write inside the Year is already refused by §20.1, because the demo Family's Year
+   * is frozen — that needs nothing here. This is for the two controls that are *not* inside
+   * a Year and are therefore refused by `20260801000039` instead: adding a child, and
+   * removing a Member. Both would render, both would fail, and §0.3 does not allow a
+   * control whose only possible answer is no.
+   */
+  const readOnly = useIsDemo();
 
   const family = families.data?.find((f) => f.id === id);
   const isOrganizer = family?.member.role === 'organizer';
@@ -338,8 +349,14 @@ export default function FamilyRoster() {
 
       {/* §4: any active adult Member may add a child, not just the Organizer — the
           Guardian is whoever is accountable for them (§4.3), and that is a parent rather
-          than an administrator. */}
-      {isMember ? (
+          than an administrator.
+
+          **Not in the demo.** `create_managed_member()` is one of the handful of writes a
+          frozen Year cannot reach, so `20260801000039` refuses it at the database — and a
+          control that is guaranteed to answer "no" is the §0.3 failure exactly. The banner
+          above has already said nothing here can change; the interface should agree with
+          it rather than argue. */}
+      {isMember && !readOnly ? (
       <Button
         label="Add a child"
         // `full` alone was the wrong gate: `open` is empty for a non-Organizer, so `taken`
@@ -409,6 +426,7 @@ export default function FamilyRoster() {
                 a seat. Never the Organizer's own row: remove_member() refuses to leave a
                 Family with no Organizer, and offering it here would be offering an error. */}
             {(member.is_managed || isOrganizer) &&
+            !readOnly &&
             member.status === 'active' &&
             member.id !== family?.member.id ? (
               <Pressable

@@ -27,29 +27,74 @@ import { color, radius, space, stroke } from '../theme/tokens';
  * derived against — so a browser at this width lands on exactly the 66.8pt tiles the spec
  * describes. Any other number would make the design system's own numbers wrong.
  */
-const COLUMN = 402;
+export const COLUMN = 402;
 
 /**
  * Below this, the browser window *is* a phone and the shell is only in the way — a frame
  * drawn around a viewport that already fits wastes the little width there is. Above it,
  * there is room to show the column as a device rather than as a stranded strip of content.
  */
-const FRAME_FROM = 900;
+export const FRAME_FROM = 900;
 
-export function PhoneShell({ children }: { children: ReactNode }) {
+/**
+ * How wide the app actually is, as opposed to how wide the window is.
+ *
+ * On a handset those are the same number and `useWindowDimensions()` is the right question.
+ * On web they are not: this component puts the app in a 402pt column, so a screen that sizes
+ * anything from the window is sizing it from three times its own container.
+ *
+ * `app/year/wrapped.tsx` is where that showed. §3 calls a Wrapped card "full-bleed", which on
+ * a phone means the window — so the card was `useWindowDimensions().width`, and in a browser
+ * it rendered at 1440 inside a 402 column: clipped by the shell, with the 118pt numeral hard
+ * against the left edge and the 2×2 stats grid off the side entirely.
+ *
+ * Derived rather than measured, and that is deliberate. An `onLayout` on the screen's own
+ * root is the obvious answer and it does not work here: the value is needed by `FlatList`'s
+ * `getItemLayout`, which is called before the first layout pass, so the first render is laid
+ * out at the wrong width whatever the measurement later says. The shell already knows the
+ * answer — it is the thing imposing it — so it should be the one asked.
+ */
+export function useAppWidth(): number {
+  const { width } = useWindowDimensions();
+  return Platform.OS === 'web' ? Math.min(width, COLUMN) : width;
+}
+
+export function PhoneShell({
+  children,
+  full = false,
+}: {
+  children: ReactNode;
+  /**
+   * Let this route have the whole window.
+   *
+   * One route does: `/`, the landing page, which is a **desktop page** rather than a screen
+   * of the app. It is read once by somebody deciding whether to look further, on whatever
+   * they happen to be holding, and 402pt of a 1440px window is a pamphlet slid under a door.
+   * The app itself stays phone-shaped, because §3's geometry is only true at 402.
+   *
+   * **The two `<View>`s stay, and that is the point of a prop rather than a fragment.** An
+   * opt-out that returned `<>{children}</>` would change the shape of the tree between two
+   * routes, and React unmounts a subtree whose element type changes — so navigating from `/`
+   * to `/signin` would tear down and rebuild the whole `<Stack>`, losing its history. Same
+   * views, different constraint.
+   */
+  full?: boolean;
+}) {
   const { width } = useWindowDimensions();
 
   // A device is already the right shape. This component has no business there, and
   // wrapping the tree in two extra views on every launch would be pure cost.
   if (Platform.OS !== 'web') return <>{children}</>;
 
-  const framed = width >= FRAME_FROM;
+  const framed = width >= FRAME_FROM && !full;
 
   return (
     <View
       style={{
         flex: 1,
-        alignItems: 'center',
+        // `stretch` and not `center` when the page is taking the window: a centred child
+        // with no max width still lays out at its content's size.
+        alignItems: full ? 'stretch' : 'center',
         justifyContent: framed ? 'center' : 'flex-start',
         // The ground *outside* the phone. `paperSunk` rather than a new colour, because
         // §1.1 is the whole palette and this is a well the app sits in — the same job
@@ -61,9 +106,12 @@ export function PhoneShell({ children }: { children: ReactNode }) {
         style={{
           flex: 1,
           width: '100%',
-          maxWidth: COLUMN,
+          maxWidth: full ? undefined : COLUMN,
           backgroundColor: color.paper,
-          overflow: 'hidden',
+          // Lifted for the landing page only. The column clips on purpose — a sheet must not
+          // escape the phone — but a page that *is* the window has nothing to escape from,
+          // and `hidden` here would clip its own scrolling.
+          overflow: full ? 'visible' : 'hidden',
           ...(framed
             ? {
                 // A device, not a card: a tall radius and a hairline edge, and no shadow.
