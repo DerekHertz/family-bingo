@@ -10,10 +10,11 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, Share, Text, View } from 'react-native';
+import { Pressable, ScrollView, Share, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
+import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { Loading, Trouble } from '../../components/Screen';
 import { SeatPips } from '../../components/SeatPips';
 import { useAnnounce } from '../../lib/announce';
@@ -63,6 +64,9 @@ export default function FamilyRoster() {
   const years = useYears(id);
   const openYear = useOpenYear(id ?? '');
   const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
+  // `Alert.alert` is a no-op on react-native-web, so both confirms below were controls
+  // that did nothing on the deployed build — see components/ConfirmSheet.tsx.
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
   const { trouble, say, clear } = useAnnounce();
 
   const family = families.data?.find((f) => f.id === id);
@@ -411,27 +415,23 @@ export default function FamilyRoster() {
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${member.display_name} from the Family`}
                 onPress={() =>
-                  Alert.alert(
-                    `Remove ${member.display_name}?`,
-                    member.is_managed
+                  setConfirming({
+                    title: `Remove ${member.display_name}?`,
+                    body: member.is_managed
                       ? // §4.4: a Managed Member cannot be invited, so "they can be invited
                         // again" would be an offer the app has no way to keep.
                         'Their board and everything on it goes too. You can add them again ' +
                         'whenever you like.'
                       : 'Their board and everything on it goes too. They can be invited again.',
-                    [
-                      { text: 'Keep them', style: 'cancel' },
-                      {
-                        text: 'Remove',
-                        // A child is removed by their Guardian, an adult by the Organizer.
-                        // Two RPCs because they answer to two different people (§4.3).
-                        onPress: () =>
-                          member.is_managed
-                            ? removeChild.mutate(member.id)
-                            : actions.remove.mutate(member.id),
-                      },
-                    ],
-                  )
+                    confirmLabel: 'Remove',
+                    cancelLabel: 'Keep them',
+                    // A child is removed by their Guardian, an adult by the Organizer.
+                    // Two RPCs because they answer to two different people (§4.3).
+                    onConfirm: () =>
+                      member.is_managed
+                        ? removeChild.mutate(member.id)
+                        : actions.remove.mutate(member.id),
+                  })
                 }
                 style={{
                   minHeight: size.minTouch,
@@ -464,14 +464,13 @@ export default function FamilyRoster() {
                   accessibilityRole="button"
                   accessibilityLabel={`Turn ${member.display_name} away`}
                   onPress={() =>
-                    Alert.alert(
-                      `Turn ${member.display_name} away?`,
-                      'They can be invited again later.',
-                      [
-                        { text: 'Keep waiting', style: 'cancel' },
-                        { text: 'Turn away', onPress: () => actions.reject.mutate(member.id) },
-                      ],
-                    )
+                    setConfirming({
+                      title: `Turn ${member.display_name} away?`,
+                      body: 'They can be invited again later.',
+                      confirmLabel: 'Turn away',
+                      cancelLabel: 'Keep waiting',
+                      onConfirm: () => actions.reject.mutate(member.id),
+                    })
                   }
                   style={{
                     minHeight: size.minTouch,
@@ -522,6 +521,7 @@ export default function FamilyRoster() {
         style={{ marginTop: space.xxl, alignItems: 'flex-start' }}
         onPress={() => leaveTo('/home')}
       />
+      <ConfirmSheet confirmation={confirming} onClose={() => setConfirming(null)} />
     </ScrollView>
   );
 }

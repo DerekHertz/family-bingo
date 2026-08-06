@@ -38,6 +38,7 @@ import { useState } from 'react';
 import { AccessibilityInfo, Alert, Pressable, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Button } from '../../components/Button';
+import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { Field } from '../../components/Field';
 import { FormScreen, Loading, Trouble } from '../../components/Screen';
 import { SuggestionCards, type Choice } from '../../components/SuggestionCards';
@@ -110,6 +111,9 @@ export default function ComposeGoal() {
   // Seeded once from the cache and owned by the screen thereafter. Re-seeding on every
   // render would overwrite what is being typed the moment an invalidation lands.
   const [seeded, setSeeded] = useState(false);
+  // `Alert.alert` is a no-op on react-native-web, so this confirm did nothing on the
+  // deployed build — see components/ConfirmSheet.tsx.
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
   const [text, setText] = useState('');
   const [unit, setUnit] = useState('');
   const [target, setTarget] = useState(1);
@@ -530,17 +534,18 @@ export default function ComposeGoal() {
           accessibilityLabel="Clear this square"
           disabled={clear.isPending || write.isPending}
           onPress={() =>
-            Alert.alert('Clear this square?', 'The goal goes; the square stays empty.', [
-              { text: 'Keep it', style: 'cancel' },
-              {
-                text: 'Clear it',
-                onPress: () =>
-                  clear.mutate(tileId ?? '', {
-                    onSuccess: () => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } }),
-                    onError: () => say('That didn’t clear. Have another go in a moment.'),
-                  }),
-              },
-            ])
+            setConfirming({
+              title: 'Clear this square?',
+              body: 'The goal goes; the square stays empty.',
+              confirmLabel: 'Clear it',
+              cancelLabel: 'Keep it',
+              onConfirm: () =>
+                clear.mutate(tileId ?? '', {
+                  onSuccess: () =>
+                    leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } }),
+                  onError: () => say('That didn’t clear. Have another go in a moment.'),
+                }),
+            })
           }
           style={{
             minHeight: size.control,
@@ -560,6 +565,8 @@ export default function ComposeGoal() {
         style={{ marginTop: space.sm }}
         onPress={() => leaveTo({ pathname: '/board/[id]', params: { id: boardId ?? '' } })}
       />
+      <ConfirmSheet confirmation={confirming} onClose={() => setConfirming(null)} />
+
     </FormScreen>
   );
 }
