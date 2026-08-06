@@ -1,0 +1,137 @@
+# A weekly `pg_dump`, kept as a build artifact.
+#
+# **The free tier has no restorable backup.** Point-in-time recovery is a paid feature and
+# the daily backups shown in the dashboard are not on this plan. So the failure this guards
+# against is the one with no recovery path at all: a bad migration, a `delete` without a
+# `where`, or a project deleted while tidying up. Pausing (see `health.yml`) is annoying and
+# reversible; this is not, which is why this file matters more than that one.
+#
+# ## The secret it needs
+#
+# | Secret | Where it comes from |
+# |---|---|
+# | `SUPABASE_DB_URL` | Supabase dashboard → Connect → **Session pooler**, and substitute the database password. |
+#
+# **Session pooler, not the direct connection, and not the transaction pooler.** Two
+# separate traps sit here:
+#
+#   - The direct `db.<ref>.supabase.co` host is IPv6-only on projects created since 2024.
+#     GitHub-hosted runners have no IPv6 route, so that string fails to connect at all —
+#     and it fails as a network timeout, which reads like an outage rather than a
+#     misconfiguration.
+#   - The **transaction** pooler (port 6543) multiplexes statements across backends and
+#     does not hold a session. `pg_dump` needs one: it opens a repeatable-read snapshot and
+#     reads the whole database inside it. Against port 6543 it fails partway through with
+#     an error about prepared statements.
+#
+# The session pooler is IPv4 and holds a real session, which is both problems solved.
+#
+# ## What this is, and what it is not
+#
+# **A data backup, not a project backup.** What comes back from this file is rows. What does
+# not is everything else the project is:
+#
+#   - **The photographs.** Storage objects live in S3, not in Postgres. This dump contains
+#     the `attachments` rows that point at them and `storage.objects` metadata; the bytes
+#     are not here. Given ADR-0005 names those bytes as the payload the whole RLS boundary
+#     exists to protect, that gap is worth knowing about before it is discovered.
+#   - Edge Functions, and the `ANTHROPIC_API_KEY` / `DEV_LOGIN_SECRET` secrets they read.
+#   - The two Vault secrets (`service_role_key`, `functions_url`) — Vault stores them
+#     encrypted with a key held by the platform, so the ciphertext in a dump is not
+#     recoverable into a different project.
+#   - The five `pg_cron` schedules, the Auth provider configuration, and the Database
+#     Webhook — all of which `supabase db push` and the README's "Deploying to a Supabase
+#     project" recreate.
+#
+# **Restoring is therefore not `psql < dump.sql`.** It is: create a project, run the four
+# steps in the README, `supabase db push` to build the schema from the 36 migrations, and
+# then load *only* the data out of this file into the schema that produces. Loading the
+# whole dump into an empty Supabase project instead fights with the extensions, roles and
+# internal tables the platform put there first. Worth rehearsing once, on a throwaway
+# project, rather than for the first time on the day it is needed.
+
+name: Backup
+
+on:
+  schedule:
+    # 06:00 UTC on Sundays. Retention is 90 days below, so roughly thirteen dumps exist at
+    # any moment — enough that a corruption noticed a month late still has a clean one
+    # behind it.
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      # `config.toml` pins `major_version = 17`, and **`pg_dump` refuses to dump a server
+      # newer than itself** — it exits with "server version mismatch" and writes nothing.
+      # ubuntu-latest ships the client from its own archive, which trails, so the PGDG
+      # repository is not optional here. Pinning the client to the same major version as
+      # the server is the whole of this step.
+      - name: postgresql-client 17
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
+
+      - name: Dump and compress
+        env:
+          # Read from the environment and never echoed. It carries the database password,
+          # so `set -x` must not appear in this step and the URL must never be an argument
+          # in a line that gets logged.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set — see the comment at the top of this workflow"
+            exit 1
+          fi
+
+          stamp="$(date -u +%Y-%m-%d)"
+          echo "DUMP_NAME=family-bingo-${stamp}" >> "$GITHUB_ENV"
+
+          # `--schema` three times rather than a whole-database dump: `public` is the app,
+          # `auth` holds the Accounts without which every `members.account_id` points at
+          # nobody, and `storage` holds the object metadata the `attachments` rows join to.
+          # Everything else in the database belongs to the platform and would only collide
+          # on restore.
+          #
+          # `--no-owner --no-privileges`: the roles in a dump are this project's, and a
+          # restore into a different project has different ones. Grants come from the
+          # migrations, which are the authority on them anyway — `20260801000024` is very
+          # deliberate about exactly four tables for `service_role`, and a dump replaying
+          # some older grant over that would be a security regression arriving as a restore.
+          pg_dump \
+            --dbname="$SUPABASE_DB_URL" \
+            --schema=public --schema=auth --schema=storage \
+            --no-owner --no-privileges \
+            --quote-all-identifiers \
+            --file="family-bingo-${stamp}.sql"
+
+          gzip -9 "family-bingo-${stamp}.sql"
+          ls -lh "family-bingo-${stamp}.sql.gz"
+
+      # **Not committed to the repository.** A dump is every Goal, note, display name and
+      # email address in the project; git would keep it forever and in every clone. An
+      # artifact expires on its own and is reachable only by someone who can already read
+      # the repository's Actions.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DUMP_NAME }}
+          path: ${{ env.DUMP_NAME }}.sql.gz
+          # 90 days is the ceiling GitHub allows without changing the repository default,
+          # and the reason to want the ceiling is that the failure this protects against is
+          # usually noticed late. Nobody discovers a lost year of Increments the same week.
+          retention-days: 90
+          # A dump that ended up empty is worse than no dump, because it looks like one.
+          if-no-files-found: error
