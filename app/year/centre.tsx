@@ -20,11 +20,12 @@
 
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { leaveTo } from '../../lib/leave';
 import { Avatar } from '../../components/Avatar';
 import { BoardMark } from '../../components/BoardMark';
 import { Button } from '../../components/Button';
+import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { Field } from '../../components/Field';
 import { ErrorState, FormScreen, Loading, Trouble } from '../../components/Screen';
 import { useAnnounce } from '../../lib/announce';
@@ -85,6 +86,10 @@ export default function Centre() {
   // Re-renders when the window closes. Without it a Member sitting on this screen at the
   // deadline keeps being offered controls the server has already stopped accepting.
   const [now, setNow] = useState(() => Date.now());
+  // `Alert.alert` is a no-op on react-native-web, so every confirm below was a control
+  // that did nothing on the deployed build. Held as state and rendered once at the bottom
+  // — see components/ConfirmSheet.tsx.
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(tick);
@@ -413,17 +418,17 @@ export default function Centre() {
                       accessibilityRole="button"
                       accessibilityLabel={`Take back ${p.text}`}
                       onPress={() =>
-                        Alert.alert('Take this one back?', 'It comes off the list.', [
-                          { text: 'Leave it', style: 'cancel' },
-                          {
-                            text: 'Take it back',
-                            onPress: () =>
-                              withdraw.mutate(p.id, {
-                                onSuccess: clearTrouble,
-                                onError: (e) => say(voteFailureCopy(e)),
-                              }),
-                          },
-                        ])
+                        setConfirming({
+                          title: 'Take this one back?',
+                          body: 'It comes off the list.',
+                          confirmLabel: 'Take it back',
+                          cancelLabel: 'Leave it',
+                          onConfirm: () =>
+                            withdraw.mutate(p.id, {
+                              onSuccess: clearTrouble,
+                              onError: (e) => say(voteFailureCopy(e)),
+                            }),
+                        })
                       }
                       style={{ minHeight: size.minTouch, justifyContent: 'center', paddingHorizontal: space.md }}
                     >
@@ -542,6 +547,8 @@ export default function Centre() {
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
         onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: familyId ?? '' } })}
       />
+      <ConfirmSheet confirmation={confirming} onClose={() => setConfirming(null)} />
+
     </FormScreen>
   );
 }
