@@ -177,7 +177,7 @@ export default function NotificationSettings() {
   // Nothing here belongs to nobody. Without this the query stays disabled and `isPending`
   // is true forever, so a signed-out arrival — a deep link, a web reload — would spin on a
   // spinner rather than being sent somewhere it can act.
-  if (session === null) return <Redirect href="/" />;
+  if (session === null) return <Redirect href="/signin" />;
 
   if (session === undefined || preferences.isPending) {
     return <Loading what="Loading your notification settings" />;

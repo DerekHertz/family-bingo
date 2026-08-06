@@ -8,12 +8,13 @@
 import { QueryClient, focusManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useNotificationTaps } from '../lib/notification-routing';
+import { DemoBanner } from '../components/DemoBanner';
 import { PhoneShell } from '../components/PhoneShell';
 import { persistOptions, persister } from '../lib/persist';
 import { clearQueue, useQueueDrain } from '../lib/queue';
@@ -55,6 +56,18 @@ if (Platform.OS !== 'web') {
     return () => subscription.remove();
   });
 }
+
+/**
+ * The routes that are pages rather than screens, and therefore get the whole window.
+ *
+ * Exactly one, and it is deliberately a list rather than a boolean so that adding a second
+ * (a privacy page, an acknowledgements page) is one string rather than a second mechanism.
+ *
+ * The decision lives here, in the file that already knows about routing, rather than inside
+ * `<PhoneShell>` — the shell's job is geometry, and a component that read the current path
+ * would be a layout primitive with an opinion about which screens exist.
+ */
+const FULL_WIDTH_ROUTES = new Set(['/']);
 
 export default function RootLayout() {
   /**
@@ -167,6 +180,11 @@ export default function RootLayout() {
   // cold start, which are different code paths (lib/notification-routing.ts).
   useNotificationTaps();
 
+  // Which shape this route wants. Reading the path here re-renders the root on every
+  // navigation, which is cheap and is not a remount: `<Stack>` keeps its identity, and
+  // `<PhoneShell>` keeps the same two views whichever answer it gets (see the `full` prop).
+  const pathname = usePathname();
+
   // Holding the splash rather than rendering in a fallback face: the wordmark is Shippori
   // at 38pt, and the substitution would be the first thing anyone saw.
   //
@@ -198,8 +216,12 @@ export default function RootLayout() {
       <StatusBar style="dark" />
       <Drain />
       {/* Phone-shaped on a screen that is not one (§0's "Platform: Expo (iOS + Android)").
-          Renders its children untouched on a device — see the component. */}
-      <PhoneShell>
+          Renders its children untouched on a device — see the component. The landing page
+          is the one route that is a desktop page rather than a screen. */}
+      <PhoneShell full={FULL_WIDTH_ROUTES.has(pathname)}>
+        {/* Above the navigator so it is on every screen of the demo at once, and mounted
+            unconditionally because it renders `null` for everybody who is not in it. */}
+        <DemoBanner />
         <Stack
           screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.paper } }}
         />

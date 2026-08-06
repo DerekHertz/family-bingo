@@ -24,6 +24,7 @@ import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { Loading, Trouble } from '../components/Screen';
 import { signOut } from '../lib/auth';
+import { useIsDemo } from '../lib/demo';
 import { leaveTo } from '../lib/leave';
 import {
   renameFailureCopy,
@@ -49,8 +50,19 @@ export default function Account() {
   // time: a screen of live fields is a screen where a mistyped name saves itself.
   const [editing, setEditing] = useState<{ memberId: string; name: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /**
+   * The public demo, and the two rows on this screen it has to take away.
+   *
+   * Everything about the *game* is already read-only, because the demo Family's Year is
+   * frozen and §20.1 says what that means. This screen is not about a Year, so both of its
+   * writes — the per-Family rename and §4.6's delete — are refused by `20260801000039`
+   * instead, and a control whose only possible answer is no is what §0.3 rules out.
+   */
+  const readOnly = useIsDemo();
 
-  if (session === null) return <Redirect href="/" />;
+  // `/signin`, not `/`: `/` is the landing page, and this is somebody who was signed in a
+  // moment ago. Signing out from the row below lands here too, which is the same answer.
+  if (session === null) return <Redirect href="/signin" />;
   // `managed.isPending` is in this gate, not just around the list below it. The delete
   // paragraph's Managed-Member clause reads `(managed.data ?? []).length === 0` — so
   // `undefined` data says *no children*, and a Guardian on a slow connection could have
@@ -126,6 +138,17 @@ export default function Account() {
                     onPress={() => setEditing(null)}
                   />
                 </View>
+              </View>
+            ) : readOnly ? (
+              /* The demo. The same row, with nothing to tap: `members_self_update` is one
+                 of the writes a frozen Year cannot reach, so `20260801000039` refuses it —
+                 and a name a visitor could change is a name every later visitor would then
+                 see, which would make the banner's "change nothing" untrue. */
+              <View style={{ minHeight: size.minTouch, justifyContent: 'center' }}>
+                <Text style={{ ...styles.label, color: color.ink3 }}>
+                  {family.member.display_name}
+                  {family.member.role === 'organizer' ? ' · organizer' : ''}
+                </Text>
               </View>
             ) : (
               <Pressable
@@ -221,6 +244,15 @@ export default function Account() {
           migration flags that as a known spec conflict resolved in favour of the PRD, and
           this screen is the last place it could be softened into a lie. If the product
           decides transfer is right, the function changes and so does this paragraph. */}
+      {/* **Absent in the demo, not disabled.**
+          The demo Account is shared, and `delete_account()` on it would take the Family,
+          the Year and the Wrapped with it — one tap on this row would end the demo for
+          everybody. `20260801000039` guards the `accounts` delete so it cannot happen, but
+          a control that exists only to be refused is §0.3's failure, and this particular
+          one would be refused *after* somebody had read a paragraph telling them their
+          boards were about to leave. The whole section goes. */}
+      {readOnly ? null : (
+        <>
       <Text style={{ ...styles.meta, color: color.ink3, marginTop: space.xxl }}>
         Deleting
       </Text>
@@ -287,6 +319,8 @@ export default function Account() {
           onPress={() => setConfirmingDelete(false)}
         />
       ) : null}
+        </>
+      )}
 
       <Button
         label="Back"

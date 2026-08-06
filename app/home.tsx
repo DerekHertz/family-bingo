@@ -26,7 +26,9 @@ export default function Home() {
   const pending = usePendingMemberships(session?.user.id);
 
   if (session === undefined) return <View style={{ flex: 1, backgroundColor: color.paper }} />;
-  if (session === null) return <Redirect href="/" />;
+  // `/signin`, not `/`. `/` is the landing page now, and somebody whose session has expired
+  // inside the app wants the door, not the pitch.
+  if (session === null) return <Redirect href="/signin" />;
 
   const list = families.data ?? [];
   const waiting = pending.data ?? [];
