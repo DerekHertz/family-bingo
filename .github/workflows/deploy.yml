@@ -131,6 +131,24 @@ jobs:
           done
           echo "dist/_redirects and dist/_headers are present"
 
+          # Cloudflare Pages refuses to upload anything under a `node_modules` path, and
+          # says nothing about it. A font imported from `@expo-google-fonts` lands at
+          # `/assets/node_modules/...`, so the deploy succeeds, every one of those requests
+          # 404s, the SPA fallback answers each with `index.html`, and the app renders in
+          # system fallback faces — on a product whose §1 is a type scale. It cost an hour
+          # to find because nothing anywhere reports a failure.
+          #
+          # Assets are vendored under `assets/fonts/` to avoid it. This asserts that nobody
+          # has reintroduced the shape by importing a face from a package again.
+          if find dist/assets -path '*node_modules*' -type f 2>/dev/null | grep -q .; then
+            echo "::error::dist/assets contains a node_modules path — Cloudflare Pages will"
+            echo "::error::silently drop those files. Vendor the asset instead of importing"
+            echo "::error::it from a package. See assets/fonts/ and app/_layout.tsx."
+            find dist/assets -path '*node_modules*' -type f | head -10
+            exit 1
+          fi
+          echo "no node_modules paths under dist/assets"
+
       # Create the Pages project on first deploy, rather than making it a manual step.
       #
       # `wrangler pages deploy` fails with "project does not exist" and nothing else — it
