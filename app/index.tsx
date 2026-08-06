@@ -12,7 +12,7 @@
 
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { Button } from '../components/Button';
 import { BoardMark } from '../components/BoardMark';
 import { Field } from '../components/Field';
@@ -32,6 +32,16 @@ import {
 import { useSession } from '../lib/session';
 import { styles } from '../theme/fonts';
 import { color, size, space } from '../theme/tokens';
+
+/**
+ * Which sign-in routes this build can actually complete.
+ *
+ * Web is the deployed target and has exactly one working door — see the comment beside
+ * the buttons. A constant rather than a runtime probe of `/auth/v1/settings`, because the
+ * two things missing are missing for reasons no endpoint reports: Apple needs a paid
+ * programme, and the magic link needs a domain that has not been bought yet.
+ */
+const WEB_SIGN_IN_IS_GOOGLE_ONLY = Platform.OS === 'web';
 
 export default function SignIn() {
   const session = useSession();
@@ -175,23 +185,43 @@ export default function SignIn() {
           </>
         ) : (
           <>
-            <Button
-              label="Continue with Apple"
-              variant="filled"
-              disabled={busy !== null}
-              onPress={() => void attempt('apple', () => signInWithProvider('apple'))}
-            />
+            {/* **Only the doors that open.**
+                §4 specifies three passwordless routes, and on a handset all three are
+                reachable. The deployed web build is a different situation and the screen
+                should say so by omission rather than by an error message:
+
+                  - **Apple** needs the paid Developer Programme for a Service ID before it
+                    will do web sign-in at all. It is not configured and is not going to be.
+                  - **The magic link** needs an SMTP provider, which needs a domain. Until
+                    one is bought, the built-in sender delivers to nobody but the project's
+                    own team — so the button would send a family member away to wait for an
+                    email that never arrives.
+
+                Offering a control that answers "isn't set up for this project yet" is the
+                §0.3 failure exactly: a retry that is guaranteed not to work. When the
+                domain lands, `WEB_SIGN_IN` grows the magic link back. */}
+            {WEB_SIGN_IN_IS_GOOGLE_ONLY ? null : (
+              <Button
+                label="Continue with Apple"
+                variant="filled"
+                disabled={busy !== null}
+                onPress={() => void attempt('apple', () => signInWithProvider('apple'))}
+              />
+            )}
             <Button
               label="Continue with Google"
+              variant={WEB_SIGN_IN_IS_GOOGLE_ONLY ? 'primary' : 'outlined'}
               disabled={busy !== null}
               onPress={() => void attempt('google', () => signInWithProvider('google'))}
             />
-            <Button
-              label="Email me a link instead"
-              variant="text"
-              disabled={busy !== null}
-              onPress={() => setShowEmail(true)}
-            />
+            {WEB_SIGN_IN_IS_GOOGLE_ONLY ? null : (
+              <Button
+                label="Email me a link instead"
+                variant="text"
+                disabled={busy !== null}
+                onPress={() => setShowEmail(true)}
+              />
+            )}
           </>
         )}
       </View>

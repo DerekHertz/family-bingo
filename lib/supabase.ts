@@ -70,59 +70,75 @@ const chunkedStorage = {
 };
 
 /**
- * Web persists to `localStorage`, and that is a development decision rather than a
- * security one.
+ * Where a browser keeps the session, and why it is `sessionStorage`.
  *
- * There is no keychain in a browser, so the only choices are localStorage — readable by
- * any script on the origin — or memory, which drops the session on every refresh. This
- * shipped as memory first, and it made the app unusable to develop against: create a
- * Family, refresh, and you are back at sign-in with a rate-limited magic link as the only
- * way back in.
+ * There is no keychain in a browser. The refresh token has to live in `localStorage` or
+ * `sessionStorage` — both readable by any script that runs on this origin — or in memory,
+ * which drops the session on every refresh. An httpOnly cookie is the only option that
+ * removes the risk outright, and it needs a server this app does not have.
  *
- * Web is explicitly not a shipping target (§0, "Platform: Expo (iOS + Android)"). Against
- * a localhost dev server the "any script on the origin" threat is the developer's own
- * bundle. If web ever becomes a real target this has to be revisited, which is why it
- * fails loudly rather than quietly if that day comes without anyone noticing.
+ * So the question is not "can a script read it" (yes, in every option here) but "for how
+ * long is it there to be read". `sessionStorage` is scoped to the tab: close it and the
+ * token is gone. That defeats the one attack the app can actually defend against — someone
+ * opening a laptop that was left signed in — and narrows the window for the two it cannot
+ * (an injected script, a malicious extension).
+ *
+ * **What makes this defensible rather than merely cheap** is that the origin is a small
+ * target. The app renders no HTML from user input: every Goal, note and name goes through
+ * React Native Web's `<Text>`, which escapes, and there is no `dangerouslySetInnerHTML`,
+ * no markdown, no WebView, no third-party script. The realistic path in is a compromised
+ * dependency, which is why the lockfile is watched. And a stolen token is bounded by RLS
+ * to one Account's own Family — it is not a key to a database (ADR-0004).
+ *
+ * **The cost is real and per-tab.** A second tab is a signed-out tab; a link opened from a
+ * message is a new tab. That is why `WEB_SESSION_PERSISTS` exists: flipping it to `true`
+ * moves the token to `localStorage`, which survives tabs and restarts at the price of
+ * surviving the walk-away too. It is one line because the trade is a product decision the
+ * first round of family testing should settle, not an architectural one.
  */
+const WEB_SESSION_PERSISTS = false;
+
+const webStore = (): Storage | undefined =>
+  WEB_SESSION_PERSISTS ? globalThis.localStorage : globalThis.sessionStorage;
+
 const webStorage = {
-  getItem: (key: string) => Promise.resolve(globalThis.localStorage?.getItem(key) ?? null),
+  getItem: (key: string) => Promise.resolve(webStore()?.getItem(key) ?? null),
   setItem: (key: string, value: string) => {
-    globalThis.localStorage?.setItem(key, value);
+    webStore()?.setItem(key, value);
     return Promise.resolve();
   },
   removeItem: (key: string) => {
-    globalThis.localStorage?.removeItem(key);
+    webStore()?.removeItem(key);
     return Promise.resolve();
   },
 };
-
-/**
- * The rationale is "against a localhost dev server the threat is the developer's own
- * bundle", so the guard has to be localhost — not NODE_ENV.
- *
- * `expo start --tunnel`, a LAN IP, and any preview deployment are all NODE_ENV
- * development, and every one of them is a shared origin where two JWTs in localStorage is
- * exactly what §16.2 rules out. Checking the build mode let all three through.
- */
-if (Platform.OS === 'web') {
-  const host = globalThis.location?.hostname ?? '';
-  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
-  if (!isLocalhost) {
-    throw new Error(
-      `Web is a localhost development target only. This origin is "${host}", where session ` +
-        'storage would be localStorage — not acceptable for anything reachable by another ' +
-        'machine. Revisit lib/supabase.ts before serving web from anywhere but localhost.',
-    );
-  }
-}
 
 export const supabase = createClient(url, anonKey, {
   auth: {
     storage: Platform.OS === 'web' ? webStorage : chunkedStorage,
     autoRefreshToken: true,
     persistSession: true,
-    // There is no browser to hand the URL back on a device, so app/auth/callback.tsx and
-    // the Linking listener in lib/auth.ts do it explicitly.
-    detectSessionInUrl: false,
+    /**
+     * **On web, let supabase-js read the URL it was redirected back to.**
+     *
+     * The two platforms hand a session back by different routes and only one of them has
+     * a browser to be redirected *in*. On a device there is nothing to detect — the OS
+     * hands the app a deep link, and `app/auth/callback.tsx` plus the `Linking` listener
+     * in `lib/auth.ts` parse it explicitly. In a browser the provider redirects the page
+     * itself, and the tokens arrive in the URL of the document that is already loading;
+     * detecting them is the whole handoff, and doing it by hand would be reimplementing
+     * what the library does correctly, including clearing them out of the address bar
+     * afterwards so they do not sit in history.
+     */
+    detectSessionInUrl: Platform.OS === 'web',
+    /**
+     * PKCE on web, because the browser flow puts a code in a query string.
+     *
+     * The implicit flow returns tokens in the URL fragment, which never reaches a server
+     * but does reach anything reading `location`. PKCE returns a short-lived code that is
+     * useless without the verifier held in this tab — so an intercepted redirect is not a
+     * session. Native keeps the default: the deep link never leaves the device.
+     */
+    flowType: Platform.OS === 'web' ? 'pkce' : 'implicit',
   },
 });
