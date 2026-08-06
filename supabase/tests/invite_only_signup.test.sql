@@ -15,7 +15,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(21);
 
 -- ---------------------------------------------------------------------------------------
 -- Shape, and failing closed
@@ -86,6 +86,14 @@ select ok(
 select ok(
   signup_is_allowed('stranger@example.com', 'service_role'),
   'nor is the service role');
+
+-- The property that is easy to assume and is false. An admin-API create arrives on the
+-- same connection as a public sign-up and produces an identical row, so the gate applies
+-- to it too. Asserted so that nobody "fixes" the gate by exempting operators and finds out
+-- from a red integration suite, which is exactly how this was discovered.
+select ok(
+  not signup_is_allowed('stranger@example.com', 'supabase_auth_admin'),
+  'an admin-API create is gated too — the database cannot tell it from a public sign-up');
 
 -- The switch, and that it is a switch rather than a side effect of an empty table.
 update signup_policy set allowlist_only = false where id;
