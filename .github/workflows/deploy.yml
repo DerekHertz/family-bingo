@@ -131,6 +131,27 @@ jobs:
           done
           echo "dist/_redirects and dist/_headers are present"
 
+      # Create the Pages project on first deploy, rather than making it a manual step.
+      #
+      # `wrangler pages deploy` fails with "project does not exist" and nothing else — it
+      # will not create one — so without this the first run of a fresh account, or of a
+      # restored one, is a red build and a trip to the dashboard. The API token already
+      # carries Pages:Edit, so the capability is there; requiring a human to use it by hand
+      # only means the runbook has a step in it that nobody will remember in a year.
+      #
+      # Idempotent: `project create` fails when the project is already there, which is the
+      # normal case on every deploy after the first, so its failure is swallowed and the
+      # deploy below is what actually reports. `|| true` rather than a existence check,
+      # because the check would be a second API call that can disagree with the create.
+      - name: Ensure the Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'family-bingo' }}
+        run: |
+          npx --yes wrangler@4 pages project create "$PROJECT" \
+            --production-branch=main 2>&1 | sed 's/^/  /' || true
+
       # Pinned to its commit for the same reason as every other third-party action here: a
       # tag is mutable, and this is the one job in the repository holding a token that can
       # write to production. The trailing comment is the readable half of the pin and
