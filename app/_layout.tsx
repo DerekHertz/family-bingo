@@ -21,6 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useNotificationTaps } from '../lib/notification-routing';
+import { PhoneShell } from '../components/PhoneShell';
 import { persistOptions, persister } from '../lib/persist';
 import { clearQueue, useQueueDrain } from '../lib/queue';
 import { registerThisDevice } from '../lib/queries/device-tokens';
@@ -189,9 +190,13 @@ export default function RootLayout() {
           §1.2's job and is not wired up yet. */}
       <StatusBar style="dark" />
       <Drain />
-      <Stack
-        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.paper } }}
-      />
+      {/* Phone-shaped on a screen that is not one (§0's "Platform: Expo (iOS + Android)").
+          Renders its children untouched on a device — see the component. */}
+      <PhoneShell>
+        <Stack
+          screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.paper } }}
+        />
+      </PhoneShell>
     </PersistQueryClientProvider>
   );
 }

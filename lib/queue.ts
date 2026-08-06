@@ -40,7 +40,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   afterDrain,
   classifyDelivery,
@@ -137,7 +137,24 @@ export const queuedTaps = (): Promise<QueuedTap[]> => exclusively(load);
  * so one tap can arrive here three times, and three rows in the queue would show a Member
  * three walks until the drain collapsed them.
  */
+/**
+ * **The queue does not run in a browser.**
+ *
+ * §17.1 scopes it to Increments because they are the one write with the properties that
+ * make a replay safe. None of that changes on web — what changes is the storage: a queued
+ * tap would sit in `localStorage`, holding a Member's note and a Tile id on a machine that
+ * may not be theirs, for as long as it takes to reconnect. A browser is also online almost
+ * whenever it is open, so the feature earns very little there.
+ *
+ * Refusing rather than pretending is the honest failure: `useLogIncrement` treats a
+ * refusal as "this tap is not saved anywhere", rolls the optimistic ring back, and says so
+ * (§0.3). The alternative — accepting and silently dropping — is the one thing a queue
+ * must never do.
+ */
+const QUEUE_RUNS_HERE = Platform.OS !== 'web';
+
 export const enqueueTap = (tap: QueuedTap): Promise<boolean> =>
+  !QUEUE_RUNS_HERE ? Promise.resolve(false) :
   exclusively(async () => {
     const current = await load();
     const { queue, accepted } = withTap(current, tap);
@@ -331,10 +348,13 @@ export const useQueuedCount = (): number => {
  * screen the Member opened the app to check.
  */
 export const useQueueDrain = (hasSession: boolean): void => {
+  // Nothing is ever enqueued on web, so there is nothing to drain and no listener worth
+  // registering. See `QUEUE_RUNS_HERE`.
+  const active = hasSession && QUEUE_RUNS_HERE;
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!hasSession) return;
+    if (!active) return;
 
     let live = true;
     const run = () => {
@@ -355,5 +375,5 @@ export const useQueueDrain = (hasSession: boolean): void => {
       live = false;
       subscription.remove();
     };
-  }, [hasSession, queryClient]);
+  }, [active, queryClient]);
 };

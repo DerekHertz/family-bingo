@@ -31,6 +31,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { defaultShouldDehydrateQuery } from '@tanstack/react-query';
 import type { PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
+import { Platform } from 'react-native';
 import { shouldPersistKey } from './persist-policy';
 
 /**
@@ -59,8 +60,26 @@ const MAX_AGE = 24 * 60 * 60 * 1000;
  */
 const BUSTER = 'slice-17';
 
+/**
+ * **Nothing is written to disk in a browser.**
+ *
+ * On web `AsyncStorage` *is* `localStorage`, so leaving this on would put Boards, goal
+ * text, Feed rows and Member names into the same origin storage a stolen session already
+ * worries us — and unlike the session, none of it is short-lived or rotated. §17.5 asks
+ * for this so a phone opens to content instead of a spinner on a train; a browser tab is
+ * a different situation and does not need it enough to pay for it.
+ *
+ * A no-op store rather than a conditional provider, so the tree shape is the same on both
+ * platforms and there is exactly one place that decides.
+ */
+const noStore = {
+  getItem: () => Promise.resolve(null),
+  setItem: () => Promise.resolve(),
+  removeItem: () => Promise.resolve(),
+};
+
 export const persister = createAsyncStoragePersister({
-  storage: AsyncStorage,
+  storage: Platform.OS === 'web' ? noStore : AsyncStorage,
   key: CACHE_KEY,
   // The Feed's paging writes to the cache on every scroll. Two seconds of throttle keeps
   // a long scroll from turning into a hundred file writes.

@@ -14,6 +14,7 @@
  */
 
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { forgetThisDevice } from './queries/device-tokens';
 import { supabase } from './supabase';
@@ -42,7 +43,16 @@ export class ProviderNotEnabled extends Error {
   }
 }
 
-/** Where the provider sends the browser back to. Deep link on device, origin on web. */
+/**
+ * Where the provider sends the browser back to.
+ *
+ * `Linking.createURL` answers `familybingo://auth/callback` on a device and
+ * `<origin>/auth/callback` in a browser, which is exactly right for both — but only the
+ * browser value has to be **registered**. Supabase matches its redirect allowlist by exact
+ * URL, and an open redirect there is the one way an attacker can catch an authorization
+ * code without ever touching this origin. So every deployment's URL goes in the
+ * dashboard's allowlist by hand, with no wildcards; see README, "Configuring Google".
+ */
 export const redirectTo = () => Linking.createURL('/auth/callback');
 
 /**
@@ -75,15 +85,41 @@ export const sessionFromUrl = (
   return { access_token, refresh_token };
 };
 
+/**
+ * Sign in with a provider — two genuinely different flows, not one flow with a flag.
+ *
+ * **On a device** the app opens an authentication session, the OS returns the callback URL
+ * to *this* call, and the tokens are set by hand. There is no page to navigate, and the
+ * app is never unloaded.
+ *
+ * **In a browser** the page itself navigates to the provider and the provider navigates it
+ * back. This function does not return in the web case — the document is replaced. There is
+ * no `result` to read, no URL to parse, and nothing after the redirect runs. The session is
+ * picked up on the *next* load by `detectSessionInUrl` (see `lib/supabase.ts`), which also
+ * strips the code out of the address bar so it does not sit in browser history.
+ *
+ * Trying to share one path here was the mistake to avoid: `skipBrowserRedirect: true` plus
+ * `WebBrowser.openAuthSessionAsync` opens a *popup* on web, which is blocked by default in
+ * every browser unless it is the direct result of a click, and fails silently when it is
+ * blocked. The redirect is both simpler and the one browsers are built for.
+ */
 export const signInWithProvider = async (provider: Provider): Promise<void> => {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
-    options: { redirectTo: redirectTo(), skipBrowserRedirect: true },
+    options: {
+      redirectTo: redirectTo(),
+      // Let the browser navigate itself; take the URL by hand only on a device.
+      skipBrowserRedirect: Platform.OS !== 'web',
+    },
   });
   if (error !== null) {
     if (/provider is not enabled/i.test(error.message)) throw new ProviderNotEnabled(provider);
     throw error;
   }
+
+  // The page is on its way to the provider. Nothing below this line will run.
+  if (Platform.OS === 'web') return;
+
   if (data.url === null) throw new Error('no authorization URL returned');
 
   const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo());
