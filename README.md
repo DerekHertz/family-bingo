@@ -160,6 +160,81 @@ supabase secrets unset DEV_LOGIN_SECRET
 The first Account for each address still has to be made the ordinary way, once: the
 function looks an address up and never creates one.
 
+## Continuous integration, and the web deploy
+
+Four workflows in [`.github/workflows/`](.github/workflows). Each one carries its own
+reasoning in comments; this is the map and the list of things a human has to create.
+
+| Workflow | When | What |
+|---|---|---|
+| `ci.yml` | Every PR, every push to `main` | `tsc`, the 758 Vitest tests, an `expo export --platform web`, and — only when `supabase/**` or `lib/queries/**` change — 879 pgTAP assertions and the 24 integration tests against a real local stack |
+| `deploy.yml` | After CI goes green on `main` | Rebuilds the web bundle with the live project's values and publishes `dist/` to Cloudflare Pages |
+| `health.yml` | Every 2 days | Hits the Supabase API and the deployed site, and fails loudly if either is down |
+| `backup.yml` | Weekly | `pg_dump` of the live database, gzipped, kept as a 90-day artifact |
+
+**Require only `gate` in branch protection.** It is a job in `ci.yml` that exists solely to
+answer for the other four. Requiring `database` directly would make every PR that does not
+touch SQL unmergeable: a skipped job reports no conclusion at all, so GitHub shows the
+required check as "waiting for status to be reported" and waits forever.
+
+### Secrets
+
+**Settings → Secrets and variables → Actions → Secrets.**
+
+| Secret | Used by | Where to get it |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | `deploy` | Cloudflare → My Profile → API Tokens → Create Token → the **"Edit Cloudflare Workers"** template, or a custom token with `Account · Cloudflare Pages · Edit` |
+| `CLOUDFLARE_ACCOUNT_ID` | `deploy` | Cloudflare → Workers & Pages → right-hand sidebar, or the hex string after `/accounts/` in the dashboard URL |
+| `EXPO_PUBLIC_SUPABASE_URL` | `deploy`, `health` | Supabase → Project Settings → Data API → Project URL. The same value as your `.env` |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | `deploy`, `health` | Supabase → Project Settings → API Keys → the **`anon` `eyJ...` JWT**, not a `sb_publishable_...` key — see "Testing with two accounts" above for why the publishable key comes back 401 |
+| `SUPABASE_DB_URL` | `backup` | Supabase → Connect → **Session pooler**, with the database password substituted in |
+
+The session pooler matters and the other two connection strings both fail. The direct
+`db.<ref>.supabase.co` host is IPv6-only and GitHub's runners have no IPv6 route; the
+transaction pooler on port 6543 holds no session, which `pg_dump` needs for its snapshot.
+
+**Variables** (same page, Variables tab) — neither is a secret, and masking a public URL
+only makes failures harder to read:
+
+| Variable | Value |
+|---|---|
+| `SITE_URL` | The deployed origin, e.g. `https://family-bingo.pages.dev`. Unset means `health` skips the site half |
+| `CLOUDFLARE_PAGES_PROJECT` | The Pages project name. Defaults to `family-bingo` |
+
+**`EXPO_PUBLIC_DEV_LOGIN_SECRET` must never be added to any of them.** It is the whole of
+the `dev-login` back door, and `EXPO_PUBLIC_*` is not a namespace for configuration — it is
+Expo's instruction to inline the literal into the bundle. `deploy.yml` publishes that
+bundle to the open web, so the secret would be readable with view-source. This is the same
+rule that keeps it out of `eas.json`, one deployment target further out.
+
+### What the deploy ships
+
+`public/_redirects` and `public/_headers` are copied verbatim into `dist/` by
+`expo export --platform web`, which does not mention them in its own summary — so
+`deploy.yml` asserts they arrived rather than trusting it.
+
+`_redirects` is the SPA fallback. Expo Router exports a single `index.html` and routes on
+the client; without `/*  /index.html  200` every deep link — a magic-link callback, a
+notification's `/board/<id>` — is a Cloudflare 404. `_headers` carries the CSP and the
+transport headers; the comments in it explain why `style-src` cannot drop `'unsafe-inline'`
+and what would break `script-src 'self'`.
+
+### The two scheduled jobs, and what they are really for
+
+The Supabase project is on the free tier. **It pauses after 7 days of no activity** and
+needs a human to restore it, which presents as a working site where nothing loads — worse
+than a site that is plainly down. `health.yml` is the traffic that prevents it. Note that
+**GitHub disables scheduled workflows in a repository with 60 days of no activity**, which
+is exactly the state a finished project reaches, so if it stops running re-enable it from
+the Actions tab.
+
+The free tier also has **no restorable backup**, which makes `backup.yml` the one guarding
+the failure with no recovery path. Read the comment at the top of it before relying on it:
+the dump holds rows, not the project. The photographs are not in it — Storage objects live
+in S3 — and neither are the Edge Function secrets, the Vault entries, or the `pg_cron`
+schedules. Restoring is `supabase db push` for the schema and then the data, not
+`psql < dump.sql`. Worth rehearsing once on a throwaway project.
+
 ## Running it on a phone
 
 `npx expo start` and Expo Go is the quickest route, but Expo Go only runs the **one** SDK
