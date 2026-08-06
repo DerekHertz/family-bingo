@@ -44,7 +44,7 @@
 #     project" recreate.
 #
 # **Restoring is therefore not `psql < dump.sql`.** It is: create a project, run the four
-# steps in the README, `supabase db push` to build the schema from the 36 migrations, and
+# steps in the README, `supabase db push` to build the schema from `supabase/migrations`, and
 # then load *only* the data out of this file into the schema that produces. Loading the
 # whole dump into an empty Supabase project instead fights with the extensions, roles and
 # internal tables the platform put there first. Worth rehearsing once, on a throwaway

@@ -99,7 +99,7 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # 758 tests across src/domain, src/ui, theme and lib — including the three that are
+      # The pure suites across src/domain, src/ui, theme and lib — including the three that are
       # really lint rules with no linter behind them: `boundaries.test.ts` (src/domain
       # imports nothing but its own siblings), `fonts.test.ts` (never spread a raw `type`
       # token) and `rpc-signatures.test.ts` (every `supabase.rpc()` call site matches a

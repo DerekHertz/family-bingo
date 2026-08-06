@@ -167,7 +167,7 @@ reasoning in comments; this is the map and the list of things a human has to cre
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | Every PR, every push to `main` | `tsc`, the 758 Vitest tests, an `expo export --platform web`, and — only when `supabase/**` or `lib/queries/**` change — 879 pgTAP assertions and the 24 integration tests against a real local stack |
+| `ci.yml` | Every PR, every push to `main` | `tsc`, the Vitest suites, an `expo export --platform web`, and — only when `supabase/**` or `lib/queries/**` change — the pgTAP and integration suites against a real local stack |
 | `deploy.yml` | After CI goes green on `main` | Rebuilds the web bundle with the live project's values and publishes `dist/` to Cloudflare Pages |
 | `health.yml` | Every 2 days | Hits the Supabase API and the deployed site, and fails loudly if either is down |
 | `backup.yml` | Weekly | `pg_dump` of the live database, gzipped, kept as a 90-day artifact |
