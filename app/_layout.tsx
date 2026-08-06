@@ -5,13 +5,6 @@
  * bespoke animations all live on the board, not between screens.
  */
 
-import { DMMono_500Medium } from '@expo-google-fonts/dm-mono';
-import { ShipporiMincho_500Medium } from '@expo-google-fonts/shippori-mincho';
-import {
-  ZenKakuGothicNew_400Regular,
-  ZenKakuGothicNew_500Medium,
-  ZenKakuGothicNew_700Bold,
-} from '@expo-google-fonts/zen-kaku-gothic-new';
 import { QueryClient, focusManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
@@ -64,14 +57,28 @@ if (Platform.OS !== 'web') {
 }
 
 export default function RootLayout() {
-  // Bundled, never fetched (§8) — @expo-google-fonts ships the files and the OFL licence
-  // in the package rather than pulling them at runtime.
+  /**
+   * Bundled, never fetched (§8) — and loaded from `assets/fonts/` rather than from the
+   * `@expo-google-fonts` packages, which is not a style preference.
+   *
+   * Importing the faces from those packages makes Expo emit them at
+   * `/assets/node_modules/@expo-google-fonts/…`, and **Cloudflare Pages refuses to upload
+   * anything under a `node_modules` path.** The deploy succeeds, every asset reference in
+   * the bundle 404s, the SPA fallback answers each one with `index.html`, and the app
+   * renders in system fallback faces — on a product whose §1 is a type scale. Nothing
+   * fails: it just quietly stops being the design.
+   *
+   * Vendoring the five files the app actually uses puts them under `assets/fonts/`, which
+   * has no reserved segment in it. It also makes the dependency legible — five faces, not
+   * three packages of thirty — and the OFL licence sits beside them, which §8 requires
+   * shipping anyway.
+   */
   const [fontsLoaded, fontError] = useFonts({
-    DMMono_500Medium,
-    ShipporiMincho_500Medium,
-    ZenKakuGothicNew_400Regular,
-    ZenKakuGothicNew_500Medium,
-    ZenKakuGothicNew_700Bold,
+    DMMono_500Medium: require('../assets/fonts/DMMono_500Medium.ttf'),
+    ShipporiMincho_500Medium: require('../assets/fonts/ShipporiMincho_500Medium.ttf'),
+    ZenKakuGothicNew_400Regular: require('../assets/fonts/ZenKakuGothicNew_400Regular.ttf'),
+    ZenKakuGothicNew_500Medium: require('../assets/fonts/ZenKakuGothicNew_500Medium.ttf'),
+    ZenKakuGothicNew_700Bold: require('../assets/fonts/ZenKakuGothicNew_700Bold.ttf'),
   });
 
   // Created once per mount rather than at module scope, so a fast refresh cannot hand two
