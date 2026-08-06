@@ -473,7 +473,48 @@ const paceHint = (tile) => {
   return tile.target <= 12 ? `about one a month` : `about ${Math.round(tile.target / 52)} a week`;
 };
 
+/**
+ * Say which database is about to be written to, before writing to it.
+ *
+ * This exists because the script silently seeded the wrong one. `DEMO_DB_URL` was set in
+ * the operator's shell without `export`, so it never reached `process.env`, the script
+ * took the local path without comment, and 2,867 Increments went onto a laptop while
+ * production stayed empty. Everything reported success — the only symptom was a demo that
+ * did not exist, three steps later.
+ *
+ * A seed that can target production must never leave you guessing which one it chose. The
+ * host is printed rather than the URL, so a password is never echoed into a terminal
+ * buffer or a screen recording.
+ */
+const announceTarget = () => {
+  if (remoteDbUrl === undefined) {
+    console.error('');
+    console.error('  ┌─ Seeding the LOCAL stack ─────────────────────────────────────');
+    console.error('  │  DEMO_DB_URL is not set, so this writes to the Docker database.');
+    console.error('  │  To seed the live project, export it — a shell variable set');
+    console.error('  │  without `export` is invisible to this process, which is exactly');
+    console.error('  │  how a demo once ended up on somebody\'s laptop.');
+    console.error('  └───────────────────────────────────────────────────────────────');
+    console.error('');
+    return;
+  }
+  let host = 'an unparseable DEMO_DB_URL';
+  try {
+    host = new URL(remoteDbUrl).host;
+  } catch {
+    // Left as the fallback text. A URL this script cannot parse is one `psql` will refuse
+    // in a moment anyway, and guessing at it here would only make the banner lie.
+  }
+  console.error('');
+  console.error('  ┌─ Seeding a REMOTE database ───────────────────────────────────');
+  console.error(`  │  ${host}`);
+  console.error(`  │  API: ${process.env.SUPABASE_URL ?? '(SUPABASE_URL is not set)'}`);
+  console.error('  └───────────────────────────────────────────────────────────────');
+  console.error('');
+};
+
 const main = async () => {
+  announceTarget();
   // ---------------------------------------------------------------------------------
   // Teardown. Whole, not partial: the demo is replaced, never merged into.
   // ---------------------------------------------------------------------------------
