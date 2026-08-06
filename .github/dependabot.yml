@@ -1,0 +1,100 @@
+# Dependency updates.
+#
+# 678 packages are installed to build this app and 30-odd of them are named in
+# `package.json`. The rest arrived transitively, nobody chose them, and a compromised one
+# is the realistic way something hostile reaches this codebase — far likelier than anyone
+# attacking the repository directly. `lib/supabase.ts` makes that explicit when it argues
+# for keeping the session in `sessionStorage`: "the realistic path in is a compromised
+# dependency, which is why the lockfile is watched." This file is the watching.
+#
+# **Grouped, hard.** The point of grouping is not tidiness — it is that a Monday morning
+# with one reviewable PR gets reviewed, and a Monday morning with forty gets a rubber
+# stamp or gets ignored, and both of those are the same as having no updates at all.
+
+version: 2
+updates:
+  # The Expo constellation, which has to move as one piece.
+  #
+  # Every `expo-*` package is versioned against the SDK — SDK 57 wants `~57.0.x` across all
+  # eighteen of them, and `react-native@0.86.2` and `react@19.2.3` are pinned exactly
+  # because Expo chose them. Bumping one out of step is how you get a runtime error no
+  # typecheck can see. Kept in its own group so a mismatch cannot happen inside a PR, and
+  # capped below majors because an SDK upgrade is `npx expo install --fix` plus a read of
+  # the release notes, not something to accept from a bot.
+  #
+  # `typescript` is deliberately absent from that constraint — `package.json`'s
+  # `expo.install.exclude` already tells Expo to keep its hands off it — so it updates with
+  # everything else.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    groups:
+      expo-sdk:
+        patterns:
+          - 'expo'
+          - 'expo-*'
+          - '@expo/*'
+          - '@expo-google-fonts/*'
+          - 'react'
+          - 'react-dom'
+          - 'react-native'
+          - 'react-native-*'
+          - '@react-native-*'
+        update-types:
+          - minor
+          - patch
+      # One PR for the whole long tail. Majors are excluded here too: a major is a breaking
+      # change by definition and deserves its own PR, which Dependabot will open separately
+      # for anything not in the ignore list below.
+      everything-else:
+        patterns: ['*']
+        exclude-patterns:
+          - 'expo'
+          - 'expo-*'
+          - '@expo/*'
+          - '@expo-google-fonts/*'
+          - 'react'
+          - 'react-dom'
+          - 'react-native'
+          - 'react-native-*'
+          - '@react-native-*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # A major on any of these is an SDK migration. It belongs to a person with the Expo
+      # release notes open, and an unsolicited PR proposing it is noise that trains people
+      # to close Dependabot PRs without reading them.
+      - dependency-name: 'expo'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'expo-*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-dom'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-native'
+        update-types: ['version-update:semver-major']
+
+  # The actions themselves, and the reason this half exists at all.
+  #
+  # `ci.yml` and `deploy.yml` pin every third-party action to a commit SHA, because a tag
+  # is a mutable pointer its owner can move and trusting one is arbitrary code execution
+  # inside a job holding this repository's credentials. A pinned SHA is safe and *frozen* —
+  # it will never pick up the fix for the vulnerability it is pinned to. Dependabot is what
+  # turns the pin from a decision into a maintained one: it bumps the SHA and rewrites the
+  # `# v4.0.3` comment beside it, which is why those comments sit on the `uses:` line
+  # rather than in the prose above it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    groups:
+      actions:
+        patterns: ['*']
