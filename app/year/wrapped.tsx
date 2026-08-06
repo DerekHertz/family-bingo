@@ -29,9 +29,9 @@ import {
   Share,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { Button } from '../../components/Button';
+import { useAppWidth } from '../../components/PhoneShell';
 import { WrappedCard } from '../../components/WrappedCard';
 import { failure } from '../../lib/failure';
 import { leaveTo } from '../../lib/leave';
@@ -57,11 +57,109 @@ export default function Wrapped() {
   const roster = useRoster(familyId);
   const years = useYears(familyId);
   const openYear = useOpenYear(familyId ?? '');
-  const { width } = useWindowDimensions();
+  /**
+   * How wide one card is.
+   *
+   * §3 calls a Wrapped card "full-bleed", and on a handset the window *is* the card — which
+   * is why this was `useWindowDimensions().width`. In a browser the app renders inside
+   * `<PhoneShell>`'s 402pt column, so the window is the wrong question and the card was
+   * three times its own container: clipped by the shell, the 118pt numeral against the left
+   * edge, the stats grid off the side. `useAppWidth()` is the shell answering for itself.
+   */
+  const width = useAppWidth();
   const [trouble, setTrouble] = useState<string | null>(null);
 
   const family = families.data?.find((f) => f.id === familyId);
   const year = years.data?.find((y) => y.id === yearId);
+
+  /**
+   * The deck, built once — and built **above** the two guards below rather than beside the
+   * code it belongs to.
+   *
+   * It used to sit under them. That read better and it crashed the screen: a hook cannot be
+   * reached conditionally, and the first render of this route is `wrapped.isPending`, which
+   * returns early having run six hooks, while the render after the data lands runs seven.
+   * React answers that with "rendered more hooks than during the previous render" (#310) —
+   * a blank white page with nothing on it and no way forward.
+   *
+   * It only ever showed on a **cold** load. A warm one restores `wrapped` from the persisted
+   * cache before the first render (`app/_layout.tsx`), so `isPending` is already false and
+   * the hook count never changes — which is every launch on a handset that has opened this
+   * screen before, and none of the launches anybody testing it would make. The public demo
+   * is a cold load in a fresh browser by definition, which is what finally surfaced it.
+   *
+   * So every derivation the deck needs moved inside the memo, and it answers `null` until
+   * there is something to build from. Memoised for §20.2's reason as well: Wrapped "is read
+   * many times, changes never, and must render instantly", the walk is not cheap, and a
+   * fresh array on every render changes `FlatList`'s `data` identity and defeats
+   * `<WrappedCard>`'s `memo`.
+   */
+  const payload = wrapped.data ?? null;
+  const rosterMembers = roster.data?.members;
+  const allYears = years.data;
+  const deck = useMemo(() => {
+    if (payload === null || year === undefined) return null;
+
+    const timezone = family?.timezone ?? 'UTC';
+    const nextYear = payload.family.nextYear;
+    const isOrganizer = family?.member.role === 'organizer';
+    const alreadyOpen =
+      nextYear !== null && (allYears ?? []).some((y) => y.calendar_year === nextYear);
+
+    /**
+     * Whether the final card may offer its button — decided from the same three facts
+     * `open_year()` checks, in the same order it checks them.
+     *
+     * It refuses a non-Organizer with 42501, a Year the Family already has with PT409, and
+     * a `calendar_year` below the current one in the Family's timezone with 22023. The
+     * third is not hypothetical here: §20.10 keeps a frozen Year browsable forever, so a
+     * Member reading their 2027 Wrapped in 2031 would otherwise be shown a button to open
+     * 2028.
+     *
+     * `hasOpenSetupWindow` is deliberately *not* consulted, unlike the Family screen's own
+     * "Open a Year" button. That gate exists because that button offers "the next free
+     * year" and two open windows leave a Family authoring two Boards with nothing on screen
+     * to say which is which. This card offers one specific Year, named by
+     * `family_cards.next_year`, so the ambiguity cannot arise.
+     */
+    const nextYearState: NextYearState =
+      nextYear === null
+        ? 'not-yours'
+        : nextYear < currentYearIn(new Date(), timezone)
+          ? 'past'
+          : alreadyOpen
+            ? 'already-open'
+            : isOrganizer
+              ? 'openable'
+              : 'not-yours';
+
+    // The caller's own Member, and only theirs. A Guardian may see a Managed Member's card
+    // through `visible_member_ids()`, but "your year" means the person holding the phone —
+    // and §20.9's Share button exports whatever card it is sitting on, so a screen that
+    // silently swapped in a child's stats would be a one-tap export of a child's data.
+    const myMemberId = family?.member.id;
+    const mine =
+      myMemberId === undefined
+        ? null
+        : (payload.memberCards.find((c) => c.memberId === myMemberId)?.stats ?? null);
+
+    return wrappedDeck({
+      member: mine,
+      family: payload.family,
+      awards: payload.awards,
+      // Join order, and nothing else, is what orders the Awards (§7.2). `useRoster` already
+      // returns Members by `joined_at` and says so — "the moment it sorts by activity it
+      // becomes a ladder".
+      roster: (rosterMembers ?? []).map((m) => ({
+        id: m.id,
+        name: m.display_name,
+        isManaged: m.is_managed,
+      })),
+      calendarYear: year.calendar_year,
+      timezone,
+      nextYearState,
+    });
+  }, [payload, year, family, rosterMembers, allYears]);
 
   if (wrapped.isPending || families.isPending || roster.isPending || years.isPending) {
     return (
@@ -80,7 +178,11 @@ export default function Wrapped() {
   // midnight on 31 December in the Family's own timezone (§20.1, §8.3 T1) — so this is the
   // ordinary state of every Year until then, and saying "something went wrong" about it
   // would be a lie told twelve months a year.
-  if (wrapped.isError || wrapped.data === null || year === undefined) {
+  // `deck === null` is the same three conditions the guard used to spell out —
+  // `wrapped.data === null` (a Year that has not frozen), the read failing, or the Year
+  // itself missing — asked once, of the thing that actually needs them. It is also what
+  // narrows `deck` to non-null for everything below.
+  if (wrapped.isError || deck === null) {
     return (
       <View
         style={{
@@ -104,74 +206,6 @@ export default function Wrapped() {
       </View>
     );
   }
-
-  const timezone = family?.timezone ?? 'UTC';
-  const nextYear = wrapped.data.family.nextYear;
-  const isOrganizer = family?.member.role === 'organizer';
-  const alreadyOpen =
-    nextYear !== null && (years.data ?? []).some((y) => y.calendar_year === nextYear);
-
-  /**
-   * Whether the final card may offer its button — decided from the same three facts
-   * `open_year()` checks, in the same order it checks them.
-   *
-   * It refuses a non-Organizer with 42501, a Year the Family already has with PT409, and a
-   * `calendar_year` below the current one in the Family's timezone with 22023. The third is
-   * not hypothetical here: §20.10 keeps a frozen Year browsable forever, so a Member reading
-   * their 2027 Wrapped in 2031 would otherwise be shown a button to open 2028.
-   *
-   * `hasOpenSetupWindow` is deliberately *not* consulted, unlike the Family screen's own
-   * "Open a Year" button. That gate exists because that button offers "the next free year"
-   * and two open windows leave a Family authoring two Boards with nothing on screen to say
-   * which is which. This card offers one specific Year, named by `family_cards.next_year`,
-   * so the ambiguity cannot arise.
-   */
-  const nextYearState: NextYearState =
-    nextYear === null
-      ? 'not-yours'
-      : nextYear < currentYearIn(new Date(), timezone)
-        ? 'past'
-        : alreadyOpen
-          ? 'already-open'
-          : isOrganizer
-            ? 'openable'
-            : 'not-yours';
-
-  // The caller's own Member, and only theirs. A Guardian may see a Managed Member's card
-  // through `visible_member_ids()`, but "your year" means the person holding the phone —
-  // and §20.9's Share button exports whatever card it is sitting on, so a screen that
-  // silently swapped in a child's stats would be a one-tap export of a child's data.
-  const myMemberId = family?.member.id;
-  const mine =
-    myMemberId === undefined
-      ? null
-      : (wrapped.data.memberCards.find((c) => c.memberId === myMemberId)?.stats ?? null);
-
-  // Memoised, and §20.2 is why: Wrapped "is read many times, changes never, and must
-  // render instantly". The deck is not cheap — it walks every Milestone of the Year, a
-  // list `..._029` §6 deliberately stopped filtering — and a fresh array on every render
-  // also changes `FlatList`'s `data` identity and defeats `<WrappedCard>`'s `memo`, so
-  // every card remounts whenever anything on this screen changes state.
-  // Narrowed once, outside the callback: TypeScript cannot carry a narrowing of
-  // `wrapped.data` into a closure, and re-reading it inside would be a second read that
-  // could in principle answer differently.
-  const payload = wrapped.data;
-  const deck = useMemo(() => wrappedDeck({
-    member: mine,
-    family: payload.family,
-    awards: payload.awards,
-    // Join order, and nothing else, is what orders the Awards (§7.2). `useRoster` already
-    // returns Members by `joined_at` and says so — "the moment it sorts by activity it
-    // becomes a ladder".
-    roster: (roster.data?.members ?? []).map((m) => ({
-      id: m.id,
-      name: m.display_name,
-      isManaged: m.is_managed,
-    })),
-    calendarYear: year.calendar_year,
-    timezone,
-    nextYearState,
-  }), [mine, payload, roster.data, year.calendar_year, timezone, nextYearState]);
 
   const say = (message: string) => {
     setTrouble(message);
@@ -228,6 +262,10 @@ export default function Wrapped() {
         data={deck}
         keyExtractor={(card) => card.id}
         renderItem={renderCard}
+        // The card width is not in `data`, and `VirtualizedList` re-renders its cells only
+        // when `data` or `extraData` changes — so without this a browser window resized
+        // across the 402pt column boundary leaves every card at its old width.
+        extraData={width}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
