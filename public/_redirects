@@ -1,0 +1,16 @@
+# Cloudflare Pages rewrite rules.
+#
+# `app.json` sets no `web.output`, so Expo Router exports a **single** `index.html` and
+# routes client-side. Cloudflare Pages serves files, not routes: it looks for
+# `/board/<id>/index.html`, finds nothing, and answers its 404 page. Every deep link the
+# app itself emits — a magic-link callback, a push notification's `/board/<id>`, a shared
+# URL — is a cold load on a path that has no file, so without this line the only URL that
+# works is the one you typed to get here.
+#
+# 200 rather than 301/302: the browser must keep the original path in `location.pathname`,
+# because that path is the route. A redirect would rewrite the address bar to `/` and the
+# router would land on the home screen having thrown the destination away.
+#
+# Verified: `expo export --platform web` copies `public/` into `dist/` verbatim, and says
+# nothing about it in its summary — the "Files (2)" line counts only what it generated.
+/*  /index.html  200

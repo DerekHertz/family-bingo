@@ -1,0 +1,66 @@
+# Cloudflare Pages response headers.
+#
+# Copied into `dist/` verbatim by `expo export --platform web`, exactly like `_redirects`.
+# Cloudflare reads it at deploy time; nothing in the bundle is aware of it, which is the
+# point — these are the controls that survive a compromised dependency.
+#
+# The threat this file exists for is named in `lib/supabase.ts`: the session token lives in
+# `sessionStorage`, readable by any script on this origin, and the argument that this is
+# acceptable rests on the origin being a small target — no HTML rendered from user input,
+# no third-party script, no WebView. `script-src 'self'` is what turns that argument from a
+# description of today's code into something a browser enforces.
+
+/*
+  # `style-src` needs 'unsafe-inline' and cannot avoid it. React Native Web has no
+  # stylesheet file: it builds CSS rules at runtime from the style objects in every
+  # component and injects them into a `<style>` element it creates itself. There is no
+  # build step that could hash or nonce them, because the rules do not exist until the
+  # component renders. `dist/index.html` also carries Expo's own inline `#expo-reset`
+  # block. The exposure is real but narrow — CSS injection needs an injection point, and
+  # `script-src 'self'` is what denies the one that would matter.
+  #
+  # `script-src 'self'` with no 'unsafe-eval': verified against a real export. The bundle
+  # contains two `eval` call sites and neither runs in a browser — uuid's is guarded on
+  # `typeof window == 'undefined'`, and Metro's split-bundle loader is unreachable while
+  # the export is a single bundle (`web bundles (1)`). Adding a dynamic `import()` would
+  # produce a second chunk that Metro loads with `eval`, and it would fail closed under
+  # this policy. That is the right failure — loud, at the first deploy — but know it is
+  # the tripwire.
+  #
+  # `img-src` carries `data:` and `blob:` for the photo path (§16): the picker and
+  # `expo-image-manipulator` hand back object URLs before anything is uploaded, and the
+  # signed URLs the Feed renders come back from Storage on the Supabase host.
+  #
+  # `connect-src` is the whole network surface. Every request this app makes goes through
+  # the one `createClient` in `lib/supabase.ts` — PostgREST, Auth, Storage and Functions
+  # are all paths under `EXPO_PUBLIC_SUPABASE_URL`, not separate hosts. Fonts are bundled
+  # as local assets by `@expo-google-fonts` (16 `.ttf` files land in `dist/assets/`), so
+  # nothing is fetched from `fonts.gstatic.com` despite that string appearing in the
+  # bundle's package metadata. The one host deliberately left out is `exp.host`: minting
+  # an Expo push token is guarded on `Device.isDevice` and refused for any platform that
+  # is not ios/android (`lib/notifications.ts`), and the call is wrapped in a `catch` that
+  # answers `null` — so a browser that somehow reached it fails the way it already fails.
+  #
+  # The wildcard in `*.supabase.co` is a deliberate loosening: the project ref is only
+  # known at build time and this file is static. It admits any Supabase project, which is
+  # a far smaller set than any host.
+  #
+  # OAuth still works under `default-src 'self'`. `signInWithProvider` navigates the
+  # document to the provider on web (see `lib/auth.ts`) and top-level navigation is not
+  # governed by CSP fetch directives.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co; object-src 'none'; base-uri 'none'; frame-ancestors 'none'
+  # A `.ttf` served as `text/plain` and sniffed into something executable is the classic
+  # version of this; there is no case in this app where guessing a type is wanted.
+  X-Content-Type-Options: nosniff
+  # Paths here are addresses of a Family's data — `/board/<id>`, `/tile/<id>`. Nothing
+  # off-origin is loaded, so no legitimate request needs a Referer, and the one navigation
+  # that leaves (to the OAuth provider) does not want the board id going with it.
+  Referrer-Policy: no-referrer
+  # One year, and deliberately **without** `preload`. Preloading is a submission to a list
+  # baked into browser binaries and is slow and awkward to reverse; `includeSubDomains` on
+  # a custom apex domain likewise commits every subdomain the owner might later add to
+  # HTTPS. Both are the right defaults for this site, but they are the owner's to widen.
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  # `X-Frame-Options` is omitted on purpose: `frame-ancestors 'none'` above says the same
+  # thing to every browser that has shipped this decade, and two headers disagreeing is a
+  # maintenance trap rather than defence in depth.

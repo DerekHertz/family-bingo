@@ -1,0 +1,152 @@
+# The web build, to Cloudflare Pages, after CI goes green on `main`.
+#
+# ## Secrets this needs
+#
+# All four are set in **Settings → Secrets and variables → Actions → Secrets**:
+#
+# | Secret | Where it comes from |
+# |---|---|
+# | `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create Token → the **"Edit Cloudflare Workers"** template, or a custom token with `Account · Cloudflare Pages · Edit`. Scope it to the one account. |
+# | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → the right-hand sidebar, or the hex string in the dashboard URL after `/accounts/`. |
+# | `EXPO_PUBLIC_SUPABASE_URL` | Supabase dashboard → Project Settings → Data API → Project URL (`https://<ref>.supabase.co`). Same value as the local `.env`. |
+# | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API Keys → the **`anon` `eyJ...` JWT**, not a `sb_publishable_...` key. README, "Testing with two accounts", explains why the publishable key comes back 401. |
+#
+# And one **variable** (same page, Variables tab), because it is not a secret and reads
+# better in a log than a masked blob:
+#
+# | Variable | Value |
+# |---|---|
+# | `CLOUDFLARE_PAGES_PROJECT` | The Pages project name. Optional — defaults to `family-bingo` below. |
+#
+# The two `EXPO_PUBLIC_*` values are public by design and are in `eas.json` already: the
+# anon key authorizes nothing on its own and RLS decides every row (ADR-0004). They are
+# secrets here only because that is where a GitHub workflow keeps configuration.
+#
+# ## The one that must never be added
+#
+# **Do not add `EXPO_PUBLIC_DEV_LOGIN_SECRET`, and do not "temporarily" add it to debug a
+# sign-in problem.** It is the only real credential in that family of names, and it is the
+# whole of the authentication bypass in `supabase/functions/dev-login`: hold it and you can
+# mint a session for any Account on the project by email address alone, with no email sent.
+# `EXPO_PUBLIC_*` is not a namespace for configuration — it is Expo's instruction to inline
+# the literal into the bundle, and this workflow publishes that bundle to the open web. The
+# secret would be readable with view-source. `eas.json` leaves it out for the same reason
+# and says so; this is that decision, one deployment target further out.
+
+name: Deploy
+
+# **`workflow_run` rather than a job inside `ci.yml`.**
+#
+# A deploy job gated on `needs: gate` and `github.ref == 'refs/heads/main'` would work, and
+# would be simpler. It was not chosen because it puts the deployment inside the workflow
+# that runs on every pull request, including pull requests from forks — one wrong `if:` away
+# from a fork's branch reaching a step that reads `CLOUDFLARE_API_TOKEN`. Keeping deployment
+# in a workflow that has no pull request trigger at all means there is no expression to get
+# wrong: the trigger itself cannot fire for a PR.
+#
+# `workflow_run`'s known footgun is that it always runs the workflow *file* from the default
+# branch, no matter which branch the triggering run was on. Here that is harmless and
+# actually wanted — the trigger is filtered to `main`, so the file on `main` is the file we
+# meant. It does mean a change to this file cannot be tested from a branch; it takes effect
+# on merge. The checkout below is pinned to the triggering commit precisely because that
+# same rule applies to the *code*, and there it would be a real bug.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # A manual re-run, for the case where Cloudflare failed and the code did not.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a deploy in flight. Cancelling `checks` costs a rerun; cancelling half a
+# Pages upload is a live site in an unknown state.
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  deploy:
+    # A CI run that failed, was cancelled, or was itself skipped must not ship. `success` is
+    # the only conclusion that means the suites ran and passed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # Names the URL in the Actions UI and gives the owner somewhere to hang a required
+    # reviewer later without touching this file.
+    environment:
+      name: production
+      url: ${{ steps.pages.outputs.deployment-url }}
+    steps:
+      # **The `ref` matters.** A `workflow_run` checkout with no `ref` takes the default
+      # branch's current tip, which is whatever landed while this was queued — so a run
+      # triggered by commit A can silently deploy commit B, untested. Pinning to
+      # `head_sha` deploys the commit CI actually went green on.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # **Rebuilt here rather than downloading `ci.yml`'s `web-build` artifact**, which is
+      # the one place this pipeline deliberately does more work than it has to.
+      #
+      # `EXPO_PUBLIC_*` values are not read at runtime — Expo inlines them into the bundle
+      # as string literals at export time. A bundle is therefore only valid for the project
+      # whose values went into it, and `ci.yml`'s build runs on pull requests from forks
+      # where no secret is readable, so its artifact has the empty string where the Supabase
+      # URL belongs. Shipping it would produce a site that loads, renders, and can reach
+      # nothing. The export takes about five seconds; the artifact is for reading, not for
+      # shipping.
+      - name: Export the web bundle
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          # EXPO_PUBLIC_DEV_LOGIN_SECRET is absent on purpose. See the top of this file.
+        run: npx expo export --platform web
+
+      # A deploy that quietly loses `_redirects` is a site where only `/` works, and the
+      # symptom — deep links 404 — appears days later in someone else's hands. Expo copies
+      # `public/` into `dist/` without mentioning it in its own summary, so the check that
+      # it happened has to be made here rather than read off the build log.
+      - name: The static web files reached dist/
+        run: |
+          set -eu
+          for file in _redirects _headers; do
+            if [ ! -s "dist/$file" ]; then
+              echo "::error::dist/$file is missing or empty — public/ did not reach the export"
+              exit 1
+            fi
+          done
+          echo "dist/_redirects and dist/_headers are present"
+
+      # Pinned to its commit for the same reason as every other third-party action here: a
+      # tag is mutable, and this is the one job in the repository holding a token that can
+      # write to production. The trailing comment is the readable half of the pin and
+      # Dependabot rewrites it in step with the SHA.
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        id: pages
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # `--branch=main` is what makes this the **production** deployment rather than a
+          # preview on its own URL. Pages decides that from the branch name it is told, not
+          # from the branch the runner is on.
+          command: >-
+            pages deploy dist
+            --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'family-bingo' }}
+            --branch=main
+
+      - name: Where it went
+        run: echo "Deployed ${{ github.event.workflow_run.head_sha || github.sha }} to ${{ steps.pages.outputs.deployment-url }}"
