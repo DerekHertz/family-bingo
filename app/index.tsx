@@ -448,9 +448,12 @@ function UnderIt() {
         'Nothing crosses a family boundary. Every table carries a family id and an RLS policy keyed to the caller’s own membership, so the database refuses rather than the app remembering to ask. The service role is the one identity the boundary does not exist for, and what it may touch is enumerated by hand.',
     },
     {
-      head: '900 pgTAP assertions',
+      // Deliberately a floor rather than a count. The exact number moves with every
+      // migration, and a landing page whose checkable claim is out of date is worse than
+      // one that claims less — the point of this card is that a reader can go and verify it.
+      head: 'Over 900 pgTAP assertions',
       body:
-        'Every policy has a negative test asserting that a different family’s account gets zero rows rather than an error. Thirty files, run against a real Postgres in CI whenever the schema or a query moves.',
+        'Every policy has a negative test asserting that a different family’s account gets zero rows rather than an error. Run against a real Postgres in CI whenever the schema or a query moves.',
     },
     {
       head: 'A domain layer with no I/O',
