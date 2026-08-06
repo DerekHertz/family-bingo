@@ -1,0 +1,109 @@
+# Keep-alive, every two days.
+#
+# **The Supabase project is on the free tier, which pauses after 7 days with no activity**
+# and needs a human to press restore in the dashboard. What makes that worse than an outage
+# is how it presents: the site loads, renders its shell, and then every query fails. To
+# anybody holding a phone that is a broken app, not an absent one — and it happens on the
+# eighth quiet day, which is exactly the week nobody is looking.
+#
+# So this job's real output is the request itself. The assertions are secondary, and exist
+# because a keep-alive that stopped working would otherwise be indistinguishable from one
+# that is working: both are a green tick on a scheduled workflow nobody reads.
+#
+# ## What it needs
+#
+# Secrets (shared with `deploy.yml` — no new ones):
+#   `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+#
+# Variable (Settings → Secrets and variables → Actions → Variables):
+#   `SITE_URL` — the deployed origin, e.g. `https://family-bingo.pages.dev`. Not a secret;
+#   it is a public web address and a masked one is unreadable in a failure log. If it is
+#   unset the site half is skipped and says so, because a keep-alive is worth having before
+#   there is anything deployed to keep alive.
+
+name: Health
+
+on:
+  schedule:
+    # 07:00 UTC on odd days of the month. `*/2` on day-of-month resets at each month
+    # boundary, so the longest possible gap is two days — comfortably inside the seven that
+    # matter, with room for a run that fails.
+    - cron: '0 7 */2 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # **GitHub disables scheduled workflows in a repository with 60 days of no activity**, and
+  # emails the owner once to say so. That is a real failure mode for this job specifically
+  # rather than a footnote: a finished project with a deployed site and nothing left to
+  # commit is precisely the repository that goes quiet for 60 days, and it is precisely the
+  # project that then gets paused. If this stops running, re-enable it from the Actions tab
+  # — and treat any push to the repository as the thing that resets that clock.
+  reachable:
+    runs-on: ubuntu-latest
+    steps:
+      # `GET /rest/v1/` with the apikey header: PostgREST's own root document. Chosen
+      # because `anon` has no SELECT grant on a single table in this schema — every table is
+      # behind RLS and behind grants that start at `authenticated` — so there is no row this
+      # job could read, and inventing one would mean widening the production surface for a
+      # health check. The root answers the API's OpenAPI description and needs no grant at
+      # all, so a 200 means the gateway is up, PostgREST is up, and PostgREST is holding a
+      # schema cache it could only have got from a running database.
+      #
+      # Verified 200 against the local stack. Note that the local Kong lets this through
+      # with no apikey at all while the hosted gateway does not, so the header is not
+      # decoration — without it the hosted project answers 401 and this job would fail every
+      # other day for a reason that has nothing to do with the project being awake.
+      - name: The Supabase API answers
+        env:
+          SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY are not set"
+            exit 1
+          fi
+
+          # `--retry 2` covers a dropped connection or a 5xx from the edge, so a blip does
+          # not page anybody. It does **not** paper over a paused project: a pause answers
+          # an error for days, not for seconds, and still fails after the retries.
+          status=$(curl --silent --show-error --location \
+                        --retry 2 --retry-delay 5 --max-time 30 \
+                        --output response.txt --write-out '%{http_code}' \
+                        --header "apikey: ${SUPABASE_ANON_KEY}" \
+                        "${SUPABASE_URL%/}/rest/v1/") || status=000
+
+          echo "GET /rest/v1/ -> ${status}"
+          if [ "$status" != "200" ]; then
+            echo "::error::Supabase answered ${status}. A paused free-tier project looks like this; restore it from the dashboard."
+            head -c 500 response.txt || true
+            exit 1
+          fi
+
+      # `if: always()` so a Supabase failure never hides a site failure. Two things are
+      # being checked and the answer "one of them is down" is much less useful than knowing
+      # which.
+      - name: The deployed site answers
+        if: always()
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SITE_URL:-}" ]; then
+            echo "::notice::SITE_URL is not set — skipping the site check."
+            exit 0
+          fi
+
+          status=$(curl --silent --show-error --location \
+                        --retry 2 --retry-delay 5 --max-time 30 \
+                        --output /dev/null --write-out '%{http_code}' \
+                        "${SITE_URL}") || status=000
+
+          echo "GET ${SITE_URL} -> ${status}"
+          if [ "$status" != "200" ]; then
+            echo "::error::${SITE_URL} answered ${status}"
+            exit 1
+          fi

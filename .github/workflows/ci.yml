@@ -1,0 +1,251 @@
+# The suites, on every pull request and every push to `main`.
+#
+# `docs/HANDOFF.md` describes the merge rhythm as "tsc + all three suites green", run by
+# hand. This is that, made unskippable — and it exists mostly for the one suite a person
+# reliably forgets, not for the two they remember.
+#
+# Only **`gate`** should be a required check in branch protection. The reason is in the
+# comment on that job and it is the single most important line in this file.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# **No `paths-ignore` here, deliberately.**
+#
+# A workflow skipped by a path filter does not report its checks — it reports nothing at
+# all. GitHub then shows a required check as "Expected — waiting for status to be
+# reported" and leaves it that way forever, so a docs-only PR becomes unmergeable and the
+# only way out is an empty commit touching a filtered path. Filtering *inside* a job keeps
+# the workflow running and lets a skipped job be an outcome the gate can reason about.
+#
+# `database` is the only job that filters, in `changes` below. `checks` and `build` run on
+# everything: together they are under a minute of which most is `npm ci`, so the saving on
+# a docs-only PR would be seconds bought with a class of bug — a README edit that also
+# touched a `.ts` file — that costs hours.
+
+# The default token is read-write on almost everything. Nothing in this workflow writes,
+# and a compromised dependency in a 678-package tree should find nothing to spend.
+permissions:
+  contents: read
+
+# Pushing a fixup should kill the run testing the commit it replaces. Keyed on the PR
+# number where there is one, so two PRs never cancel each other, and on the ref otherwise.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # There is no `.nvmrc` and no `engines` field to read this from. `docs/HANDOFF.md` is the
+  # authority: Expo SDK 57 needs >= 20.19, and 21.x lacks `util.parseEnv`. Locally that is
+  # a keg-only Homebrew install people forget to put on PATH; here it is one line.
+  NODE_VERSION: '22'
+
+jobs:
+  # Which suites this diff can possibly affect.
+  #
+  # Its only consumer is `database`. Kept a separate job rather than a step inside it so
+  # that the expensive job is *skipped* rather than started-and-exited-early: `supabase
+  # start` pulls a dozen container images before it can decide it had nothing to do.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # dorny/paths-filter asks the API which files a pull request touches rather than
+      # diffing locally. On a push it falls back to git, which is why the checkout is here.
+      pull-requests: read
+    outputs:
+      database: ${{ steps.filter.outputs.database }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: on a push the action diffs against the commit before it, and a
+          # shallow clone may not contain it.
+          fetch-depth: 0
+
+      # Pinned to a commit, not `@v4`. A tag is a mutable pointer the action's owner can
+      # move at any time, so trusting one is granting arbitrary code execution inside a job
+      # holding this repository's token. The trailing comment is the readable half of the
+      # pin and Dependabot rewrites it in step with the SHA; do not move it to its own line.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            database:
+              - 'supabase/**'
+              - 'lib/queries/**'
+
+  # `tsc` and the pure suites. Nothing here touches Docker or the network.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # Keyed on package-lock.json by default. The lockfile is committed and `npm ci`
+          # refuses to run without it, so the key can never go stale against the install.
+          cache: npm
+
+      # `ci`, never `install`: it installs the lockfile exactly and fails if package.json
+      # has drifted from it, which is the difference between testing what will ship and
+      # testing whatever npm resolved this morning.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # The pure suites across src/domain, src/ui, theme and lib — including the three that are
+      # really lint rules with no linter behind them: `boundaries.test.ts` (src/domain
+      # imports nothing but its own siblings), `fonts.test.ts` (never spread a raw `type`
+      # token) and `rpc-signatures.test.ts` (every `supabase.rpc()` call site matches a
+      # migration). They are why this repo needs no ESLint job.
+      - name: Unit suites
+        run: npm test
+
+  # The artifact that actually ships, built the way it ships.
+  #
+  # This job is not redundant with `checks`. Vitest never loads the bundler, and the
+  # web-only code paths have no unit tests by nature: the `Platform.OS === 'web'` storage
+  # branch in `lib/supabase.ts`, `components/PhoneShell.tsx`, and the redirect-vs-popup
+  # split in `lib/auth.ts`. A Metro resolution failure in any of them is invisible to
+  # `tsc` and to every suite above, and visible here in five seconds.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # No `EXPO_PUBLIC_*` values are set, and none are needed. Bundling does not evaluate
+      # modules, so `lib/supabase.ts`'s throw on missing configuration never fires, and the
+      # job stays honest on a pull request from a fork where no secret is readable. This
+      # builds a bundle that proves it *compiles*; `deploy.yml` builds the one that runs.
+      - name: Export the web bundle
+        run: npx expo export --platform web
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-build
+          path: dist
+          # For looking at, not for shipping — see the note above and in `deploy.yml`.
+          retention-days: 7
+
+  # pgTAP and the HTTP integration suite, against a real local stack.
+  #
+  # Conditional because it is the only job that costs minutes rather than seconds, and
+  # because it genuinely cannot be affected by most changes: both suites talk to the
+  # database over the wire and import no application code at all. A PR touching only
+  # `components/` or `app/` cannot change what they assert.
+  database:
+    needs: changes
+    if: needs.changes.outputs.database == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Brings the Supabase CLI with it — it is a devDependency, so there is no separate
+      # CLI install step and no second version to drift.
+      - run: npm ci
+
+      # `-x` drops containers no suite here reads. **The names are the CLI's own, from
+      # `supabase start --help`, and are not the names in `config.toml` or in `docker ps`**
+      # — the pooler is `supavisor` and the analytics container is `logflare`. Getting one
+      # wrong is silent: the CLI accepts an unknown name, ignores it and exits 0, so a typo
+      # looks exactly like a working exclusion.
+      #
+      # `storage-api` is **kept**, and that is the point of the list rather than an
+      # oversight. `supabase/tests/integration/storage_urls.test.ts` is PRD §16.5 — "the
+      # single highest-consequence test in the suite" — and it is a claim about what a real
+      # Storage endpoint returns over HTTP. Excluding storage would not fail it; it would
+      # make it fail for the wrong reason, or pass while proving nothing.
+      #
+      # `gotrue`, `kong` and `postgrest` are likewise load-bearing: both suites create
+      # users through the Auth admin API, sign in for a real JWT, and assert against
+      # PostgREST through the gateway.
+      #
+      # If you run this line locally to reproduce a CI failure, know that the exclusion
+      # sticks: a later plain `supabase start` will not bring Studio back, because the CLI
+      # only reconsiders the container set for a project it is creating. `supabase stop`
+      # first. Irrelevant on a runner, which starts with nothing.
+      - name: Start the local stack
+        run: npx supabase start -x studio,imgproxy,vector,logflare,supavisor,realtime
+
+      # pgTAP **first**, and the order is not arbitrary. `docs/HANDOFF.md`: several suites
+      # do `select id from families limit 1`, so any row the integration tests seed makes
+      # them pick the wrong Family and ~30 assertions fail for reasons unrelated to the
+      # change. A freshly started stack is the clean database they need; running them after
+      # the integration suite would need a `db reset` in between.
+      - name: pgTAP
+        run: npm run db:test
+
+      # These self-discover the stack — `npx supabase status -o json` for the URL and keys,
+      # `docker ps` for the database container to seed fixtures through. So the stack has
+      # to be up *before* Vitest starts, which is why this is not part of `npm test`.
+      - name: Integration suite
+        run: npm run test:integration
+
+  # **The only check branch protection should require.**
+  #
+  # Requiring `database` directly would break every PR that does not touch SQL. A skipped
+  # job reports no conclusion, GitHub shows the required check as pending, and it stays
+  # pending forever — the same trap that rules out `paths-ignore` at the top of this file.
+  # A job that always runs and reads the others' results turns "skipped" into a pass it can
+  # state out loud, and leaves one check to configure instead of four.
+  #
+  # `changes` is in `needs` for a reason worth naming: without it, a `changes` job that
+  # failed would leave `database` skipped, and a gate reading only the other three would
+  # wave through a PR whose database suites never ran.
+  gate:
+    if: always()
+    needs: [changes, checks, build, database]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job either succeeded or had nothing to do
+        env:
+          # Through the environment rather than interpolated into the script. These are a
+          # closed set of GitHub's own words so nothing could be smuggled in, but a habit
+          # of pasting expressions into `run:` is how the ones that can get pasted too.
+          changes: ${{ needs.changes.result }}
+          checks: ${{ needs.checks.result }}
+          build: ${{ needs.build.result }}
+          database: ${{ needs.database.result }}
+        run: |
+          set -u
+          failed=0
+          for job in changes checks build database; do
+            result="${!job}"
+            case "$result" in
+              # `skipped` is a pass: it is what `database` reports on a PR that could not
+              # have affected it. The empty case cannot arise for a job named in `needs`,
+              # and is allowed anyway so that adding a job here can never fail closed on a
+              # typo in this loop.
+              success|skipped|'')
+                echo "  $job: ${result:-not run}"
+                ;;
+              # `cancelled` fails on purpose. It is the result of the concurrency group
+              # killing a run, and of a job hitting its timeout — neither is evidence that
+              # anything passed, and treating it as one would make a flaky runner look like
+              # a green build.
+              *)
+                echo "::error::$job reported '$result'"
+                failed=1
+                ;;
+            esac
+          done
+          # Every job is reported before exiting, so one failure does not hide the others.
+          exit "$failed"
