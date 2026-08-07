@@ -30,10 +30,15 @@ import { color, radius, size, space, stroke } from '../theme/tokens';
 interface Props {
   faces: readonly StripFace[];
   /**
-   * The horizontal padding the screen around this uses, so the strip can cancel it and
-   * then put it back inside the scroll view. That is the whole of "full-bleed": the
-   * content still starts where the text does, and scrolls out under the screen edge
-   * rather than stopping short of it at a margin.
+   * The inset the surrounding screen uses, applied to the scroll *content* so the first
+   * face lines up with the title above it.
+   *
+   * That is the whole of "full-bleed", and it is deliberately done this way round. The
+   * obvious version is a negative `marginHorizontal` on a strip nested inside the padded
+   * header — it looks identical on iOS and is broken on Android, where a touch is not
+   * dispatched to a child lying outside its parent's bounds, so an avatar half-scrolled
+   * under the leading edge would be visible and untappable. This component is a sibling of
+   * the padded block instead, full width, insetting its own content.
    */
   gutter: number;
   onOpen: (boardId: string) => void;
@@ -51,7 +56,6 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
       // this is a matter of not reaching for `snapToInterval` rather than of turning
       // anything off.
       showsHorizontalScrollIndicator={false}
-      style={{ marginHorizontal: -gutter }}
       contentContainerStyle={{
         paddingHorizontal: gutter,
         gap: space.md,
@@ -59,7 +63,12 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
       }}
     >
       {faces.map((face) => {
-        const openable = face.boardId !== null;
+        // The Board already on screen is not somewhere to go. It stays at full opacity and
+        // keeps its ring — it is the cursor, not an unavailable face — but pressing it
+        // fired `router.replace` at the identical route, and REPLACE mints a new route key,
+        // so the screen tore down and remounted into "Loading the board" for a tap that
+        // went nowhere.
+        const openable = face.boardId !== null && !face.isCurrent;
         // Everyone appears, including whoever's Board has not sealed — §7's do-not #2
         // rejects "+12" because it counts people, and dropping the one Member without a
         // sealed Board removes them from a picture of their own Family, which is the same
@@ -76,7 +85,7 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
             accessibilityLabel={`${face.displayName}${
               face.isManaged ? ', a child in this Family' : ''
             }${face.isCurrent ? ', the board you are looking at' : ''}${
-              openable ? '' : ', no board to open yet'
+              face.boardId === null ? ', no board to open yet' : ''
             }`}
             accessibilityHint={openable && !face.isCurrent ? 'Opens their board' : undefined}
             accessibilityState={{ disabled: !openable, selected: face.isCurrent }}
@@ -87,7 +96,9 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
               alignItems: 'center',
               width: 56,
               minHeight: size.minTouch,
-              opacity: openable ? (pressed ? 0.7 : 1) : 0.4,
+              // Dimmed only for a Member whose Board cannot be opened. The current face is
+              // not openable either and must not be dimmed: it is the one you are reading.
+              opacity: face.boardId === null ? 0.4 : pressed ? 0.7 : 1,
             })}
           >
             {/* The mark for "you are here" is a hairline ring in `ink3`, not `moss` and not

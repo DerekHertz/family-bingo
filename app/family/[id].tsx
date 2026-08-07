@@ -146,6 +146,11 @@ export default function FamilyRoster() {
   // §23.1 — which Member's Board a row can open, keyed by Member. Every row asks, and the
   // four answers that are not "open" each have something true to say instead.
   const boardOf = new Map((familyBoards.data ?? []).map((b) => [b.memberId, b]));
+  // Both halves have to have arrived before a row may claim anything about a Board. A
+  // Family with no Year at all is the permanent case; a cold open where `useYears` resolves
+  // after the roster is the transient one, and it would flash "no board for 0" across every
+  // row on the way past — `yearSays` guards the same hazard three lines above.
+  const boardsKnown = current !== undefined && familyBoards.data !== undefined;
 
   if (roster.isPending || families.isPending) return <Loading what="Loading the roster" />;
 
@@ -441,7 +446,7 @@ export default function FamilyRoster() {
           // §23.1. The face and the name are the tap target; the Remove / Let in controls
           // stay siblings of it rather than children, because a Pressable inside a
           // Pressable is a tap the wrong one can swallow.
-          const visit = boardVisit(member, boardOf.get(member.id));
+          const visit = boardVisit(member, boardOf.get(member.id), boardsKnown);
           const state = boardVisitCopy(visit, current?.calendar_year ?? 0);
           const role = member.role === 'organizer' ? 'organizer' : null;
           const meta = [role, state].filter((part) => part !== null).join(' · ');
@@ -457,11 +462,19 @@ export default function FamilyRoster() {
               accessibilityRole={opens === null ? undefined : 'button'}
               // Only when it does something. A row announced as a button that answers
               // nothing is §6 A1's complaint, and it is most of this roster in December.
-              accessibilityLabel={
-                opens === null ? undefined : `${member.display_name}’s board${
-                  meta === '' ? '' : `, ${meta}`
-                }`
-              }
+              // **The label has to reproduce every child**, because a `Pressable` is
+              // accessible by default and collapses its subtree on iOS — so `<Avatar>`'s
+              // own label is discarded rather than added to. Without the Managed clause a
+              // Guardian using VoiceOver hears "Ivo's board" and "Mira's board" with no way
+              // to tell which of them is a child, and `Avatar.tsx` says in as many words
+              // that the clay dot is the only thing marking that relationship.
+              //
+              // Stated on the closed rows too. Left undefined, iOS falls back to
+              // concatenating the subtree and a pending Member announces their own name
+              // three times.
+              accessibilityLabel={`${member.display_name}${
+                member.is_managed ? ', a child in this Family' : ''
+              }${opens === null ? '' : '’s board'}${meta === '' ? '' : `, ${meta}`}`}
               accessibilityHint={opens === null ? undefined : 'Opens their board to look at'}
               onPress={() => {
                 if (opens !== null) router.push({ pathname: '/board/[id]', params: { id: opens } });

@@ -171,11 +171,18 @@ export function useRosterActions(familyId: string) {
   const queryClient = useQueryClient();
   // Approving changes who is in the Family, which changes both the roster AND whether the
   // approved Account sees it in their own list. Both keys, every time.
+  //
+  // And their Boards: since `deal_late_joiner_board`, approving a Member creates one for
+  // every unsealed Year and, in an active Year, one of their own. Without this the roster
+  // refetches, the Member flips to `active`, and their row reads "no board for 2026" for a
+  // minute of `staleTime` — about a Board that demonstrably exists. §22's readiness
+  // undercounts over the same window.
   const after = {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: rosterKey(familyId) });
       void queryClient.invalidateQueries({ queryKey: ['families'] });
       void queryClient.invalidateQueries({ queryKey: ['pending'] });
+      void queryClient.invalidateQueries({ queryKey: ['family-boards'] });
     },
   };
 

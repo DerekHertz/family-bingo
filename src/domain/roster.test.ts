@@ -48,6 +48,24 @@ describe('boardVisit (§23.1)', () => {
     expect(boardVisit(active, undefined).kind).toBe('unopened');
   });
 
+  /**
+   * Absence of a Board and absence of an answer are not the same fact. Three states reach
+   * this: a Family that has not opened a Year, a screen whose Years have not resolved, and
+   * a Boards read that failed. Defaulting any of them to "no board" is a false sentence
+   * about a person, stated confidently.
+   */
+  it('answers "unknown" when the Year and its Boards have not been read', () => {
+    expect(boardVisit(active, undefined, false).kind).toBe('unknown');
+    expect(boardVisit(active, board({ sealedAt: '2027-01-01T05:00:00Z' }), false).kind).toBe(
+      'unknown',
+    );
+  });
+
+  it('still answers for a pending Member with nothing loaded', () => {
+    // Waiting to be let in is knowable without a Year, and it is the whole of that row.
+    expect(boardVisit(pending, undefined, false).kind).toBe('pending');
+  });
+
   it('treats a pending Member as pending even if a Board somehow exists', () => {
     // Belt and braces: a pending Member reads nothing (§3.2), and their row is about
     // waiting to be let in rather than about a Year.
@@ -73,6 +91,21 @@ describe('boardVisitCopy (§4.5 — factual, never conditional)', () => {
    */
   it('names the Year rather than implying the Member failed at something', () => {
     expect(boardVisitCopy({ kind: 'unopened' }, 2026)).toBe('no board for 2026');
+  });
+
+  it('says nothing at all when nothing is known', () => {
+    expect(boardVisitCopy({ kind: 'unknown' }, 2026)).toBeNull();
+  });
+
+  /**
+   * The regression this replaces: the screen passed `current?.calendar_year ?? 0` and an
+   * unloaded Year rendered "no board for 0" under every name — permanently for a Family
+   * that had not opened one, and as a flash on every cold open otherwise.
+   */
+  it('never interpolates a Year it was not given', () => {
+    for (const year of [0, NaN]) {
+      expect(boardVisitCopy({ kind: 'unknown' }, year)).toBeNull();
+    }
   });
 
   it('never scolds (§0.3)', () => {
@@ -181,6 +214,19 @@ describe('stripFaces (FRONTEND_DESIGN §4.5)', () => {
 
   it('marks nothing when the caller is not on a Board', () => {
     expect(stripFaces(members, boards, undefined).some((f) => f.isCurrent)).toBe(false);
+  });
+
+  /**
+   * The clay dot is the only thing marking a Managed Member wherever they appear
+   * (`Avatar.tsx`), and the strip's accessibility label re-states it because the Pressable
+   * collapses the subtree. Both depend on this field arriving, and every other fixture
+   * here leaves it false — so without this the function could hardcode it and pass.
+   */
+  it('carries the Managed marker through', () => {
+    const withChild = [...members, member('m6', 'Priya', { isManaged: true })];
+    const faces = stripFaces(withChild, [...boards, boardFor('m6', 'b6', sealed)], 'b1');
+    expect(faces.find((f) => f.displayName === 'Priya')?.isManaged).toBe(true);
+    expect(faces.filter((f) => f.isManaged)).toHaveLength(1);
   });
 
   it('carries no progress of any kind', () => {

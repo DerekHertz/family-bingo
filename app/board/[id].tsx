@@ -426,23 +426,34 @@ export default function DraftingTable() {
               : `${head.data.year.calendarYear} · ${joined}`}
           </Text>
 
-          {/* §4.5's strip, and §23.3's traverse: the Family is a swipe away from whichever
-              Board you are on. Only here, on the drawn Board — the drafting table below has
-              no strip, because §23.2 keeps a Board private until it seals and a row of
-              faces that all refuse to open is worse than no row at all. */}
+        </View>
+
+        {/* §4.5's strip, and §23.3's traverse: the Family is a swipe away from whichever
+            Board you are on. Only here, on the drawn Board — the drafting table below has
+            no strip, because §23.2 keeps a Board private until it seals and a row of faces
+            that all refuse to open is worse than no row at all.
+
+            A sibling of the padded header rather than a child of it, so the scroll view is
+            full width and insets its own content — see the `gutter` note in the component.
+
+            **Rendered only once both reads have landed.** `?? []` would put a strip on
+            screen with every face dimmed and inert, announcing "no board to open yet" about
+            people who have one — a confident wrong answer, where a strip that arrives a
+            moment late is merely late. */}
+        {roster.data === undefined || familyBoards.data === undefined ? null : (
           <View style={{ marginTop: space.lg }}>
             <MemberStrip
               // Members first, Boards second. A Member approved after this Year opened has
               // no Board row at all, so a strip built from the Boards would leave them out
               // of a picture of their own Family without ever rendering a state for them.
               faces={stripFaces(
-                (roster.data?.members ?? []).map((m) => ({
+                roster.data.members.map((m) => ({
                   id: m.id,
                   status: m.status,
                   displayName: m.display_name,
                   isManaged: m.is_managed,
                 })),
-                familyBoards.data ?? [],
+                familyBoards.data,
                 head.data.id,
               )}
               gutter={space.xl}
@@ -455,7 +466,7 @@ export default function DraftingTable() {
               }
             />
           </View>
-        </View>
+        )}
 
         <View style={{ marginTop: space.lg }}>
           <Board

@@ -49,7 +49,8 @@ export type BoardVisit =
   | { readonly kind: 'writing' }
   | { readonly kind: 'done' }
   | { readonly kind: 'unopened' }
-  | { readonly kind: 'pending' };
+  | { readonly kind: 'pending' }
+  | { readonly kind: 'unknown' };
 
 /**
  * Whether this Member's Board can be opened, and if not, which "not" it is.
@@ -63,10 +64,24 @@ export type BoardVisit =
 export const boardVisit = (
   member: RosterMember,
   board: VisitableBoard | undefined,
+  /**
+   * Whether the Year and its Boards have actually been read yet. **Absence of a Board and
+   * absence of an answer are not the same fact**, and defaulting the second to the first
+   * is a sentence about a person that happens to be false.
+   *
+   * Three states reach it: a Family that has not opened a Year at all, a Family screen
+   * whose Years have not resolved on this render, and a Boards read that failed outright.
+   * In every one of them the honest row says nothing rather than "no board for 2026" — the
+   * same fail-shut rule as `swapsUsed: budget.data ?? SWAP_BUDGET`, applied to copy instead
+   * of to a budget.
+   */
+  known = true,
 ): BoardVisit => {
   // A pending Member reads nothing and has no Board by construction (§3.2). They appear on
-  // the roster because they are waiting on somebody, and that is all their row is about.
+  // the roster because they are waiting on somebody, and that is all their row is about —
+  // which is knowable without a Year, so it is answered before `known` is consulted.
   if (member.status === 'pending') return { kind: 'pending' };
+  if (!known) return { kind: 'unknown' };
   // Not every Member has a Board in every Year. Somebody approved after a Year opened has
   // none for it and never will — a real Account in this Family is in exactly that state
   // for 2026 — and they are still a voter, still on the roster, still a person.
@@ -99,6 +114,11 @@ export const boardVisitCopy = (visit: BoardVisit, calendarYear: number): string 
       return `no board for ${calendarYear}`;
     case 'pending':
       return 'waiting to be let in';
+    // Nothing is known, so nothing is said. A row that goes quiet for a moment is a row
+    // somebody reads once the answer arrives; a row that says the wrong thing confidently
+    // is one they believe.
+    case 'unknown':
+      return null;
   }
 };
 
