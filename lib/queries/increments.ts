@@ -199,9 +199,9 @@ const reconcile = (client: QueryClient, countsKey: readonly unknown[], recentKey
  *     back, and `incrementFailureCopy` says which. Queueing one of these would retry it
  *     on every launch for a Year that does not unfreeze (api.md §5.1).
  */
-export function useLogIncrement(tileIds: readonly string[], accountId: string | undefined) {
+export function useLogIncrement(boardId: string | undefined, accountId: string | undefined) {
   const queryClient = useQueryClient();
-  const countsKey = tileCountsKey(tileIds, accountId ?? 'anonymous');
+  const countsKey = tileCountsKey(boardId ?? 'none', accountId ?? 'anonymous');
 
   return useMutation({
     mutationFn: async (tap: LogIncrement): Promise<LogResult> => {
@@ -372,9 +372,9 @@ export function useLogIncrement(tileIds: readonly string[], accountId: string | 
  * they *can* go, since `storage.protect_delete()` refuses even a superuser. A client-side
  * `remove()` here would be a second deleter racing a trigger it cannot see.
  */
-export function useDeleteIncrement(tileIds: readonly string[], accountId: string | undefined) {
+export function useDeleteIncrement(boardId: string | undefined, accountId: string | undefined) {
   const queryClient = useQueryClient();
-  const countsKey = tileCountsKey(tileIds, accountId ?? 'anonymous');
+  const countsKey = tileCountsKey(boardId ?? 'none', accountId ?? 'anonymous');
 
   return useMutation({
     mutationFn: async (increment: { id: string; tileId: string }): Promise<void> => {

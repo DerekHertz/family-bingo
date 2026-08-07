@@ -42,9 +42,25 @@ interface Props {
    */
   gutter: number;
   onOpen: (boardId: string) => void;
+  /**
+   * Called shortly after a finger lands on a face, before the tap has resolved into a
+   * press.
+   *
+   * Opening a Board is a round trip whatever we do; this spends part of the gesture's own
+   * duration on it instead of waiting until the gesture is over.
+   *
+   * **Shortly, not immediately, and the delay is the whole design.** `onPressIn` fires on
+   * touch-down, before the enclosing `ScrollView` can claim the gesture — and §4.5 makes
+   * this strip scroll past eight faces, so scrolling it is a designed interaction. Fired
+   * eagerly, every flick that happened to start on a face fetched a whole Board nobody was
+   * opening. `unstable_pressDelay` gives the scroll view time to take the responder first,
+   * at the cost of the delay itself off a deliberate press — which is the press this is
+   * for, and which lasts longer than a flick.
+   */
+  onWarm?: (boardId: string) => void;
 }
 
-export function MemberStrip({ faces, gutter, onOpen }: Props) {
+export function MemberStrip({ faces, gutter, onOpen, onWarm }: Props) {
   // One Member is not a Family to look across, and a strip of one is a decoration that
   // costs a row of height to say nothing.
   if (faces.length < 2) return null;
@@ -89,6 +105,13 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
             }`}
             accessibilityHint={openable && !face.isCurrent ? 'Opens their board' : undefined}
             accessibilityState={{ disabled: !openable, selected: face.isCurrent }}
+            // Long enough that a flick along the strip is a scroll rather than a fetch,
+            // short enough to still be most of a deliberate press. It delays the pressed
+            // opacity with it, which on a 40pt avatar reads as steadiness rather than lag.
+            unstable_pressDelay={90}
+            onPressIn={() => {
+              if (openable && face.boardId !== null) onWarm?.(face.boardId);
+            }}
             onPress={() => {
               if (face.boardId !== null) onOpen(face.boardId);
             }}
