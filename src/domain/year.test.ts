@@ -209,11 +209,37 @@ describe('playOpensCopy (§4.5)', () => {
     expect(playOpensCopy(at('2027-12-31T09:00:00Z'), newYear)).toBe('play opens tomorrow');
   });
 
-  it('reads as today on the day itself', () => {
-    // Midnight has not struck in this Family's zone, but the date has changed.
+  /**
+   * Defensive rather than reachable, and worth saying so: `play_opens_at` is midnight in
+   * the Family's own zone by construction, so in that zone the day it falls on is the day
+   * play is already open — `playHasOpened` answers first and this returns null. The branch
+   * stands because `daysUntilSeal` is shared with `sealCopy`, where a `now + 7 days`
+   * deadline genuinely can land mid-afternoon.
+   */
+  it('reads as today on the day itself, if a Year ever opens mid-day', () => {
     expect(playOpensCopy(at('2028-01-01T00:00:00Z'), at('2028-01-01T05:00:00Z'))).toBe(
       'play opens today',
     );
+  });
+
+  /**
+   * The timezone argument is the one thing here that can actually break, because the
+   * Board screen threads `head.data.timezone` through it and a dropped argument would
+   * silently count days in UTC. 31 December in Tokyo is already 2028 in UTC, so a UTC
+   * count says "today" where the Family's own calendar says "tomorrow".
+   */
+  it('counts days in the Family’s calendar, not the server’s', () => {
+    const tokyoNewYear = at('2027-12-31T15:00:00Z'); // 1 Jan 2028, 00:00 in Tokyo.
+    const eveningBefore = at('2027-12-31T14:00:00Z'); // 31 Dec, 23:00 in Tokyo.
+    expect(playOpensCopy(eveningBefore, tokyoNewYear, 'Asia/Tokyo')).toBe(
+      'play opens tomorrow',
+    );
+    expect(playOpensCopy(eveningBefore, tokyoNewYear, 'UTC')).toBe('play opens today');
+  });
+
+  it('is silent the moment the Family’s own midnight passes', () => {
+    const tokyoNewYear = at('2027-12-31T15:00:00Z');
+    expect(playOpensCopy(at('2027-12-31T15:30:00Z'), tokyoNewYear, 'Asia/Tokyo')).toBeNull();
   });
 
   it('never urges', () => {

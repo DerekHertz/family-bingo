@@ -60,9 +60,16 @@ other Family. Everything else is plumbing.
 | Seal, freeze, expire, digest | **`pg_cron`** | Time-driven, no client involved |
 | Photos | **Storage** + short-TTL signed URLs | Private bucket, Family-scoped path |
 
-> **`SECURITY INVOKER`, not `DEFINER`.** RPCs run as the caller so RLS still applies.
-> The one deliberate exception is `visible_family_ids()` (schema.md §4.1), which must be
-> `SECURITY DEFINER` to read `members` while evaluating a policy *on* `members`.
+> **RLS is the boundary, and an RPC does not get to be it.** Reads run as the caller, so
+> every policy still applies — `visible_family_ids()` (schema.md §4.1) is `SECURITY
+> DEFINER` because it must read `members` while evaluating a policy *on* `members`.
+>
+> The write RPCs in §2.1 are `SECURITY DEFINER` too, and deliberately: they exist because
+> the tables underneath them have **no client write policy at all**, so the function is the
+> only door and its guards are the policy. Each one re-checks the caller itself —
+> `controlled_member_ids()`, `is_organizer_of()`, `assert_cron_or_organizer()` — and each
+> is revoked from `public` and `anon` and granted only to `authenticated`. A DEFINER
+> function that skipped that check would be a hole straight through §8.1.
 
 ### 2.0 The `feed` view
 
@@ -373,7 +380,7 @@ is whichever of `account_id` / `guardian_account_id` is set.
 | `tile_completed`, `bingo`, `blackout` | Every active Member's Account in the Family, except the causer's |
 | `join_requested` | The Organizer alone — nobody else can act on it |
 | `join_approved` | The Member who was waiting |
-| `setup_closing` | Everyone active, once per Year, 24h before Boards seal |
+| `setup_closing` | Everyone active, once per Year, 24h before the Setup Window **deadline**. A Family who seal early (§22) never receive it — the job filters on `status = 'setup'`, so it goes quiet rather than announcing a deadline that has stopped mattering |
 
 > **§15.1 lists "invite received" and it cannot be sent.** An Invitation stores only
 > `token_hash` — "the token itself lives in the link and nowhere else" (§3.1) — so there
@@ -396,7 +403,7 @@ sequenceDiagram
     Cron->>DB: seal_due_boards()
     DB->>DB: seal_year_now(year), per Year past its deadline or unanimously ready
     Note right of DB: the unanimous case usually seals inside<br/>mark_board_ready() already — this is the<br/>backstop for a transaction that failed.
-    DB->>DB: resolve_center_vote(year)
+    DB->>DB: resolve_center_vote_now(year)
     Note right of DB: mode: majority of Ballots CAST.<br/>tie or zero → personal.<br/>Silence never blocks.
     alt shared won
         Note right of DB: goal: plurality; tie → Organizer.<br/>zero Proposals → personal.
@@ -468,8 +475,9 @@ photographs.
 | Duplicate Increment | Upsert no-op | Invisible to the user |
 | Swap with 0 budget | `403` | "You've used all 3 Swaps this year" |
 | Edit a sealed Tile | `403` | Offer a Swap instead |
-| Mark an unfinished Board done | `403` (`PT409`) | Never offered: the control appears only on a full Board |
-| Log, or finish the Family Goal, before the Year opens | `403` (RLS, or `PT425`) | Never offered: the board says when play opens instead |
+| Mark an unfinished Board done | `409` (`PT409`) | Never offered: the control appears only on a full Board |
+| Finish the Family Goal before the Year opens | `425` (`PT425`) | Never offered: the board says when play opens instead |
+| Log an Increment before the Year opens | Empty result (RLS) | Never offered: the square does not respond and the board says why |
 | Expired Invitation | `410` | "This invitation has expired — ask for a new one" |
 
 **RLS denial returns zero rows, not a 403.** That is intentional: a 403 confirms the

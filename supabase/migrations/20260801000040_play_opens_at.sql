@@ -183,10 +183,16 @@ begin
 
   -- Before the Board could be played. Refused.
   --
-  -- NULL is left alone deliberately: `greatest()` returns NULL only when `sealed_at` is,
-  -- and a Tile with no sealed Board has already been refused by tile_is_loggable()
-  -- through RLS. A second, differently-worded error for the same cause would only
-  -- mislead whoever reads it.
+  -- `greatest()` and `least()` **ignore** NULLs rather than propagating them — they answer
+  -- NULL only when every argument is — and since `play_opens_at` is NOT NULL that makes
+  -- `playable_from` a real instant even on an unsealed Board, where it is the start of the
+  -- Year. So there is no NULL branch here to reason about, and the floor on an unsealed
+  -- Board is the Year rather than nothing at all. Both are moot through RLS:
+  -- `tile_is_loggable()` has already refused a Tile whose Board has not sealed.
+  --
+  -- `least(…, now())` is migration 18's half and still earns its place: a Board somehow
+  -- stamped ahead of the clock must not refuse every honest tap, because `classifyDelivery`
+  -- drops a `PT403` and the queue would destroy them.
   if new.occurred_at < least(playable_from, now()) then
     raise exception 'an Increment cannot predate the seal — there is no backdating (§11.5)'
       using errcode = 'PT403';
@@ -317,14 +323,21 @@ comment on function center_write_deadline(boards) is
 
 revoke execute on function stamp_play_opens_at() from public, anon, authenticated;
 
--- `year_starts_at` inherits `setup_deadline_for`'s audience rather than choosing its own:
--- that function is granted to `authenticated`, is plain SQL rather than SECURITY DEFINER,
--- and now calls this one — so revoking it here would break the caller instead of
--- tightening anything. It is a pure date function over two arguments the caller already
--- has, and `startOfYearInZone()` in src/domain/setup-window.ts computes the same answer
--- client-side anyway.
-revoke execute on function year_starts_at(int, text) from public, anon;
-grant execute on function year_starts_at(int, text) to authenticated;
+-- `year_starts_at` inherits `setup_deadline_for`'s audience rather than choosing its own,
+-- and that audience is **PUBLIC**, not `authenticated`.
+--
+-- `setup_deadline_for` was never revoked from PUBLIC — migration 12 only adds an
+-- `authenticated` grant on top of the default — and `create or replace` above preserved
+-- that ACL. It is plain SQL rather than SECURITY DEFINER, so it executes as its caller and
+-- now calls this function: revoking from `anon` and `service_role` here does not tighten
+-- anything, it breaks `setup_deadline_for` for those roles with `permission denied for
+-- function year_starts_at`. That was the first version of this line, and it is the same
+-- shape as the bug it was written to avoid.
+--
+-- Nothing is exposed by leaving it: it is a pure function of a year number and a timezone
+-- name, both of which the caller supplied, and `startOfYearInZone()` in
+-- src/domain/setup-window.ts computes the same answer client-side with no round trip.
+grant execute on function year_starts_at(int, text) to public;
 
 -- Read only by write_goal(), which is SECURITY DEFINER and reaches it regardless.
 revoke execute on function center_write_deadline(boards) from public, anon, authenticated;

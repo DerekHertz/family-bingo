@@ -55,6 +55,13 @@ comment on column boards.ready_at is
 -- *after* the seal (§9.5, migration 17), so a Board with an empty Tile 12 is complete in
 -- the only sense its owner can act on. Mirrored by `boardIsComplete()` in
 -- src/domain/ready.ts — if you change one, change both.
+--
+-- Counted rather than asked as `not exists (… goal_id is null)`, which is the same fail-
+-- open shape as `every()` over an empty array: it answers **true** for a Board id that
+-- names nothing and for a Board whose Tiles are missing. `ensure_board()` and the 25-Tile
+-- invariant make both unreachable today, and the client's copy fails shut for exactly this
+-- reason — a predicate whose wrong answer seals four other people's Boards should not rely
+-- on an invariant enforced two migrations away.
 create or replace function board_is_complete(target_board_id uuid)
 returns boolean
 language sql
@@ -62,12 +69,12 @@ stable
 security definer
 set search_path = public
 as $$
-  select not exists (
-    select 1 from tiles t
+  select (
+    select count(*) from tiles t
      where t.board_id = target_board_id
        and t.position <> 12
-       and t.goal_id is null
-  );
+       and t.goal_id is not null
+  ) = 24;
 $$;
 
 comment on function board_is_complete(uuid) is
@@ -82,6 +89,19 @@ comment on function board_is_complete(uuid) is
 --
 -- The `exists` guard is not defensive tidiness. Without it a Year with no Boards at all
 -- satisfies "no Board is unready" vacuously and seals itself the moment it is opened.
+--
+-- **`ready_at` is asked alongside `board_is_complete()`, not instead of it.** A declaration
+-- can go stale: §6.4 keeps a draft freely editable after the tap, and `clear_goal()`
+-- empties a square. Clearing now withdraws the declaration too (see the bottom of this
+-- migration) — this is the belt to that pair of braces, and it is the one that matters,
+-- because the failure it prevents is silent and permanent. A Board that is ready and no
+-- longer full would otherwise be sealed by the NEXT Member's tap with an empty square on
+-- it, and §18.5 prices getting that square back at a Swap. The whole "declared, never
+-- inferred" argument at the top of this file is worth nothing if the declaration is
+-- allowed to outlive the thing it was about.
+--
+-- This is only the EARLY door. §10.2 is untouched: at the deadline an unfinished Board
+-- still seals with empty Tiles rather than holding the Family up.
 create or replace function year_is_ready(target_year_id uuid)
 returns boolean
 language sql
@@ -98,14 +118,15 @@ as $$
              join members m on m.id = b.member_id
             where b.year_id = target_year_id
               and b.sealed_at is null
-              and b.ready_at is null
               and m.status = 'active'
+              and (b.ready_at is null or not board_is_complete(b.id))
          );
 $$;
 
 comment on function year_is_ready(uuid) is
-  'PRD §22.3 — every Member of this Year has said their Board is done. The second door '
-  'into the seal; `setup_deadline` is the first and remains the backstop.';
+  'PRD §22.3 — every Member of this Year has said their Board is done AND still has a '
+  'Goal on every square. The second door into the seal; `setup_deadline` is the first and '
+  'remains the backstop, and §10.2 still seals an unfinished Board when it arrives.';
 
 -- ---------------------------------------------------------------------------------
 -- Sealing, split into the decision and the act
@@ -440,7 +461,27 @@ begin
     raise exception 'that is not your Board' using errcode = '42501';
   end if;
 
-  select * into yr from years where id = b.year_id;
+  -- **The Year is locked before the declaration is written, not after.** Two things turn
+  -- on the order and both were wrong the first time.
+  --
+  -- Unanimity is a question about every Board in the Year, and asking it from inside an
+  -- uncommitted transaction that has just written one of the answers is only sound if
+  -- nobody else is doing the same. Under READ COMMITTED two Members tapping Ready in the
+  -- same second each saw the other's `ready_at` as NULL, both concluded the Family was not
+  -- finished, and **nothing sealed** — the Family sat watching a countdown until the
+  -- five-minute sweep noticed. Taking the lock here serializes the pair: the second one
+  -- waits, and `year_is_ready()` below is a fresh statement, so it sees the first
+  -- Member's committed row.
+  --
+  -- And it fixes a deadlock. `seal_year_now()` locks `years` and then updates `boards`;
+  -- this function used to update `boards` and then reach `years`, which is the textbook
+  -- cycle — cron and a Member tapping at once deadlocked, one of them lost, and the
+  -- `exception` handler below swallowed it into the same five-minute wait. Every path now
+  -- takes `years` first.
+  --
+  -- After the ownership check, deliberately: a lock is a small denial-of-service, and
+  -- nobody outside the Family gets to take one.
+  select * into yr from years where id = b.year_id for update;
 
   if yr.frozen_at is not null then
     raise exception 'this Year is frozen' using errcode = '42501';
@@ -499,7 +540,8 @@ security definer
 set search_path = public
 as $$
 declare
-  b boards;
+  b  boards;
+  yr years;
 begin
   select * into b from boards where id = clear_board_ready.board_id;
   if b.id is null then
@@ -510,12 +552,77 @@ begin
     raise exception 'that is not your Board' using errcode = '42501';
   end if;
 
+  -- The same first guard as mark_board_ready, and not symmetry for its own sake: a Board
+  -- can be unsealed inside a frozen Year. `freeze_year()` does not seal outstanding
+  -- Boards, and a Member approved on 28 December has a `personal_setup_deadline` clamped
+  -- to the Freeze — so if their seal was swallowed by the handler above, they arrive in a
+  -- frozen Year holding a `ready_at` and no `sealed_at`. §20.1 says a frozen Year is
+  -- permanently read-only, and this is a write to it.
+  select * into yr from years where id = b.year_id;
+  if yr.frozen_at is not null then
+    raise exception 'this Year is frozen' using errcode = '42501';
+  end if;
+
   if b.sealed_at is not null then
     raise exception 'this Board has already sealed' using errcode = 'PT403';
   end if;
 
   update boards set ready_at = null where id = b.id returning * into b;
   return b;
+end;
+$$;
+
+-- Emptying a square withdraws the declaration that went with it.
+--
+-- §6.4 keeps a draft freely editable and §22.4 makes Ready revocable, and the two meet
+-- here: a Member who has said they are done and then goes back to reword a square has
+-- stopped being done, whether or not they thought about it in those terms. Without this
+-- the declaration outlives the Board it described — the Family stays "everyone is done",
+-- the next Member's tap seals this Board with an empty square, and §18.5 prices getting
+-- it back at a Swap. Silent, permanent, and caused by an edit the app openly invites.
+--
+-- `write_goal()` deliberately does NOT do this. Rewording a square, or replacing its Goal,
+-- leaves twenty-four squares full — the Board is still exactly what its owner declared,
+-- and withdrawing the declaration for a typo fix would make Ready feel like a trap.
+-- Only *losing* a square changes the answer.
+--
+-- The rest of the body is migration 13's, unchanged.
+create or replace function clear_goal(tile_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  tile  tiles;
+  board boards;
+  old_goal uuid;
+begin
+  select * into tile from tiles t where t.id = clear_goal.tile_id;
+  if tile.id is null then
+    raise exception 'no such Tile' using errcode = '42501';
+  end if;
+
+  select * into board from boards b where b.id = tile.board_id;
+
+  if board.member_id not in (select controlled_member_ids()) then
+    raise exception 'that is not your Board' using errcode = '42501';
+  end if;
+
+  if board.sealed_at is not null then
+    raise exception 'this Board is sealed — clearing a Goal now costs a Swap'
+      using errcode = 'PT403';
+  end if;
+
+  old_goal := tile.goal_id;
+  update tiles set goal_id = null where id = tile.id;
+  if old_goal is not null then
+    delete from goals where id = old_goal;
+  end if;
+
+  -- §22.4. Unconditional rather than guarded on `old_goal`: clearing an already-empty
+  -- square is a no-op on the Tiles and this is a no-op on a Board that was not ready.
+  update boards set ready_at = null where id = board.id and ready_at is not null;
 end;
 $$;
 
@@ -603,3 +710,24 @@ revoke execute on function mark_board_ready(uuid) from public, anon;
 revoke execute on function clear_board_ready(uuid) from public, anon;
 grant execute on function mark_board_ready(uuid) to authenticated;
 grant execute on function clear_board_ready(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------------
+-- A door that was already open, and that this slice walks past twice
+-- ---------------------------------------------------------------------------------
+--
+-- `deal_positions()` is SECURITY DEFINER and migration 34 never revoked it, so it kept
+-- PostgREST's default PUBLIC EXECUTE — meaning any signed-in Account could POST
+-- `/rest/v1/rpc/deal_positions` with **any Board id in the database** and permute that
+-- Board's `goal_id`s. Migration 34's own comment says the operation is "safe only at the
+-- seal" and "would not be safe one moment later", and it is right about why: after the
+-- seal the Tiles carry Increments, Milestones and Revisions, and moving `goal_id` between
+-- them silently reassigns a year of somebody's progress to different Goals.
+--
+-- Not introduced here — it is on `main` — but §22 adds a second path into sealing and
+-- makes this function more load-bearing rather than less, and a one-line revoke is not
+-- worth deferring to a slice of its own.
+--
+-- `board_positions()` and `dealt_position()` stay reachable: both are pure functions of a
+-- uuid that compute where a Board's squares *would* land, they write nothing, and
+-- `supabase/tests` reads them.
+revoke execute on function deal_positions(uuid) from public, anon, authenticated;

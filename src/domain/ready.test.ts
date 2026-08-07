@@ -73,11 +73,12 @@ describe('emptySquares', () => {
 });
 
 describe('readiness (§22.3)', () => {
-  const b = (displayName: string, readyAt: string | null, sealedAt: string | null = null) => ({
-    displayName,
-    readyAt,
-    sealedAt,
-  });
+  const b = (
+    displayName: string,
+    readyAt: string | null,
+    sealedAt: string | null = null,
+    isSelf = false,
+  ) => ({ displayName, readyAt, sealedAt, isSelf });
 
   it('counts who has said they are done', () => {
     const state = readiness([
@@ -117,6 +118,41 @@ describe('readiness (§22.3)', () => {
     // The vacuous reading of "no Board is unready" would seal a Year the instant it opened.
     expect(readiness([]).unanimous).toBe(false);
   });
+
+  /**
+   * §0.3 — "waiting on Derek", read to Derek, is a scold aimed at the one person who
+   * already knows. The counts still include them, because "1 of 4" has to be true.
+   */
+  it('never names the reader to themselves', () => {
+    const state = readiness([
+      b('Alice', '2026-12-20T10:00:00Z'),
+      b('Bob', '2026-12-20T11:00:00Z'),
+      b('Derek', null, null, true),
+    ]);
+    expect(state.waitingOn).toEqual([]);
+    expect(state.ready).toBe(2);
+    expect(state.total).toBe(3);
+    expect(state.unanimous).toBe(false);
+  });
+
+  it('still counts the reader before calling a Family unanimous', () => {
+    // Otherwise the Family screen goes "everyone is done" while the reader has squares
+    // left, and the seal it implies never happens.
+    const state = readiness([b('Alice', '2026-12-20T10:00:00Z'), b('Derek', null, null, true)]);
+    expect(state.unanimous).toBe(false);
+  });
+
+  it('drops a Guardian’s Managed Member from the naming too', () => {
+    // A Guardian is not waiting on their own child in any useful sense — they are the
+    // person who would write those Goals.
+    const state = readiness([
+      b('Alice', '2026-12-20T10:00:00Z'),
+      b('Derek', null, null, true),
+      b('Theo', null, null, true),
+    ]);
+    expect(state.waitingOn).toEqual([]);
+    expect(state.total - state.ready).toBe(2);
+  });
 });
 
 describe('readinessCopy (§4.5 — factual, never conditional)', () => {
@@ -129,6 +165,14 @@ describe('readinessCopy (§4.5 — factual, never conditional)', () => {
 
   it('names the one person still writing', () => {
     expect(readinessCopy(state(3, ['Bob']))).toBe('waiting on Bob');
+  });
+
+  it('counts rather than pointing when the reader is the only one left', () => {
+    // `waitingOn` is empty because it drops the reader, and the Family is not unanimous:
+    // the only honest thing left to say is the count.
+    expect(readinessCopy({ total: 4, ready: 3, waitingOn: [], unanimous: false })).toBe(
+      '3 of 4 boards are done',
+    );
   });
 
   it('counts rather than listing once there is more than one', () => {

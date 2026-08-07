@@ -220,11 +220,15 @@ export default function DraftingTable() {
   // on 1 January. `tile_is_loggable()` checks both server-side; this is so the screen never
   // offers a tap that would come back 42501 (§0.3).
   const playOpen = playHasOpened(new Date(), new Date(head.data.year.playOpensAt));
-  const opensIn = playOpensCopy(
-    new Date(),
-    new Date(head.data.year.playOpensAt),
-    head.data.timezone,
-  );
+  // Null in a frozen Year even when the date has not arrived. The two states are
+  // contradictory and the Year winning is the right call: a Board sealed in December
+  // inside a Year that was then frozen would otherwise have the footer saying "play opens
+  // in 5 days" directly under a sheet saying "this year is finished, nothing more can be
+  // logged" — and the sheet is the one telling the truth.
+  const opensIn =
+    head.data.year.status === 'frozen'
+      ? null
+      : playOpensCopy(new Date(), new Date(head.data.year.playOpensAt), head.data.timezone);
 
   // Exactly the two conditions `write_goal()` gates on, and no third.
   //
@@ -698,11 +702,27 @@ export default function DraftingTable() {
   // survive into the confirm sheet's closure.
   const yearInSetup = head.data.year.status === 'setup';
   const familyReadiness = readiness(yearReadiness.data ?? []);
-  // Whether this tap is the one that seals the Family. This Board is unready and therefore
-  // in `waitingOn` itself, so being alone in that list means nobody else is left. Derived
-  // from the count rather than by matching a display name, which two Members are entitled
-  // to share.
-  const lastOneWriting = !isReady && familyReadiness.waitingOn.length === 1;
+  /**
+   * Whether this tap is the one that seals the Family — and, separately, whether that is
+   * known yet.
+   *
+   * Counted rather than read off `waitingOn`, which deliberately drops the caller's own
+   * Boards so the Family screen cannot name them to themselves: a Guardian who controls
+   * two unready Boards would otherwise see an empty list and conclude they were last.
+   * `total - ready` is every outstanding Board including this one, so "one left" means
+   * this one.
+   *
+   * **Unknown is not the same as "not last", and must not be treated as it.** An empty
+   * query answers `waitingOn: []` and `total: 0`, and the sheet would then promise "you
+   * can take it back" for a tap that seals every Board in the Family and closes the Centre
+   * Vote — irreversible, on a promise the app had no basis for. The window is real: this
+   * query cannot start until the head resolves, and it is not persisted, so every cold
+   * open paints the button before the answer arrives. Same shape as
+   * `swapsUsed: budget.data ?? 0`; the same fix.
+   */
+  const readinessKnown = yearReadiness.data !== undefined && familyReadiness.total > 0;
+  const lastOneWriting =
+    !isReady && readinessKnown && familyReadiness.total - familyReadiness.ready === 1;
   const readyFailure =
     markReady.error !== null
       ? readyFailureCopy(markReady.error)
@@ -723,11 +743,19 @@ export default function DraftingTable() {
       </Text>
 
       {/* §4.1's meta line. Factual and never conditional (§4.5): a count and a date, with
-          nothing that could read as a scold (§0.3). */}
+          nothing that could read as a scold (§0.3).
+
+          The date carries the readiness clause with it since §22, for the same reason the
+          Family screen's does: on its own "the board seals in 6 days" is a backstop
+          presented as a fact, and a Member who reads it has no way to know a sibling's tap
+          could end the window this afternoon. `readinessCopy` never names the reader. */}
       <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
         {draftProgress(written.length)}
         {' · '}
         {sealed ? 'the board has sealed' : sealCopy(new Date(), new Date(deadline), head.data.timezone)}
+        {!sealed && yearInSetup && familyReadiness.total > 0
+          ? ` · ${readinessCopy(familyReadiness)}`
+          : ''}
         {joined === null ? '' : ` · ${joined}`}
       </Text>
 
@@ -910,14 +938,27 @@ export default function DraftingTable() {
           onPress={() =>
             setConfirming({
               title: 'Call this board done?',
-              // Three sentences would be a warning. What a Member needs is what changes
-              // and what does not, and which of the two they are doing depends on whether
-              // anyone else is still writing.
-              body: lastOneWriting
-                ? 'Everyone else is done, so every board in the family seals now — and the centre is decided on the votes cast so far.'
-                : yearInSetup
-                  ? 'You can take it back until the last person is done. When they are, every board seals.'
-                  : 'Your board seals now, and you can start logging progress today.',
+              // Four branches, and each one is true of the case it covers. What a Member
+              // needs is what changes and what does not; that genuinely differs between
+              // the last person in a Family, everyone before them, a Family whose position
+              // is not known yet, and a late joiner sealing alone.
+              //
+              // Every Setup Window branch names the Centre. §22.7: marking Ready is what
+              // makes a Ballot final, and a Member who has not voted can have their say
+              // closed by somebody else's tap — so the sheet has to say so before the tap,
+              // not only to whoever happens to be last.
+              body: !yearInSetup
+                ? // §21.1's late joiner. `opensIn` and not an assumption: a Member approved
+                  // on 23 December into a Family that sealed on the 20th does NOT get to
+                  // log today, and this branch used to promise they would.
+                  opensIn === null
+                  ? 'Your board seals now, and you can start logging progress today.'
+                  : `Your board seals now — ${opensIn}.`
+                : lastOneWriting
+                  ? 'Everyone else is done, so every board in the family seals now, and the centre is decided on the votes cast. That can’t be taken back.'
+                  : readinessKnown
+                    ? 'You can take it back until the last person is done. When they are, every board seals and the centre is decided on the votes cast.'
+                    : 'If everyone else is done, every board in the family seals now and the centre is decided on the votes cast — and that can’t be taken back.',
               confirmLabel: 'I’m done',
               cancelLabel: 'Keep writing',
               onConfirm: () => {

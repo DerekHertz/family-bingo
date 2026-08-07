@@ -21,7 +21,7 @@
 /** The Center Tile. Never authored during the Setup Window (§6.5). */
 export const CENTRE_POSITION = 12;
 
-/** How many squares a Member writes: 25 minus the Centre (§4.2, CONTEXT.md's Board). */
+/** How many squares a Member writes: 25 minus the Centre (FRONTEND_DESIGN §4.2). */
 export const AUTHORABLE_SQUARES = 24;
 
 /** A Tile, narrowed to the one thing completeness asks of it. */
@@ -64,6 +64,13 @@ export interface ReadinessBoard {
   readonly displayName: string;
   readonly readyAt: string | null;
   readonly sealedAt: string | null;
+  /**
+   * Whether the caller controls this Board — their own, or a Managed Member's (§4.2).
+   *
+   * Here so that the Family screen cannot name the reader to themselves. It is not a
+   * privacy field; every one of these rows is readable by everyone in the Family.
+   */
+  readonly isSelf: boolean;
 }
 
 export interface Readiness {
@@ -84,18 +91,24 @@ export interface Readiness {
  * inside an active Year without the Family being told it is waiting on someone who has
  * already been playing for a month.
  *
+ * **`waitingOn` never names the reader.** The counts include them — `2 of 4` has to be
+ * true — but a Family screen that reads *"waiting on Derek"* to Derek is §0.3's scold
+ * aimed at the one person who already knows, and it is the person least in need of being
+ * told. `unanimous` is unaffected: it asks about every Board, the caller's included, or it
+ * would go true while the reader still had squares to write.
+ *
  * `unanimous` is false for an empty list. A Family with no Boards has not finished
  * anything, and the vacuous reading of "no Board is unready" is exactly the bug that would
  * seal a Year the instant it opened.
  */
 export const readiness = (boards: readonly ReadinessBoard[]): Readiness => {
   const open = boards.filter((b) => b.sealedAt === null);
-  const waitingOn = open.filter((b) => b.readyAt === null).map((b) => b.displayName);
+  const unready = open.filter((b) => b.readyAt === null);
   return {
     total: open.length,
-    ready: open.length - waitingOn.length,
-    waitingOn,
-    unanimous: open.length > 0 && waitingOn.length === 0,
+    ready: open.length - unready.length,
+    waitingOn: unready.filter((b) => !b.isSelf).map((b) => b.displayName),
+    unanimous: open.length > 0 && unready.length === 0,
   };
 };
 
@@ -110,6 +123,9 @@ export const readiness = (boards: readonly ReadinessBoard[]): Readiness => {
 export const readinessCopy = (state: Readiness): string => {
   if (state.total === 0) return 'no boards yet';
   if (state.unanimous) return 'everyone is done';
+  // Zero names with the Family not unanimous means the reader is the only one left, since
+  // `waitingOn` drops them. The count is the honest thing to say, and it says it without
+  // pointing.
   if (state.waitingOn.length === 1) return `waiting on ${state.waitingOn[0]}`;
   return `${state.ready} of ${state.total} boards are done`;
 };

@@ -16,7 +16,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(39);
+select plan(52);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -86,7 +86,8 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('00000000-0000-4000-8000-0000000000b4', 'dara@example.test',   '{"full_name":"Dara"}'::jsonb),
   ('00000000-0000-4000-8000-0000000000b5', 'esther@example.test', '{"full_name":"Esther"}'::jsonb),
   ('00000000-0000-4000-8000-0000000000b6', 'frank@example.test',  '{"full_name":"Frank"}'::jsonb),
-  ('00000000-0000-4000-8000-0000000000b7', 'grace@example.test',  '{"full_name":"Grace"}'::jsonb);
+  ('00000000-0000-4000-8000-0000000000b7', 'grace@example.test',  '{"full_name":"Grace"}'::jsonb),
+  ('00000000-0000-4000-8000-0000000000b8', 'hal@example.test',    '{"full_name":"Hal"}'::jsonb);
 
 -- Alice (Organizer), Theo (Managed, played by Alice), Bob. Year 2027 in New York, so
 -- `play_opens_at` is genuinely months away and "sealed" and "playable" cannot be confused
@@ -315,8 +316,30 @@ select cast_ballot(
   (select v.id from votes v where v.year_id = year_of('Okonkwo Family') and v.kind = 'goal'),
   member_of('Dara'), null, '00000000-0000-4000-8000-0000000000d1');
 
+-- A Member who is no longer active must not hold the Family at the line. Boards are only
+-- ever dealt to active Members, so this shape has to be built rather than found: Hal is
+-- approved (which deals him a Board through the trigger) and then set back to pending, as
+-- an Organizer turning somebody away would. `year_is_ready()`'s `m.status = 'active'`
+-- clause is the whole subject — delete it and this test is the only thing that notices.
+select set_config('role', 'postgres', true);
+insert into members (id, family_id, account_id, display_name, role, status)
+  values ('00000000-0000-4000-8000-0000000000ce',
+          (select id from families where name = 'Okonkwo Family'),
+          '00000000-0000-4000-8000-0000000000b8', 'Hal', 'member', 'pending');
+update members set status = 'active' where id = member_of('Hal');
+
+select isnt((select board_of('Hal')), null,
+  'Hal is dealt a Board while he is active');
+
+select set_config('role', 'postgres', true);
+update members set status = 'pending' where id = member_of('Hal');
+
+select act_as('00000000-0000-4000-8000-0000000000b4');
 select fill_board('Dara');
 select mark_board_ready(board_of('Dara'));
+
+select is((select status from years where id = year_of('Okonkwo Family')), 'active',
+  'a Board belonging to a Member who is no longer active does not hold the Family up');
 
 select is((select center_mode from years where id = year_of('Okonkwo Family')), 'shared',
   'a single Ballot decides an early Centre, exactly as it would at the deadline (§8.2)');
@@ -340,6 +363,17 @@ select throws_ok(
   $$select complete_family_goal(year_of('Okonkwo Family'), member_of('Dara'))$$,
   'PT425', null,
   'and it cannot be marked done before the Year it belongs to starts (§12.3, §22.5)');
+
+-- And the refusal is about the date and nothing else, which only the pair of assertions
+-- proves: an unconditional PT425 passes the one above on its own.
+select set_config('role', 'postgres', true);
+update years set play_opens_at = now() - interval '1 minute'
+ where id = year_of('Okonkwo Family');
+
+select act_as('00000000-0000-4000-8000-0000000000b4');
+select lives_ok(
+  $$select complete_family_goal(year_of('Okonkwo Family'), member_of('Dara'))$$,
+  'and can be, the moment the Year starts');
 
 -- ---------------------------------------------------------------------------------
 -- §22.3 — somebody arriving resets it
@@ -379,12 +413,43 @@ select mark_board_ready(board_of('Frank'));
 select is((select status from years where id = year_of('Nakamura Family')), 'setup',
   'everyone who was here yesterday is not everyone (§22.3)');
 
+-- ---------------------------------------------------------------------------------
+-- §22.4 with §6.4 — a declaration must not outlive the Board it described
+-- ---------------------------------------------------------------------------------
+--
+-- The failure this prevents is the one the whole "declared, never inferred" argument is
+-- about, arriving by the other road: Esther says she is done and then goes back to reword
+-- a square, which §6.4 openly invites. If `ready_at` survives that, the next Member's tap
+-- seals her Board with an empty square on it — silently, permanently, and §18.5 prices
+-- getting it back at a Swap.
+
+select act_as('00000000-0000-4000-8000-0000000000b5');
+select lives_ok(
+  $$select clear_goal(tile_of('Esther', 5))$$,
+  'a Member who has said they are done may still empty a square (§6.4)');
+
+select is((select ready_at from boards where id = board_of('Esther')), null,
+  'and doing so withdraws the declaration that went with it (§22.4)');
+
 select act_as('00000000-0000-4000-8000-0000000000b7');
 select fill_board('Grace');
 select mark_board_ready(board_of('Grace'));
 
+select is((select status from years where id = year_of('Nakamura Family')), 'setup',
+  'so the last Member''s tap does not seal a Board that has stopped being finished');
+
+select is((select count(*)::int from tiles t
+            where t.board_id = board_of('Esther') and t.goal_id is null),
+  2, 'and Esther''s square is still hers to fill, at no cost — Centre and square 5');
+
+select act_as('00000000-0000-4000-8000-0000000000b5');
+select write_goal(tile_of('Esther', 5), 'Goal 5', 3, 'times');
+select lives_ok(
+  $$select mark_board_ready(board_of('Esther'))$$,
+  'she says it again once the square is back');
+
 select is((select status from years where id = year_of('Nakamura Family')), 'active',
-  'and the Family seals once the newcomer is done too');
+  'and the Family seals — the newcomer and the rewritten square both counted');
 
 -- ---------------------------------------------------------------------------------
 -- The sweep is the backstop for the backstop
@@ -400,12 +465,30 @@ update years set status = 'setup', sealed_at = null, center_mode = 'undecided'
  where id = year_of('Nakamura Family');
 update boards set sealed_at = null where year_id = year_of('Nakamura Family');
 
+-- And a second Family in the same sweep, due the OLD way: nobody ready, the date arrived.
+-- The two doors are counted by one `sealed := sealed + this_year` accumulator, and a
+-- sweep that only ever sees one Year at a time cannot tell whether it accumulates or
+-- overwrites.
+select act_as('00000000-0000-4000-8000-0000000000b8');
+select create_family('Yamada Family', 'Australia/Sydney');
+select open_year((select id from families where name = 'Yamada Family'), 2027);
+
+select set_config('role', 'postgres', true);
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
+ where id = year_of('Yamada Family');
+update votes set closes_at = now() - interval '1 minute'
+ where year_id = year_of('Yamada Family');
+
 select act_as_cron();
-select is(seal_due_boards(), 3,
-  'the sweep seals a ready Year that never got sealed, inside its Setup Window');
+select is(seal_due_boards(), 4,
+  'one sweep, both doors: three ready Boards and one Family whose date simply arrived');
 
 select is((select status from years where id = year_of('Nakamura Family')), 'active',
-  'and leaves it under way');
+  'and leaves the ready one under way');
+
+select is((select status from years where id = year_of('Yamada Family')), 'active',
+  'and the one that never finished sealed on its deadline, empty squares and all (§10.2)');
 
 -- ---------------------------------------------------------------------------------
 -- §21.1 — a late joiner seals alone, and does not wait out a week of a Year
@@ -451,6 +534,59 @@ select lives_ok(
   $$insert into increments (id, tile_id, member_id)
     values ('00000000-0000-4000-8000-0000000000c3', tile_of('Nia', 0), member_of('Nia'))$$,
   'and they can play immediately, in a Year that is already running');
+
+-- §9.5's window, from the other side of `greatest()`.
+--
+-- Alice's case above pins one half: her Board sealed eight days ago and her free write is
+-- still open, because her Year had not started. This pins the other, and only this one
+-- can — an implementation reading `play_opens_at + 7 days` and forgetting the seal
+-- entirely passes every other assertion in the suite. Nia sealed six days ago in a Year
+-- that has been running for the better part of one, so the seal is the later instant and
+-- the window is hers.
+select set_config('role', 'postgres', true);
+update years set play_opens_at = now() - interval '300 days'
+ where id = year_of('Hertzell Family');
+update boards set sealed_at = now() - interval '6 days'
+ where member_id = member_of('Nia');
+
+select act_as('00000000-0000-4000-8000-0000000000b1');
+select lives_ok(
+  $$select write_goal(tile_of('Nia', 12), 'Learn to sail', 4, 'trips')$$,
+  'a late joiner''s free write runs from THEIR seal, not from the start of the Year '
+  '(§9.5, §21.1)');
+
+-- ---------------------------------------------------------------------------------
+-- Two doors that must stay shut
+-- ---------------------------------------------------------------------------------
+
+-- `deal_positions()` permutes goal_id between a Board's Tiles, and migration 34 says it
+-- is "safe only at the seal and never twice". It kept PostgREST's default PUBLIC EXECUTE
+-- for six migrations, so any signed-in Account could reshuffle any Board id in the
+-- database — moving a year of accumulated Increments onto different Goals.
+select throws_ok(
+  $$select deal_positions(board_of('Alice'))$$,
+  '42501', null,
+  'no Member may re-deal a Board — that belongs to the seal and to nothing else');
+
+-- Its two pure siblings stay reachable: they answer where a Board's squares WOULD land
+-- and write nothing.
+select lives_ok(
+  $$select dealt_position(board_of('Alice'), 0)$$,
+  'while asking where a square lands is harmless and stays open');
+
+-- A frozen Year is permanently read-only (§20.1), and taking back a declaration is a
+-- write to it. `freeze_year()` does not seal outstanding Boards, so this state is
+-- reachable rather than theoretical.
+select set_config('role', 'postgres', true);
+update boards set sealed_at = null, ready_at = now() where member_id = member_of('Nia');
+update years set frozen_at = now(), status = 'frozen'
+ where id = year_of('Hertzell Family');
+
+select act_as('00000000-0000-4000-8000-0000000000b1');
+select throws_ok(
+  $$select clear_board_ready(board_of('Nia'))$$,
+  '42501', null,
+  'and a declaration cannot be withdrawn inside a frozen Year either (§20.1)');
 
 select * from finish();
 rollback;

@@ -266,6 +266,13 @@ Detented bottom sheet, `radius.sheet` top corners, board dimmed to 35% behind.
   (§11.1). Never required, never pre-focused.
 - **Recent** — last three Increments, date + note. Notes are `body`; "No note" is `ink3`.
   Deleting an Increment is the only mutation (§11.3) — swipe, `clayDeep` label, no red.
+- **When it cannot log**, the actions are replaced by one `label` line in `ink3`, and the
+  reason decides the sentence — a single "can't log" flag once told an owner looking at
+  their own frozen Board that only that member could log there. Three reasons: the Year is
+  finished; the Board belongs to somebody else; or the Board has sealed and the Year has
+  not begun yet (PRD §22.5), which is the opposite of the first and reads "Your board is
+  set — play opens in 9 days." A Swap is still offered in that last case: the Board is a
+  commitment already, and refusing both would leave a typo untouchable for a fortnight.
 
 ### `<FeedRow>`
 
@@ -331,11 +338,23 @@ A Member writes 24 Goals; the 25th square is the Centre (§4.3). Authoring is a 
 not a grid** — a 66.8pt tile cannot hold a sentence, and the board isn't drawn until it
 seals.
 
-- **Drafting table** — `display` title, `label` meta ("17 of 24 · the board seals on 1
-  January"), a 24-pip written/unwritten strip in `ink3` on `paperSunk`, the Centre card in
+- **Drafting table** — `display` title, `label` meta ("17 of 24 · the board seals in 6
+  days"), a 24-pip written/unwritten strip in `ink3` on `paperSunk`, the Centre card in
   `clayTint`, then the written Goals in a hairline-divided list: `DM Mono` index in `ink3`,
-  goal in `body`, target + `pace_hint` in `meta`. Pinned bar: 56pt `moss` "Write another"
-  above "Seal the board — n to go" in `ink3`.
+  goal in `body`, target + `pace_hint` in `meta`.
+- **The footer is one control at a time**, and which one is a fact about the Board rather
+  than a choice (PRD §22):
+  - **Not yet full** — 56pt `moss` "Write another", over "n still empty" in `ink3`.
+  - **Full, not declared** — 56pt `moss` "I'm done", which opens a `<ConfirmSheet>` saying
+    what the tap does: whether it seals the whole Family now, and that the Centre is then
+    decided on the votes cast. There is still no "Seal the board" — a Member declares
+    their own Board finished and never anyone else's.
+  - **Declared** — "Your board is done · waiting on Ada" in `body`, over a `text` "Actually,
+    I'm still writing". Revocable until the Boards seal (§22.4).
+- **A sealed Board whose Year has not started** says so instead of counting down to
+  nothing: "This board is set — play opens in 9 days. Changing a goal now costs a swap."
+  Sealing and the start of the Year are two moments (§22.5), and only the second one makes
+  a square tappable.
 - **The pips are never `moss`.** Writing a goal is not growth. Reserve the accent for the
   ladder or the board stops meaning anything.
 - **One goal** — full screen, keyboard up. Free-text field at 22pt/400 Zen Kaku (never

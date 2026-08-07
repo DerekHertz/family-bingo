@@ -108,9 +108,10 @@ export default function FamilyRoster() {
   // plain Member and a pip row built from it would claim free seats the server will refuse.
   const canCount = roster.data?.canSeeInvitations === true;
 
-  // §5.1: one Year per Family per calendar year, and the window always ends on 1 January —
-  // so the only Year anyone could be opening is the next one. A picker would be a choice
-  // between one option and several errors.
+  // §5.1: one Year per Family per calendar year, and the deadline is never later than 1
+  // January — so the only Year anyone could be opening is the next one. A picker would be
+  // a choice between one option and several errors. (The window can end *sooner* since
+  // §22, which changes nothing here: it only ever makes the next Year openable earlier.)
   const timezone = family?.timezone ?? 'UTC';
   const allYears = years.data ?? [];
   const openable = openableYear(new Date(), timezone, allYears.map((y) => y.calendar_year));

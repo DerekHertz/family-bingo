@@ -493,6 +493,12 @@ export const readyFailureCopy = (thrown: unknown): string => {
   if (code === 'PT403') return 'This board has already sealed.';
   if (code === 'PT409') return 'Every square needs a goal before the board is done.';
   if (code === '42501' && /frozen/i.test(message)) return 'This year has finished.';
+  // 'no such Board' shares the ownership code, and "isn't yours" is the wrong sentence for
+  // a Board that is not there at all — which is what a deleted Member or a stale deep link
+  // looks like.
+  if (code === '42501' && /no such Board/i.test(message)) {
+    return 'That board isn’t there any more.';
+  }
   if (code === '42501') return 'That board isn’t yours to finish.';
   return 'That didn’t save. Have another go in a moment.';
 };
@@ -518,10 +524,19 @@ export function useMarkBoardReady(boardId: string) {
       if (error !== null) throw error;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: boardPrefix(boardId) });
+      // **Every** Board's Tiles, not just this one's. Sealing runs `deal_positions()` over
+      // every Board in the Year, and that permutes `goal_id` BETWEEN Tiles — so a Guardian
+      // who marks their own Board ready as the last one and then opens the child's Board
+      // inside `staleTime` would see the child's goals drawn on the wrong squares, with
+      // `renderTiles` and `completedLines` computed from those positions.
+      void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['board-head'] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
       void queryClient.invalidateQueries({ queryKey: ['readiness'] });
+      // The Centre resolves inside the same seal, and both Votes go to `resolved`. The
+      // Centre screen's own fallback cannot notice: it compares `closes_at` to now, which
+      // is exactly the check an EARLY resolution defeats — the date is still weeks away.
+      void queryClient.invalidateQueries({ queryKey: ['centre'] });
       // The Year's own status moves from `setup` to `active` on the last declaration,
       // and it is the Family screen's whole headline.
       void queryClient.invalidateQueries({ queryKey: ['years'] });
@@ -569,7 +584,7 @@ export function useYearReadiness(yearId: string | undefined, accountId: string |
     queryFn: async (): Promise<ReadinessBoard[]> => {
       const { data, error } = await supabase
         .from('boards')
-        .select('ready_at, sealed_at, created_at, member:member_id (display_name, status)')
+        .select('ready_at, sealed_at, created_at, member:member_id (display_name, account_id, guardian_account_id, status)')
         .eq('year_id', yearId ?? '')
         .order('created_at', { ascending: true });
       if (error !== null) throw error;
@@ -577,6 +592,8 @@ export function useYearReadiness(yearId: string | undefined, accountId: string |
       return (data ?? []).flatMap((row) => {
         const member = row.member as unknown as {
           display_name: string;
+          account_id: string | null;
+          guardian_account_id: string | null;
           status: string;
         } | null;
         if (member === null || member.status !== 'active') return [];
@@ -585,6 +602,9 @@ export function useYearReadiness(yearId: string | undefined, accountId: string |
             displayName: member.display_name,
             readyAt: row.ready_at as string | null,
             sealedAt: row.sealed_at as string | null,
+            // Exactly `controlled_member_ids()`, and used only so the Family screen
+            // cannot read "waiting on Derek" to Derek.
+            isSelf: isControlledBy(member, accountId),
           },
         ];
       });

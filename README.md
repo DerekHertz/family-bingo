@@ -25,7 +25,8 @@ told as squares fall.
 
 ## The loop
 
-Write 24 goals in December → the board **seals** on 1 January → log progress all year →
+Write 24 goals in December → the board **seals** when everyone says they are done, or on
+1 January, whichever comes first → play from **1 January** → log progress all year →
 complete tiles → hit **Bingo** → chase **Blackout**.
 
 The 25th square is the **Centre**, and the family votes on what it is: a shared goal
