@@ -278,9 +278,17 @@ export default function DraftingTable() {
   if (sealed) {
     // A Board rendered from counts that never arrived is a Board of 25 dormant Tiles and
     // an empty pip strip — a confident, wrong answer of exactly the kind `board.isError`
-    // above exists to prevent. `isLoading` rather than `isPending`, because a disabled
-    // query is pending forever and the Tiles are not fetched yet on the first render.
-    if (counts.isLoading) return <Loading what="Loading the board" />;
+    // above exists to prevent.
+    //
+    // `isPending`, and it used to be `isLoading` for a reason that no longer holds: the
+    // counts query was disabled until the Tiles arrived, and a disabled query is pending
+    // forever. Keyed on the Board id it is never disabled on a render that reaches here.
+    // That matters because `isLoading` is `isPending && isFetching`, so it is **false for
+    // a query that is pending but not fetching** — which is what `networkMode: 'online'`
+    // produces offline. Relaunched with no connection, `board` and `board-head` restore
+    // from the persisted cache and this one pauses: `isLoading` false, `isError` false,
+    // `data` undefined, and the Board draws itself as 25 dormant Tiles.
+    if (counts.isPending) return <Loading what="Loading the board" />;
     if (counts.isError) {
       return (
         <ErrorState

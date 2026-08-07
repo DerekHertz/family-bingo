@@ -7,7 +7,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(13);
 
 create or replace function act_as(account uuid) returns void
 language plpgsql as $$
@@ -110,10 +110,14 @@ select is(
   0, 'an untouched Tile is simply not in the result');
 
 -- It is a read of the log, not a stored counter (§11.4). Deleting has to move it.
+-- `order by` and not `limit 1` alone: the fixture puts 3 Increments on one Tile and 1 on
+-- another, so an unordered pick that took the singleton would drop that Tile out of the
+-- result and quietly change what every later assertion is counting.
 select set_config('role', 'postgres', true);
 delete from increments where id = (
   select i.id from increments i join tiles t on t.id = i.tile_id
-   where t.board_id = board_of('Ada') limit 1);
+   where t.board_id = board_of('Ada')
+   order by t.position asc, i.id asc limit 1);
 
 select act_as('00000000-0000-4000-8000-0000000000a1');
 select is((select sum(n)::int from board_tile_counts(board_of('Ada'))), 3,
@@ -123,26 +127,52 @@ select is((select sum(n)::int from board_tile_counts(board_of('Ada'))), 3,
 -- Who may see it
 -- ---------------------------------------------------------------------------------
 --
--- The whole point of leaving this SECURITY INVOKER. If it were DEFINER, every assertion
--- below would pass a board id straight through RLS.
+-- The whole point of leaving this SECURITY INVOKER. If it were DEFINER, a board id would
+-- go straight through RLS.
+--
+-- **The board id is captured as `postgres` and passed as a literal**, and that is the only
+-- thing making these assertions mean anything. The first version of this file called
+-- `board_of('Ada')` from inside the stranger's session — a plain invoker helper reading
+-- `members` and `boards`, which RLS blanks for her, so it evaluated to NULL and every
+-- assertion below was asking whether `board_tile_counts(NULL)` returns nothing. It does.
+-- The file passed with the function marked SECURITY DEFINER, and passed again with its
+-- `where t.board_id = ...` predicate replaced by `where true`. A safety net that holds
+-- while the thing it guards is removed is not one.
+select set_config('role', 'postgres', true);
+select set_config('t.ada_board', board_of('Ada')::text, true);
 
-select is((select count(*)::int from board_tile_counts(board_of('Ada'))), 2,
-  'the owner sees their own Board');
+select act_as('00000000-0000-4000-8000-0000000000a1');
+select is(
+  (select count(*)::int from board_tile_counts(current_setting('t.ada_board')::uuid)),
+  2, 'the owner sees their own Board');
 
 select act_as('00000000-0000-4000-8000-0000000000a2');
-select is((select count(*)::int from board_tile_counts(board_of('Ada'))), 2,
-  'and so does the rest of the Family — reads are Family-wide, which is §23''s whole basis');
+select is(
+  (select count(*)::int from board_tile_counts(current_setting('t.ada_board')::uuid)),
+  2, 'and so does the rest of the Family — reads are Family-wide, which is §23''s whole basis');
 
 select act_as('00000000-0000-4000-8000-0000000000a9');
-select is((select count(*)::int from board_tile_counts(board_of('Ada'))), 0,
-  'a stranger gets ZERO ROWS for a Board in a Family that is not theirs (§8.1 P2)');
+select is(
+  (select count(*)::int from board_tile_counts(current_setting('t.ada_board')::uuid)),
+  0, 'a stranger holding a real board id from another Family gets ZERO ROWS (§8.1 P2)');
 
 select lives_ok(
-  $$select * from board_tile_counts(board_of('Ada'))$$,
+  $$select * from board_tile_counts(current_setting('t.ada_board')::uuid)$$,
   'and gets them as an empty result rather than an error — a 403 confirms the Board exists');
 
+-- Run as the OWNER, so it is the `board_id` predicate being tested and not RLS. As the
+-- stranger this passed for the wrong reason too.
+select act_as('00000000-0000-4000-8000-0000000000a1');
 select is((select count(*)::int from board_tile_counts(gen_random_uuid())), 0,
-  'a Board id that names nothing is empty too, and says nothing about which');
+  'a Board id that names nothing is empty even for someone who can see other Boards');
+
+-- The predicate is doing the narrowing, not the Family boundary: Boaz has a Board of his
+-- own in this same Family, with nothing logged on it. If the function ignored its argument
+-- and returned everything the caller can see, this would come back with Ada's two Tiles.
+select act_as('00000000-0000-4000-8000-0000000000a2');
+select is((select count(*)::int from board_tile_counts(board_of('Boaz'))), 0,
+  'and a Board in your own Family with no Increments is empty — the argument narrows, '
+  'not just the policy');
 
 -- ---------------------------------------------------------------------------------
 -- Reachability

@@ -154,7 +154,10 @@ export default function ComposeSwap() {
   // Nothing is rendered against data that has not arrived. Without this the screen shows
   // an empty field, a target of 1 and a cost preview built from a budget of 0 — four
   // confident falsehoods about the Goal a Member is deciding whether to set down.
-  if (head.isPending || board.isPending || counts.isLoading || budget.isPending) {
+  // `counts.isPending`, not `isLoading` — see the note on the same gate in `board/[id]`.
+  // `isLoading` is false for a query that is pending but paused, which is what an offline
+  // relaunch produces, and this screen prices a Swap from those counts.
+  if (head.isPending || board.isPending || counts.isPending || budget.isPending) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper, justifyContent: 'center' }}>
         <ActivityIndicator
