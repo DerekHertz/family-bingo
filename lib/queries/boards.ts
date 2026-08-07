@@ -194,69 +194,72 @@ export interface BoardHead {
  * every time a Goal is written and this does not move at all during a session. Sharing a
  * key would refetch the Year and the Family on every keystroke's worth of invalidation.
  */
+const boardHeadQuery = (boardId: string | undefined, accountId: string | undefined) =>
+  ({
+  queryKey: boardHeadKey(boardId ?? 'none', accountId ?? 'anonymous'),
+  // Waits for the Account as well as the Board. `useSession()` is `undefined` on its
+  // first render, so firing before it resolves cached `controlled: false` against a key
+  // the real Account would then reuse — a read-only drafting table on the Member's own
+  // Board, for a minute of `staleTime`, with no refetch to correct it.
+  enabled: boardId !== undefined && accountId !== undefined,
+  queryFn: async (): Promise<BoardHead | null> => {
+    const { data, error } = await supabase
+      .from('boards')
+      // One string literal, not a concatenation: supabase-js infers the row type by
+      // parsing this at the type level, and `'a' + 'b'` widens to `string`, which turns
+      // every field access below into an error against GenericStringError.
+      .select('id, sealed_at, ready_at, joined_late_at, personal_setup_deadline, member_id, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, play_opens_at, family:family_id (id, name, timezone))')
+      .eq('id', boardId ?? '')
+      .maybeSingle();
+    if (error !== null) throw error;
+    if (data === null) return null;
+
+    const member = data.member as unknown as {
+      display_name: string;
+      account_id: string | null;
+      guardian_account_id: string | null;
+      status: string;
+    } | null;
+    const year = data.year as unknown as {
+      id: string;
+      calendar_year: number;
+      status: 'setup' | 'active' | 'frozen';
+      center_mode: 'shared' | 'personal' | 'undecided';
+      setup_deadline: string;
+      play_opens_at: string;
+      family: { id: string; name: string; timezone: string } | null;
+    } | null;
+    if (member === null || year === null || year.family === null) return null;
+
+    return {
+      id: data.id as string,
+      sealedAt: data.sealed_at as string | null,
+      memberId: data.member_id as string,
+      memberName: member.display_name,
+      isSelf: member.account_id !== null && member.account_id === accountId,
+      // `controlled_member_ids()`, client-side — and one function now rather than the
+      // three hand-written copies this rule was spread across (see src/domain/member.ts).
+      controlled: isControlledBy(member, accountId),
+      readyAt: data.ready_at as string | null,
+      joinedLateAt: data.joined_late_at as string | null,
+      personalSetupDeadline: data.personal_setup_deadline as string | null,
+      year: {
+        id: year.id,
+        calendarYear: year.calendar_year,
+        status: year.status,
+        centerMode: year.center_mode,
+        setupDeadline: year.setup_deadline,
+        playOpensAt: year.play_opens_at,
+      },
+      familyId: year.family.id,
+      familyName: year.family.name,
+      timezone: year.family.timezone,
+    };
+  },
+});
+
 export function useBoardHead(boardId: string | undefined, accountId: string | undefined) {
-  return useQuery({
-    queryKey: boardHeadKey(boardId ?? 'none', accountId ?? 'anonymous'),
-    // Waits for the Account as well as the Board. `useSession()` is `undefined` on its
-    // first render, so firing before it resolves cached `controlled: false` against a key
-    // the real Account would then reuse — a read-only drafting table on the Member's own
-    // Board, for a minute of `staleTime`, with no refetch to correct it.
-    enabled: boardId !== undefined && accountId !== undefined,
-    queryFn: async (): Promise<BoardHead | null> => {
-      const { data, error } = await supabase
-        .from('boards')
-        // One string literal, not a concatenation: supabase-js infers the row type by
-        // parsing this at the type level, and `'a' + 'b'` widens to `string`, which turns
-        // every field access below into an error against GenericStringError.
-        .select('id, sealed_at, ready_at, joined_late_at, personal_setup_deadline, member_id, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, play_opens_at, family:family_id (id, name, timezone))')
-        .eq('id', boardId ?? '')
-        .maybeSingle();
-      if (error !== null) throw error;
-      if (data === null) return null;
-
-      const member = data.member as unknown as {
-        display_name: string;
-        account_id: string | null;
-        guardian_account_id: string | null;
-        status: string;
-      } | null;
-      const year = data.year as unknown as {
-        id: string;
-        calendar_year: number;
-        status: 'setup' | 'active' | 'frozen';
-        center_mode: 'shared' | 'personal' | 'undecided';
-        setup_deadline: string;
-        play_opens_at: string;
-        family: { id: string; name: string; timezone: string } | null;
-      } | null;
-      if (member === null || year === null || year.family === null) return null;
-
-      return {
-        id: data.id as string,
-        sealedAt: data.sealed_at as string | null,
-        memberId: data.member_id as string,
-        memberName: member.display_name,
-        isSelf: member.account_id !== null && member.account_id === accountId,
-        // `controlled_member_ids()`, client-side — and one function now rather than the
-        // three hand-written copies this rule was spread across (see src/domain/member.ts).
-        controlled: isControlledBy(member, accountId),
-        readyAt: data.ready_at as string | null,
-        joinedLateAt: data.joined_late_at as string | null,
-        personalSetupDeadline: data.personal_setup_deadline as string | null,
-        year: {
-          id: year.id,
-          calendarYear: year.calendar_year,
-          status: year.status,
-          centerMode: year.center_mode,
-          setupDeadline: year.setup_deadline,
-          playOpensAt: year.play_opens_at,
-        },
-        familyId: year.family.id,
-        familyName: year.family.name,
-        timezone: year.family.timezone,
-      };
-    },
-  });
+  return useQuery(boardHeadQuery(boardId, accountId));
 }
 
 /**
@@ -328,94 +331,92 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
  * Goals were written, since §4.1 is explicit that order is not priority and positions are
  * dealt at seal.
  */
-export function useBoard(boardId: string | undefined, accountId: string | undefined) {
-  return useQuery({
-    queryKey: boardKey(boardId ?? 'none', accountId ?? 'anonymous'),
-    // Waits for the Account as well as the Board, like `useBoardHead`. Firing before the
-    // session resolves is a guaranteed 401 against RLS.
-    enabled: boardId !== undefined && accountId !== undefined,
-    queryFn: async (): Promise<DraftTile[]> => {
-      const { data, error } = await supabase
-        .from('tiles')
-        .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint, sharpened_at), family_goal:family_goal_id (text, completed_at)')
-        .eq('board_id', boardId ?? '')
-        .order('position', { ascending: true });
-      if (error !== null) throw error;
+const boardTilesQuery = (boardId: string | undefined, accountId: string | undefined) =>
+  ({
+  queryKey: boardKey(boardId ?? 'none', accountId ?? 'anonymous'),
+  // Waits for the Account as well as the Board, like `useBoardHead`. Firing before the
+  // session resolves is a guaranteed 401 against RLS.
+  enabled: boardId !== undefined && accountId !== undefined,
+  queryFn: async (): Promise<DraftTile[]> => {
+    const { data, error } = await supabase
+      .from('tiles')
+      .select('id, position, goal:goal_id (id, text, target, unit, unit_canonical, category, pace_hint, sharpened_at), family_goal:family_goal_id (text, completed_at)')
+      .eq('board_id', boardId ?? '')
+      .order('position', { ascending: true });
+    if (error !== null) throw error;
 
-      return (data ?? []).map((row) => {
-        const familyGoal = row.family_goal as unknown as {
-          text: string;
-          completed_at: string | null;
-        } | null;
-        return {
-          id: row.id as string,
-          position: row.position as number,
-          goal: (row.goal as unknown as Goal | null) ?? null,
-          familyGoalText: familyGoal?.text ?? null,
-          familyGoalCompletedAt: familyGoal?.completed_at ?? null,
-        };
-      });
-    },
-  });
+    return (data ?? []).map((row) => {
+      const familyGoal = row.family_goal as unknown as {
+        text: string;
+        completed_at: string | null;
+      } | null;
+      return {
+        id: row.id as string,
+        position: row.position as number,
+        goal: (row.goal as unknown as Goal | null) ?? null,
+        familyGoalText: familyGoal?.text ?? null,
+        familyGoalCompletedAt: familyGoal?.completed_at ?? null,
+      };
+    });
+  },
+});
+
+export function useBoard(boardId: string | undefined, accountId: string | undefined) {
+  return useQuery(boardTilesQuery(boardId, accountId));
 }
 
 /**
  * How many Increments each Tile on this Board has.
  *
- * Counted here rather than read from a column, because §11.4 is explicit: progress is
- * `COUNT(increments)` and **must not be denormalised** — a cached counter and an
- * append-only log drift, and the log is the source of truth.
+ * Counted at read time rather than read from a column, because §11.4 is explicit: progress
+ * is `COUNT(increments)` and **must not be denormalised** — a cached counter and an
+ * append-only log drift, and the log is the source of truth. `board_tile_counts()`
+ * (migration 42) does the counting in SQL; it is still the same count of the same rows,
+ * asked somewhere that can answer it in one small response.
  *
- * Keyed by `tile_id`, which is what `increments` actually references. A Goal is reachable
- * only through its Tile, and a Swap replaces the Goal while the Tile stays put (§18.6) —
- * so counting per Tile is also the only version that survives slice 18.
+ * **Keyed on the Board, which is what took a round trip out of opening one.** This used to
+ * take the 25 Tile ids, so it could not begin until the Tiles query had returned — two
+ * serial requests across a continent before a Board could draw. The Board id is known at
+ * navigation time, so this now starts in the same tick as `useBoard` and `useBoardHead`.
+ * Invisible on the Board a Member opens daily and obvious the moment §23 let them open
+ * four more.
+ *
+ * The paging loop is gone with it. PostgREST truncates at `max_rows = 1000` and reports no
+ * error, so counting rows client-side meant paging, which meant a *third* round trip on
+ * exactly the Boards busy enough to need one — and a silent undercount if it was ever got
+ * wrong. Twenty-five rows at most now, and the hazard does not exist rather than being
+ * handled.
+ *
+ * Carries the Account, like every other key here. `increments_family_read` filters on
+ * `visible_member_ids()`, so these rows are not the same for every caller — the same Board
+ * answers real counts for a Member of the Family and nothing at all for anyone else, which
+ * is exactly the shape of the cross-Account leak the handoff warns about twice.
  */
-export const tileCountsKey = (tileIds: readonly string[], accountId: string) =>
-  // Sorted so the key is stable: the same Board must not produce a different cache entry
-  // because two Tiles arrived in a different order.
-  ['tile-counts', [...tileIds].sort().join(','), accountId] as const;
+export const tileCountsKey = (boardId: string, accountId: string) =>
+  ['tile-counts', boardId, accountId] as const;
 
-/** PostgREST's `max_rows`, from `supabase/config.toml`. A full page means there is more. */
-const PAGE = 1000;
+const tileCountsQuery = (boardId: string | undefined, accountId: string | undefined) =>
+  ({
+  queryKey: tileCountsKey(boardId ?? 'none', accountId ?? 'anonymous'),
+  enabled: boardId !== undefined && accountId !== undefined,
+  queryFn: async (): Promise<Record<string, number>> => {
+    const { data, error } = await supabase.rpc('board_tile_counts', {
+      target_board_id: boardId,
+    });
+    if (error !== null) throw error;
 
-export function useTileCounts(tileIds: readonly string[], accountId: string | undefined) {
-  return useQuery({
-    // Carries the Account, like every other key here. `increments_family_read` filters on
-    // `visible_member_ids()`, so these rows are not the same for every caller — the same
-    // 25 Tile ids answer real counts for a Member of the Family and nothing at all for
-    // anyone else, which is exactly the shape of the cross-Account leak the handoff warns
-    // about twice.
-    queryKey: tileCountsKey(tileIds, accountId ?? 'anonymous'),
-    enabled: tileIds.length > 0 && accountId !== undefined,
-    queryFn: async (): Promise<Record<string, number>> => {
-      const counts: Record<string, number> = {};
+    const counts: Record<string, number> = {};
+    for (const row of (data ?? []) as { tile_id: string; n: number }[]) {
+      counts[row.tile_id] = row.n;
+    }
+    // A Tile with no Increments is absent rather than zero, which every reader of this
+    // already assumes — `counts[tile.id] ?? 0`.
+    return counts;
+  },
+});
 
-      // Paged, because PostgREST truncates at `max_rows = 1000` and reports no error when
-      // it does. `goals.target` has no upper bound, so one "read 2000 pages" Goal — or a
-      // busy Board in aggregate — silently loses Increments, and a complete Tile renders
-      // as `sprouting` with its Line missing from the pip strip. A count that quietly
-      // shrinks is worse than a slow one: §11.4 makes `COUNT(increments)` the source of
-      // truth precisely so it cannot drift.
-      for (let from = 0; ; from += PAGE) {
-        const { data, error } = await supabase
-          .from('increments')
-          .select('tile_id')
-          // An explicit order, or the pages are not a partition: without one PostgREST
-          // gives no stable row order and successive ranges may repeat and omit rows.
-          .order('id', { ascending: true })
-          .in('tile_id', [...tileIds])
-          .range(from, from + PAGE - 1);
-        if (error !== null) throw error;
-
-        const rows = data ?? [];
-        for (const row of rows) {
-          const id = row.tile_id as string;
-          counts[id] = (counts[id] ?? 0) + 1;
-        }
-        if (rows.length < PAGE) return counts;
-      }
-    },
-  });
+export function useTileCounts(boardId: string | undefined, accountId: string | undefined) {
+  return useQuery(tileCountsQuery(boardId, accountId));
 }
 
 export interface GoalDraft {
@@ -559,6 +560,36 @@ export function useClearBoardReady(boardId: string) {
       void queryClient.invalidateQueries({ queryKey: ['family-boards'] });
     },
   });
+}
+
+/**
+ * Start a Board's reads before anybody has asked for it.
+ *
+ * Opening a Board costs a round trip whatever else is done, and §23 turned that from a
+ * thing a Member does once a day into a thing they do four times in a row along the avatar
+ * strip. The strip calls this on `onPressIn` — while the finger is still down, before the
+ * gesture has resolved into a press — so the wait is spent on the tap rather than after it.
+ *
+ * **Only on a face somebody is already pressing.** Warming every sibling when the strip
+ * renders was the other option and is not taken: the seat cap is twenty, so a full Family
+ * would fire up to fifty-seven requests on every Board open to save a few hundred
+ * milliseconds on the one that gets tapped.
+ *
+ * The same option factories the hooks use, so a prefetch can never drift from the real
+ * query — a warm cache under a different key is worse than a cold one, because it looks
+ * like it worked. `prefetchQuery` is a no-op against anything still fresh, so pressing the
+ * same face twice costs one request.
+ */
+export function useWarmBoard(accountId: string | undefined) {
+  const queryClient = useQueryClient();
+  return async (boardId: string): Promise<void> => {
+    if (accountId === undefined) return;
+    await Promise.all([
+      queryClient.prefetchQuery(boardHeadQuery(boardId, accountId)),
+      queryClient.prefetchQuery(boardTilesQuery(boardId, accountId)),
+      queryClient.prefetchQuery(tileCountsQuery(boardId, accountId)),
+    ]);
+  };
 }
 
 /**

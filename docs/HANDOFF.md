@@ -212,7 +212,11 @@ pieces it produced are the ones to reach for rather than rebuild:
   exactly why it nearly shipped. Defer the second with `requestAnimationFrame`.
 - **`<Avatar name="">` renders `?`, not an empty circle.** `pending` is what draws the ring.
 - **PostgREST truncates at `max_rows = 1000` and says nothing.** Any `select` that can
-  return more than a thousand rows has to page. `goals.target` has no upper bound.
+  return more than a thousand rows has to page. `goals.target` has no upper bound. The
+  Board's Increment counts used to be the worst case and no longer are — `board_tile_counts()`
+  (migration 42) aggregates them in SQL, so twenty-five rows come back however busy the
+  Board is. That is the shape to reach for: a count that cannot exceed a page cannot be
+  silently truncated, and it took a round trip out of opening a Board on the way past.
 - **Percentage widths cannot lay out a 5-across grid.** React Native has no `calc()`. Use
   rows of `flex: 1`. `CentreGlyph` shipped for weeks rendering 4 across in seven rows.
 - **A container `accessibilityLabel` without `accessible` never announces**, and adding

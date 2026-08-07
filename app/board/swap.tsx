@@ -53,8 +53,7 @@ export default function ComposeSwap() {
   const session = useSession();
   const head = useBoardHead(boardId, session?.user.id);
   const board = useBoard(boardId, session?.user.id);
-  const tileIds = (board.data ?? []).map((t) => t.id);
-  const counts = useTileCounts(tileIds, session?.user.id);
+  const counts = useTileCounts(boardId, session?.user.id);
   const budget = useSwapBudget(boardId, session?.user.id);
   const swap = useSwapTile(boardId ?? '');
 

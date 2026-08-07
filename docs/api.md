@@ -64,6 +64,10 @@ other Family. Everything else is plumbing.
 > every policy still applies — `visible_family_ids()` (schema.md §4.1) is `SECURITY
 > DEFINER` because it must read `members` while evaluating a policy *on* `members`.
 >
+> `board_tile_counts()` is the counter-example worth knowing: a *read* RPC, left
+> `SECURITY INVOKER` precisely so the two policies that already govern `increments` and
+> `tiles` keep governing it. It exists to save a round trip, not to reach past anything.
+>
 > The write RPCs in §2.1 are `SECURITY DEFINER` too, and deliberately: they exist because
 > the tables underneath them have **no client write policy at all**, so the function is the
 > only door and its guards are the policy. Each one re-checks the caller itself —
@@ -131,6 +135,7 @@ with no Year at all, so filtering by Year loses nothing.
 | `mark_board_ready(board_id)` | Records that this Member is done, and seals the Year if that was the last Board — or seals a late joiner's Board alone (§22.2, §22.6) | Controlled Member, Board unsealed and complete, Year not frozen |
 | `clear_board_ready(board_id)` | Takes it back, which stays possible until the seal (§22.4) | Controlled Member, Board unsealed |
 | `remaining_year_fraction(target_year_id, at default now())` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
+| `board_tile_counts(target_board_id)` | Progress for every Tile on one Board, counted at read time (§11.4) — ≤25 rows, so it never pages | **`SECURITY INVOKER`**: RLS decides the rows, and a caller outside the Family gets zero of them |
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
 | `swap_tile(tile_id, goal_text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
 | `freeze_year(year_id)` | Year → `frozen` | `pg_cron`, idempotent |

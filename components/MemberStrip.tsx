@@ -42,9 +42,17 @@ interface Props {
    */
   gutter: number;
   onOpen: (boardId: string) => void;
+  /**
+   * Called when a finger lands on a face, before the tap has resolved into a press.
+   *
+   * Opening a Board is a round trip whatever we do; this spends the gesture's own duration
+   * on it instead of waiting until it is over. Free in the sense that matters — it only
+   * fires for a face somebody is already pressing, so nothing is fetched on spec.
+   */
+  onWarm?: (boardId: string) => void;
 }
 
-export function MemberStrip({ faces, gutter, onOpen }: Props) {
+export function MemberStrip({ faces, gutter, onOpen, onWarm }: Props) {
   // One Member is not a Family to look across, and a strip of one is a decoration that
   // costs a row of height to say nothing.
   if (faces.length < 2) return null;
@@ -89,6 +97,9 @@ export function MemberStrip({ faces, gutter, onOpen }: Props) {
             }`}
             accessibilityHint={openable && !face.isCurrent ? 'Opens their board' : undefined}
             accessibilityState={{ disabled: !openable, selected: face.isCurrent }}
+            onPressIn={() => {
+              if (openable && face.boardId !== null) onWarm?.(face.boardId);
+            }}
             onPress={() => {
               if (face.boardId !== null) onOpen(face.boardId);
             }}
