@@ -23,15 +23,16 @@ import { Button } from '../../components/Button';
 import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { ErrorState, Loading } from '../../components/Screen';
 import { SwapSheet, type SwapCandidate } from '../../components/SwapSheet';
+import { MemberStrip } from '../../components/MemberStrip';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
 import {
   readyFailureCopy,
   useBoard,
   useBoardHead,
   useClearBoardReady,
+  useFamilyBoards,
   useMarkBoardReady,
   useTileCounts,
-  useYearReadiness,
 } from '../../lib/queries/boards';
 import {
   incrementFailureCopy,
@@ -66,6 +67,7 @@ import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/line
 import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
 import { boardIsComplete, readiness, readinessCopy } from '../../src/domain/ready';
+import { stripFaces } from '../../src/domain/roster';
 import { playHasOpened, playOpensCopy, sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
@@ -110,13 +112,10 @@ export default function DraftingTable() {
   // §22.2's confirm. Held as state rather than opened imperatively — see ConfirmSheet, and
   // the four destructive controls that did nothing at all on the web build.
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
-  // §22 — who else the Family is waiting for, which is what makes "done" mean something
-  // other than "done, and now what". Only while the Year is still being authored: once it
-  // seals there is nobody left to wait for.
-  const yearReadiness = useYearReadiness(
-    head.data?.year.status === 'setup' ? head.data.year.id : undefined,
-    session?.user.id,
-  );
+  // Every Board in this Year, which two features want for opposite reasons: §22's "waiting
+  // on Bob" while the Year is being authored, and §23's strip once it is not. Enabled for
+  // both, so the strip does not cost a second Family-wide read of the same rows.
+  const familyBoards = useFamilyBoards(head.data?.year.id, session?.user.id);
   const markReady = useMarkBoardReady(id ?? '');
   const clearReady = useClearBoardReady(id ?? '');
   // §17.3 — how many taps are on this handset rather than on the server. Read here rather
@@ -426,7 +425,48 @@ export default function DraftingTable() {
               ? head.data.year.calendarYear
               : `${head.data.year.calendarYear} · ${joined}`}
           </Text>
+
         </View>
+
+        {/* §4.5's strip, and §23.3's traverse: the Family is a swipe away from whichever
+            Board you are on. Only here, on the drawn Board — the drafting table below has
+            no strip, because §23.2 keeps a Board private until it seals and a row of faces
+            that all refuse to open is worse than no row at all.
+
+            A sibling of the padded header rather than a child of it, so the scroll view is
+            full width and insets its own content — see the `gutter` note in the component.
+
+            **Rendered only once both reads have landed.** `?? []` would put a strip on
+            screen with every face dimmed and inert, announcing "no board to open yet" about
+            people who have one — a confident wrong answer, where a strip that arrives a
+            moment late is merely late. */}
+        {roster.data === undefined || familyBoards.data === undefined ? null : (
+          <View style={{ marginTop: space.lg }}>
+            <MemberStrip
+              // Members first, Boards second. A Member approved after this Year opened has
+              // no Board row at all, so a strip built from the Boards would leave them out
+              // of a picture of their own Family without ever rendering a state for them.
+              faces={stripFaces(
+                roster.data.members.map((m) => ({
+                  id: m.id,
+                  status: m.status,
+                  displayName: m.display_name,
+                  isManaged: m.is_managed,
+                })),
+                familyBoards.data,
+                head.data.id,
+              )}
+              gutter={space.xl}
+              // `replace`, not `push`. Swiping across five Boards would otherwise stack
+              // five screens, and Back would walk the whole family in reverse instead of
+              // returning where it came from — `leaveTo()` exists in this codebase because
+              // that assumption has already bitten once.
+              onOpen={(boardId) =>
+                router.replace({ pathname: '/board/[id]', params: { id: boardId } })
+              }
+            />
+          </View>
+        )}
 
         <View style={{ marginTop: space.lg }}>
           <Board
@@ -701,7 +741,7 @@ export default function DraftingTable() {
   // Hoisted for the same reason `centreRoute` is: the narrowing on `head.data` does not
   // survive into the confirm sheet's closure.
   const yearInSetup = head.data.year.status === 'setup';
-  const familyReadiness = readiness(yearReadiness.data ?? []);
+  const familyReadiness = readiness(familyBoards.data ?? []);
   /**
    * Whether this tap is the one that seals the Family — and, separately, whether that is
    * known yet.
@@ -720,7 +760,7 @@ export default function DraftingTable() {
    * open paints the button before the answer arrives. Same shape as
    * `swapsUsed: budget.data ?? 0`; the same fix.
    */
-  const readinessKnown = yearReadiness.data !== undefined && familyReadiness.total > 0;
+  const readinessKnown = familyBoards.data !== undefined && familyReadiness.total > 0;
   const lastOneWriting =
     !isReady && readinessKnown && familyReadiness.total - familyReadiness.ready === 1;
   const readyFailure =

@@ -532,7 +532,7 @@ export function useMarkBoardReady(boardId: string) {
       void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['board-head'] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
-      void queryClient.invalidateQueries({ queryKey: ['readiness'] });
+      void queryClient.invalidateQueries({ queryKey: ['family-boards'] });
       // The Centre resolves inside the same seal, and both Votes go to `resolved`. The
       // Centre screen's own fallback cannot notice: it compares `closes_at` to now, which
       // is exactly the check an EARLY resolution defeats — the date is still weeks away.
@@ -556,35 +556,54 @@ export function useClearBoardReady(boardId: string) {
       void queryClient.invalidateQueries({ queryKey: boardPrefix(boardId) });
       void queryClient.invalidateQueries({ queryKey: ['board-head'] });
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
-      void queryClient.invalidateQueries({ queryKey: ['readiness'] });
+      void queryClient.invalidateQueries({ queryKey: ['family-boards'] });
     },
   });
 }
 
 /**
- * Where the whole Family has got to (§22.3).
+ * Every Board in the Year, whoever owns it — the Family, not the caller.
  *
- * Every Board in the Year, not just the ones the caller may author on — which is exactly
- * the opposite of `useMyBoards`, and for the opposite reason. "Waiting on Bob" is a fact
- * about the Family, and a list narrowed to the caller's own Boards can only ever say the
- * caller is waiting on themselves. `boards_read` is Family-wide, so RLS already draws the
- * boundary this needs and no filtering is wanted here.
+ * The exact opposite of `useMyBoards`, and for the opposite reason. That one narrows to
+ * Members the caller may author for, because offering a write on a sibling's Board is
+ * offering a 42501. This one narrows to nothing, because both of its consumers are about
+ * other people: "waiting on Bob" (§22.3) is a fact about the Family, and §23's roster tap
+ * and avatar strip exist precisely to reach a Board that is not yours. `boards_read` is
+ * Family-wide, so RLS has already drawn the only boundary that matters.
  *
- * Pending Members are excluded because they have no Board at all (§3.2) — the join simply
- * never produces them — and a Member whose row is unreadable is dropped rather than
- * counted as an unnamed straggler.
+ * **One query, two features.** Readiness needed four columns of this and §23 needs three
+ * more; the Family screen would otherwise run two Family-wide reads over the same rows a
+ * few lines apart.
+ *
+ * `created_at` ascending is join order, which is the only ordering §7's do-not #2 permits
+ * for a list of Members — never progress, and never anything a reader could mistake for a
+ * ranking. Boards are dealt in Member order by `open_year()`, and a late joiner's is
+ * created when they are approved, so the Boards carry the Family's own join order without
+ * a second sort.
+ *
+ * Pending Members never appear: they have no Board at all (§3.2), so the join does not
+ * produce them, and a Member whose row is unreadable is dropped rather than shown as an
+ * unnamed straggler.
  */
-export const readinessKey = (yearId: string, accountId: string) =>
-  ['readiness', yearId, accountId] as const;
+export const familyBoardsKey = (yearId: string, accountId: string) =>
+  ['family-boards', yearId, accountId] as const;
 
-export function useYearReadiness(yearId: string | undefined, accountId: string | undefined) {
+/** One Member's Board in this Year, as the Family screen and the strip see it. */
+export interface FamilyBoard extends ReadinessBoard {
+  /** The Board to open. Every row has one — the query is over `boards`. */
+  readonly boardId: string;
+  readonly memberId: string;
+  readonly isManaged: boolean;
+}
+
+export function useFamilyBoards(yearId: string | undefined, accountId: string | undefined) {
   return useQuery({
-    queryKey: readinessKey(yearId ?? 'none', accountId ?? 'anonymous'),
+    queryKey: familyBoardsKey(yearId ?? 'none', accountId ?? 'anonymous'),
     enabled: yearId !== undefined && accountId !== undefined,
-    queryFn: async (): Promise<ReadinessBoard[]> => {
+    queryFn: async (): Promise<FamilyBoard[]> => {
       const { data, error } = await supabase
         .from('boards')
-        .select('ready_at, sealed_at, created_at, member:member_id (display_name, account_id, guardian_account_id, status)')
+        .select('id, member_id, ready_at, sealed_at, created_at, member:member_id (display_name, account_id, guardian_account_id, status)')
         .eq('year_id', yearId ?? '')
         .order('created_at', { ascending: true });
       if (error !== null) throw error;
@@ -599,11 +618,15 @@ export function useYearReadiness(yearId: string | undefined, accountId: string |
         if (member === null || member.status !== 'active') return [];
         return [
           {
+            boardId: row.id as string,
+            memberId: row.member_id as string,
             displayName: member.display_name,
+            isManaged: isManaged(member),
             readyAt: row.ready_at as string | null,
             sealedAt: row.sealed_at as string | null,
-            // Exactly `controlled_member_ids()`, and used only so the Family screen
-            // cannot read "waiting on Derek" to Derek.
+            // Exactly `controlled_member_ids()`. Used for two things and neither is a
+            // permission: so the Family screen cannot read "waiting on Derek" to Derek,
+            // and so the strip can mark which face is the caller's own.
             isSelf: isControlledBy(member, accountId),
           },
         ];
