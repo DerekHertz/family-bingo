@@ -304,3 +304,100 @@ and the documents should be corrected so the next reader does not undo it.
 See [`../README.md`](../README.md) → "Deploying to a Supabase project". The two Vault
 secrets and the Edge Function secret are already set on the live project; a new project
 needs them again, and `notification_preferences` is backfilled by its own migration.
+
+---
+
+## The web deployment, and what is still open
+
+Written at the end of the session that put the app on the internet. Everything above this
+line is about building the product; this is about running it.
+
+### Where it is
+
+**https://family-bingo.pages.dev** — Cloudflare Pages, deployed from GitHub Actions after
+the suites pass. Supabase project `sugmraaaybgczbxiribw` (free tier, us-west-2).
+
+- `/` is a landing page a stranger can read. `/signin` is the sign-in screen. `/demo` opens
+  a read-only Family.
+- **Google is the only sign-in route on web.** Apple needs the paid programme for a Service
+  ID; the magic link needs an SMTP provider, which needs a domain. Both are still coded and
+  dormant — the sign-in screen hides what it cannot complete rather than offering a control
+  that answers "isn't set up yet".
+- **Sign-up is invite-only** (`signup_allowlist`, migration 37), enforced in the trigger on
+  `auth.users`. It gates **every** identity GoTrue creates, including admin-API creates —
+  the two are byte-identical at the database, probed both ways.
+- `familybingo.app` is earmarked and unbought. Buying it turns the magic link back on and
+  gives the site a URL worth putting on a CV.
+
+### Two bugs left open, both in the demo
+
+1. **The demo offers controls it refuses.** "Create a Family" and "Join a Family" render on
+   `/home` for the demo Account, and migration 39 answers both with
+   `42501 the demo Account cannot change anything`. §0.3: never offer a retry that cannot
+   work. Fix is to hide them when `isDemoAccount(session.user.email)` — `src/domain/demo.ts`
+   already exports the predicate.
+2. **The demo session persists and collides with a real one.** It is an ordinary Supabase
+   session in `sessionStorage`, so opening the demo and then signing in properly can leave
+   the demo Board on screen. "Leave" should be a real sign-out, and entering the demo should
+   probably refuse (or warn) when somebody is already signed in as themselves.
+
+### Things that cost time here, in the order they will cost it again
+
+- **Cloudflare Pages silently drops anything under a `node_modules` path.** A font imported
+  from `@expo-google-fonts` lands at `/assets/node_modules/…`, the deploy goes green, every
+  request 404s into the SPA fallback, and the app renders in system faces. Nothing reports
+  it. Fonts are vendored under `assets/fonts/` for this reason and `deploy.yml` fails the
+  build if one reappears under that path.
+- **`Alert.alert` is a no-op on react-native-web** — literally `static alert() {}`. Four
+  destructive confirms did nothing on the deployed build. Use `<ConfirmSheet>`; do not
+  reintroduce `Alert`.
+- **The database URL is the recurring trap.** Three separate hours went to it: a
+  `[YOUR_PASSWORD]` placeholder left in a secret; `DEMO_DB_URL` set without `export`, so the
+  demo seeded a laptop while production stayed empty; and the **session pooler needs the
+  username `postgres.<project-ref>`**, not plain `postgres` — the pooler reports the wrong
+  username as a password failure. `scripts/seed-demo-family.mjs` now prints its target
+  before writing.
+- **`workflow_run` did not fire the deploy** after CI passed, during and after a GitHub
+  Actions outage. `gh workflow run Deploy --ref main` is the manual path. If it keeps not
+  firing, make the deploy a job in `ci.yml` gated on `gate` and `main` instead.
+- **Web-only bugs are invisible to every suite.** The callback spinner, the dead confirms
+  and the missing fonts all passed 758 unit tests, 953 pgTAP assertions and 24 integration
+  tests. A small Playwright smoke test — load the deployed build, assert a font loaded,
+  click a confirm, assert the sheet appears — would have caught all three. **Not built.**
+
+### Running the demo seed
+
+Needs three exported variables. The banner it prints first says which database it chose;
+if it says LOCAL when you meant production, stop.
+
+```sh
+export DEMO_DB_URL='postgresql://postgres.<ref>:<password>@aws-1-us-west-2.pooler.supabase.com:5432/postgres'
+export SUPABASE_URL='https://<ref>.supabase.co'
+export SUPABASE_SERVICE_ROLE_KEY='eyJ...'   # the service_role JWT, never a sb_secret_ key
+node scripts/seed-demo-family.mjs
+```
+
+`awards: 0` with `wrap: HTTP 503` means the Edge Function cold-started; re-run `wrap` rather
+than re-seeding. Seeding locally leaves a demo Family in the stack, which breaks the pgTAP
+suites that do `select id from families limit 1` — `npx supabase db reset` before running
+them.
+
+### Verified from outside, and worth re-checking after any change to migration 39
+
+With a real demo session: only the demo Family is visible, only its four Members, an
+Increment insert is refused `42501` at RLS (the Year is frozen), and `create_family` and
+`create_managed_member` are both refused by the demo guard.
+
+### Still to do
+
+- The two demo bugs above.
+- **Make the repo public and protect `main`** — require only the `gate` check, block
+  force-push and deletion, allow self-merge. Deliberately left until CI was demonstrably
+  working. `DEV_LOGIN_SECRET` is already unset on the live project.
+- A screen recording at `public/demo.mp4` with a poster at `public/demo-poster.png`. The
+  landing page HEADs the file and checks its content type, so it renders nothing until one
+  exists — `_redirects` answers a missing file with `index.html` at 200, which a naive
+  `<video>` would show as a broken frame forever.
+- The Playwright smoke test.
+- `docs/api.md` still documents functions and signatures that have moved; it has been
+  corrected twice and is worth a full pass.
