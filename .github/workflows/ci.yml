@@ -78,6 +78,60 @@ jobs:
               - 'supabase/**'
               - 'lib/queries/**'
 
+  # The workflows themselves, and the shell inside them.
+  #
+  # `tsc` plus three suites that are lint rules with no linter behind them cover the
+  # TypeScript (see `checks` below), and that argument is why this repo has no ESLint job.
+  # It says nothing about *these* files. A workflow is shell embedded in YAML, checked by
+  # nothing, and run with this repository's token — and `deploy.yml`'s own comments describe
+  # being "one wrong `if:` away from a fork's branch reaching CLOUDFLARE_API_TOKEN", which
+  # is precisely the class actionlint reads expressions to catch. It also runs shellcheck
+  # over every `run:` block, which is the other half of the same gap.
+  #
+  # Pinned by digest for the reason `changes` pins an action to a commit: a tag is a
+  # mutable pointer somebody else can move, and trusting one is granting arbitrary code
+  # execution inside a job that can see this repository.
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+
+      # The migration guard is the one piece of shell here with enough branching to be
+      # worth its own tests, and the case that decides whether anybody keeps it — a
+      # migration's prose about dropping a column is not dropping a column — is the kind
+      # that only a test pins down.
+      - name: The migration guard's own tests
+        run: bash scripts/check-migrations-additive.test.sh
+
+  # Migrations that would break the client that is already deployed.
+  #
+  # `deploy.yml` refuses to ship a bundle whose migrations have not reached production, so
+  # the client can never overtake the schema. This is the other direction, which that gate
+  # cannot see — see the head of the script for the argument. No secrets, so it is safe in
+  # the workflow that runs on pull requests from forks.
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The diff needs the base commit, which a shallow clone may not contain.
+          fetch-depth: 0
+
+      - name: New migrations are additive, or say why not
+        env:
+          # Through the environment rather than interpolated into the script, for the
+          # reason `gate` gives below.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/check-migrations-additive.sh
+
   # `tsc` and the pure suites. Nothing here touches Docker or the network.
   checks:
     runs-on: ubuntu-latest
@@ -212,7 +266,7 @@ jobs:
   # wave through a PR whose database suites never ran.
   gate:
     if: always()
-    needs: [changes, checks, build, database]
+    needs: [changes, checks, build, database, migrations, workflows]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either succeeded or had nothing to do
@@ -224,10 +278,12 @@ jobs:
           checks: ${{ needs.checks.result }}
           build: ${{ needs.build.result }}
           database: ${{ needs.database.result }}
+          migrations: ${{ needs.migrations.result }}
+          workflows: ${{ needs.workflows.result }}
         run: |
           set -u
           failed=0
-          for job in changes checks build database; do
+          for job in changes checks build database migrations workflows; do
             result="${!job}"
             case "$result" in
               # `skipped` is a pass: it is what `database` reports on a PR that could not

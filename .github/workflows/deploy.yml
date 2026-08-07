@@ -92,6 +92,97 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # **The schema this bundle needs has to already be in production.**
+      #
+      # Two artifacts have to agree and they ship by different mechanisms: the schema by
+      # `supabase db push`, run by hand, and this bundle automatically on every green CI
+      # run on `main`. Nothing compared them, so the automatic half could — and did —
+      # overtake the manual one. A client selecting a column the database does not have
+      # gets `42703` from PostgREST on nearly every screen, which is a total outage that
+      # arrives at merge time and has nothing to do with the merge.
+      #
+      # This is that comparison, and it does not fix the ordering — it refuses to ship
+      # into it. Someone still runs `supabase db push`. Automating that here was the
+      # obvious alternative and was not taken: it hands an unattended pipeline arbitrary
+      # DDL over production, `db push` is not transactional across files so a half-applied
+      # set is reachable, and the weekly backup that would make either survivable had never
+      # once succeeded until the day this was written. Worth revisiting once a restore has
+      # been tested.
+      #
+      # First, before `npm ci` and the export: the answer does not depend on either, and a
+      # deploy that is going to be refused should be refused in ten seconds.
+      #
+      # Failing here leaves the site on its previous build, which is the correct outcome —
+      # and it stays failing for every later commit too, including unrelated ones, until
+      # the schema catches up. That is not a bug in the check; it is the true state.
+      - name: The schema this bundle needs is already in production
+        env:
+          # Carries the database password. Never let it become an argument on a line that
+          # gets logged — `set -x` must not appear in this step.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set, so there is no way to prove the"
+            echo "::error::schema is ahead of this bundle. Refusing to deploy blind."
+            exit 1
+          fi
+          if ! command -v psql > /dev/null; then
+            echo "::error::psql is not on PATH on this runner."
+            exit 1
+          fi
+
+          # `supabase db push` records every applied migration here by its numeric prefix.
+          # A client older than the server is fine for one `select`; only `pg_dump` refuses
+          # across major versions, which is backup.yml's problem and not this one.
+          applied="$(psql "$SUPABASE_DB_URL" -Atqc \
+            'select version from supabase_migrations.schema_migrations order by version')"
+
+          missing=""
+          for file in supabase/migrations/*.sql; do
+            version="${file##*/}"
+            version="${version%%_*}"
+            printf '%s\n' "$applied" | grep -qxF "$version" || missing="${missing}  ${file##*/}"$'\n'
+          done
+
+          # The other direction: production has something the repo does not. It cannot
+          # break the bundle being shipped, so it does not block — but the migrations are
+          # the authority on this schema (schema.md), and a database that has quietly
+          # stopped matching them is worth saying out loud every single deploy.
+          ahead=""
+          while IFS= read -r version; do
+            [ -n "$version" ] || continue
+            ls supabase/migrations/"${version}"_*.sql > /dev/null 2>&1 || ahead="${ahead}  ${version}"$'\n'
+          done <<< "$applied"
+
+          if [ -n "$ahead" ]; then
+            echo "::warning::Production has migrations this commit does not. Somebody"
+            echo "::warning::changed the schema out of band, or a branch was pushed to it:"
+            printf '%s' "$ahead"
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::This bundle would query a schema production does not have yet."
+            echo "Unapplied migrations:"
+            printf '%s' "$missing"
+            cat <<'WHY'
+
+          Deploying now would put a client in front of its own schema, and PostgREST
+          answers 42703 — "column does not exist" — on every query that names a new
+          column. Apply them first, then re-run this workflow:
+
+            npx supabase db push
+
+          The site stays on its previous build until then, which is why this is a
+          refusal rather than a warning.
+
+          WHY
+            exit 1
+          fi
+
+          echo "All $(printf '%s\n' "$applied" | grep -c . ) migrations are applied."
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
