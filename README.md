@@ -146,6 +146,23 @@ protected: every change goes through a pull request and the CI gate has to be gr
 
 ## Deploying to a Supabase project
 
+> **The schema goes first, and there is no exception.** `supabase db push` is run by hand;
+> the web bundle deploys by itself on every green CI run on `main`. So a merge ships the
+> client and nothing ships the schema — and a client that selects a column the database
+> does not have gets `42703` from PostgREST on nearly every screen. Push the migrations,
+> *then* merge.
+>
+> `deploy.yml` enforces this: it reads `supabase_migrations.schema_migrations` before it
+> uploads anything and refuses to ship a bundle whose migrations have not been applied.
+> The failure is a red Deploy run with the site left on its previous build. Apply the
+> migrations and re-run the workflow — the manual `workflow_dispatch` exists for exactly
+> that. It stays red for later commits too, including unrelated ones, until the schema
+> catches up; that is the true state and not a bug in the check.
+>
+> This holds only while migrations **add**. One that drops or retypes something the
+> deployed bundle still uses breaks the site at the moment of the push instead — see
+> `scripts/check-migrations-additive.sh`, which is the pull-request half of the same rule.
+
 Four steps, and only the first three need a human. Run them once per project.
 
 ```sh
