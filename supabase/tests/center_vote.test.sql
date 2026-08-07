@@ -49,7 +49,8 @@ $$;
 create or replace function close_window(family text) returns void
 language plpgsql security definer as $$
 begin
-  update years y set setup_deadline = now() - interval '1 minute'
+  update years y set setup_deadline = now() - interval '1 minute',
+                     play_opens_at  = now() - interval '1 minute'
    where y.family_id = (select f.id from families f where f.name = close_window.family);
   update votes v set closes_at = now() - interval '1 minute'
    where v.year_id in (select y.id from years y

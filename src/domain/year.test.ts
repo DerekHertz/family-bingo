@@ -3,6 +3,8 @@ import {
   daysUntilSeal,
   hasOpenSetupWindow,
   openableYear,
+  playHasOpened,
+  playOpensCopy,
   relevantYear,
   sealCopy,
   setupDeadline,
@@ -163,5 +165,61 @@ describe('hasOpenSetupWindow (§5.1)', () => {
 
   it('is false for a Family with no Years', () => {
     expect(hasOpenSetupWindow([])).toBe(false);
+  });
+});
+
+describe('playHasOpened (§22.5)', () => {
+  const newYear = at('2027-01-01T05:00:00Z'); // 1 January in New York.
+
+  it('is false while the Boards are sealed and the Year has not started', () => {
+    // The whole point of the slice: a Family who finish in December seal in December.
+    expect(playHasOpened(at('2026-12-20T12:00:00Z'), newYear)).toBe(false);
+  });
+
+  it('is true at the very instant the Year begins', () => {
+    expect(playHasOpened(newYear, newYear)).toBe(true);
+  });
+
+  it('is true once the Year is under way', () => {
+    expect(playHasOpened(at('2027-03-01T12:00:00Z'), newYear)).toBe(true);
+  });
+
+  /**
+   * A Year opened inside its own calendar year — the March Family from `openableYear` —
+   * has this instant in the past from the moment it exists, so play opens the moment the
+   * Boards seal and nothing waits on anything.
+   */
+  it('is already true for a Year opened during itself', () => {
+    expect(playHasOpened(at('2027-03-01T12:00:00Z'), at('2027-01-01T00:00:00Z'))).toBe(true);
+  });
+});
+
+describe('playOpensCopy (§4.5)', () => {
+  const newYear = at('2028-01-01T00:00:00Z');
+
+  it('says nothing once the Year is under way', () => {
+    expect(playOpensCopy(at('2028-03-01T12:00:00Z'), newYear)).toBeNull();
+  });
+
+  it('counts sleeps, not 24-hour blocks', () => {
+    expect(playOpensCopy(at('2027-12-25T14:00:00Z'), newYear)).toBe('play opens in 7 days');
+  });
+
+  it('reads as tomorrow the day before', () => {
+    expect(playOpensCopy(at('2027-12-31T09:00:00Z'), newYear)).toBe('play opens tomorrow');
+  });
+
+  it('reads as today on the day itself', () => {
+    // Midnight has not struck in this Family's zone, but the date has changed.
+    expect(playOpensCopy(at('2028-01-01T00:00:00Z'), at('2028-01-01T05:00:00Z'))).toBe(
+      'play opens today',
+    );
+  });
+
+  it('never urges', () => {
+    for (const now of ['2027-12-01', '2027-12-28', '2027-12-31']) {
+      const copy = playOpensCopy(at(`${now}T00:00:00Z`), newYear);
+      expect(copy).not.toMatch(/hurry|last chance|don.t miss|!/i);
+    }
   });
 });

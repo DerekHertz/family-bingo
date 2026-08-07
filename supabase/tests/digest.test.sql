@@ -164,7 +164,8 @@ select write_goal(tile_of('Bob', 0), 'Swim', 5, 'swims');
 
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = family_named('Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');

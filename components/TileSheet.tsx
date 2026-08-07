@@ -106,8 +106,18 @@ interface Props {
    * Board" into one flag, and the one sentence behind it told an owner looking at their
    * own frozen Board *"Only this member can log progress here."* Two different facts
    * deserve two different sentences (§0.3).
+   *
+   * `not-open-yet` is §22.5's, and it is the opposite of `frozen` rather than a variant of
+   * it: the Year has not started instead of having ended. A Family who all marked their
+   * Boards done in December are looking at a finished, correct board that simply cannot
+   * take a tap until January, and "nothing more can be logged" would be exactly wrong.
    */
-  blocked: 'frozen' | 'not-yours' | null;
+  blocked: 'frozen' | 'not-yours' | 'not-open-yet' | null;
+  /**
+   * When play opens, already phrased — `playOpensCopy`. Read only when `blocked` is
+   * `not-open-yet`, and null otherwise.
+   */
+  opensIn?: string | null;
   /** Set when the last write failed. Already phrased — see `incrementFailureCopy`. */
   failure: string | null;
   /**
@@ -164,6 +174,7 @@ export function TileSheet({
   recent,
   recentPending,
   blocked,
+  opensIn = null,
   failure,
   notice,
   queued,
@@ -544,7 +555,12 @@ export function TileSheet({
             >
               {blocked === 'frozen'
                 ? 'This year is finished. Nothing more can be logged.'
-                : `${ownerName ?? 'This member'} logs progress on this one.`}
+                : blocked === 'not-open-yet'
+                  ? // Factual, and not an apology (§4.5). The board is sealed because the
+                    // Family said it was done — this sentence is the consequence of their
+                    // own tap, not a fault.
+                    `Your board is set${opensIn === null || opensIn === undefined ? '' : ` — ${opensIn}`}.`
+                  : `${ownerName ?? 'This member'} logs progress on this one.`}
             </Text>
           )}
 

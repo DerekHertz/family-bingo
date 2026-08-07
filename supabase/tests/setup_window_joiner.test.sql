@@ -107,7 +107,8 @@ select lives_ok(
 -- ---------------------------------------------------------------------------------------
 
 select act_as_postgres();
-update years set setup_deadline = now() - interval '1 minute' where family_id = :'family_id';
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute' where family_id = :'family_id';
 update votes set closes_at = now() - interval '1 minute'
  where year_id = (select id from years where family_id = :'family_id');
 

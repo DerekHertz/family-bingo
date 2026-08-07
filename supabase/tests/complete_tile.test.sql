@@ -130,7 +130,8 @@ select open_year((select id from families where name = 'Hertzell Family'), 2027)
 select write_goal(tile_of('Alice', 0), 'Walk the dog', 3, 'walks');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
@@ -249,7 +250,8 @@ insert into ballots (vote_id, member_id, proposal_id)
   select v.id, member_of('Chidi'), '00000000-0000-4000-8000-0000000000d1'
     from votes v where v.year_id = year_of('Okonkwo Family') and v.kind = 'goal';
 
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where id = year_of('Okonkwo Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Okonkwo Family');

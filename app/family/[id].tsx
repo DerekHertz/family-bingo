@@ -20,7 +20,7 @@ import { SeatPips } from '../../components/SeatPips';
 import { useAnnounce } from '../../lib/announce';
 import { useIsDemo } from '../../lib/demo';
 import { failure } from '../../lib/failure';
-import { useMyBoards } from '../../lib/queries/boards';
+import { useMyBoards, useYearReadiness } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
 import {
   SEATS,
@@ -38,17 +38,26 @@ import {
   sealCopy,
 } from '../../src/domain/year';
 import { draftProgress } from '../../src/domain/goal';
+import { type Readiness, readiness, readinessCopy } from '../../src/domain/ready';
 import { joinedMarkerInline } from '../../src/domain/joining';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
 
-/** One phrase, used by both the visible text and the accessibility label. */
-const yearSays = (year: {
-  status: string;
-  setup_deadline: string;
-}): string =>
+/**
+ * One phrase, used by both the visible text and the accessibility label.
+ *
+ * The Setup Window's copy now has two halves and both are facts about the same Year: when
+ * the date will decide it, and where the Family have got to on their own (§22.3). Either
+ * one alone is misleading — a countdown says nothing about a Family who are all finished
+ * and about to seal, and "everyone is done" says nothing about the deadline that still
+ * backstops a Family who never are.
+ */
+const yearSays = (
+  year: { status: string; setup_deadline: string },
+  ready: Readiness,
+): string =>
   year.status === 'setup'
-    ? sealCopy(new Date(), new Date(year.setup_deadline))
+    ? `${sealCopy(new Date(), new Date(year.setup_deadline))} · ${readinessCopy(ready)}`
     : year.status === 'active'
       ? 'under way'
       : 'finished';
@@ -117,6 +126,20 @@ export default function FamilyRoster() {
   // itself — `boards_read` is Family-wide, so an unfiltered list would offer links to
   // Boards write_goal() refuses.
   const myBoards = useMyBoards(current?.id, session?.user.id);
+
+  // §22.3 — where the whole Family has got to, which is the opposite scope from
+  // `myBoards`: "waiting on Bob" is a fact about the Family, and a list narrowed to the
+  // caller's own Boards can only ever say the caller is waiting on themselves. Asked only
+  // while the Year is still being authored; afterwards there is nobody left to wait for.
+  const familyReadiness = useYearReadiness(
+    current?.status === 'setup' ? current.id : undefined,
+    session?.user.id,
+  );
+
+  // Empty until the query resolves, or while the Year is not in setup and it never runs —
+  // which `readinessCopy` renders as "no boards yet" and `yearSays` only ever asks for
+  // during the Setup Window.
+  const readyState = readiness(familyReadiness.data ?? []);
 
   if (roster.isPending || families.isPending) return <Loading what="Loading the roster" />;
 
@@ -189,11 +212,7 @@ export default function FamilyRoster() {
       {current === undefined ? null : (
         <View
           accessible
-          accessibilityLabel={`${current.calendar_year}, ${
-            current.status === 'setup'
-              ? sealCopy(new Date(), new Date(current.setup_deadline))
-              : current.status
-          }`}
+          accessibilityLabel={`${current.calendar_year}, ${yearSays(current, readyState)}`}
           style={{
             marginTop: space.lg,
             padding: space.md,
@@ -207,7 +226,7 @@ export default function FamilyRoster() {
           {/* The label and the visible text are the same words: a screen reader saying
               "frozen" where the screen says "finished" is two different apps (§6 A1). */}
           <Text style={{ ...styles.label, color: color.ink2, marginTop: space.xs }}>
-            {yearSays(current)}
+            {yearSays(current, readyState)}
           </Text>
         </View>
       )}
@@ -284,7 +303,11 @@ export default function FamilyRoster() {
           // saying something different from the screen is two different apps (§6 A1), and
           // this file already makes that argument about "frozen" versus "finished".
           accessibilityLabel={`${b.memberName}: ${
-            b.sealedAt === null ? `${draftProgress(b.written)} goals written` : 'board sealed'
+            b.sealedAt !== null
+              ? 'board sealed'
+              : b.readyAt !== null
+                ? 'board done, waiting for the family'
+                : `${draftProgress(b.written)} goals written`
           }${b.joinedLateAt === null ? '' : `, ${joinedMarkerInline(b.joinedLateAt, timezone)}`}`}
           accessibilityHint="Opens the drafting table"
           onPress={() => router.push({ pathname: '/board/[id]', params: { id: b.id } })}
@@ -311,7 +334,14 @@ export default function FamilyRoster() {
                 removed ranking, so there is nothing here to be behind in. */}
             <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xs }}>
               {[
-                b.sealedAt === null ? draftProgress(b.written) : 'sealed',
+                // §22.2 — three states, not two. A Board that is full and declared done is
+                // not the same as one still being written, and "24 of 24" said nothing
+                // about whether its owner had finished with it.
+                b.sealedAt !== null
+                  ? 'sealed'
+                  : b.readyAt !== null
+                    ? 'done'
+                    : draftProgress(b.written),
                 b.joinedLateAt === null
                   ? null
                   : joinedMarkerInline(b.joinedLateAt, timezone),

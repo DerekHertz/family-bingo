@@ -119,8 +119,10 @@ with no Year at all, so filtering by Year loses nothing.
 | `cast_ballot(vote_id, member_id, choice_mode, proposal_id)` | Upsert Ballot | Controlled Member, Vote open |
 | `set_organizer_tiebreak(vote_id, proposal_id)` | Names the Organizer's pick among tied leaders (ADR-0007) | Organizer only |
 | `resolve_center_vote(year_id)` | Resolves both Votes, applies §8.3 / §9.3 fallbacks | `pg_cron` or Organizer, Setup Window closed |
-| `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent |
-| `seal_due_boards()` | The sweep: every Year past its deadline, then §21.1 stragglers | `pg_cron` |
+| `seal_year(year_id)` | Resolves the Center Vote, then seals every Board, Year → `active` | `pg_cron` or Organizer, idempotent — and refuses before the deadline unless every Board is ready (§22.1) |
+| `seal_due_boards()` | The sweep: every Year past its deadline **or unanimously ready**, then §21.1 stragglers | `pg_cron` |
+| `mark_board_ready(board_id)` | Records that this Member is done, and seals the Year if that was the last Board — or seals a late joiner's Board alone (§22.2, §22.6) | Controlled Member, Board unsealed and complete, Year not frozen |
+| `clear_board_ready(board_id)` | Takes it back, which stays possible until the seal (§22.4) | Controlled Member, Board unsealed |
 | `remaining_year_fraction(target_year_id, at default now())` | How much of the Year is left, for Sharpening's Targets (§7.7, §21.3) | Any Member who can see the Year |
 | `complete_family_goal(year_id, member_id)` | Marks the Family Goal done, completing Tile 12 for every Member at once (§12.3) | Controlled Member of that Family, Year not frozen, idempotent |
 | `swap_tile(tile_id, goal_text, target)` | Revision + `swaps_used += 1`. Raising a Target is free and writes neither (§18.3) | Sealed Board, Tile incomplete, not the shared centre, budget remaining |
@@ -390,9 +392,10 @@ sequenceDiagram
     participant DB as Postgres
     participant N as notify
 
-    Note over Cron,DB: — Setup Window closes —
+    Note over Cron,DB: — Setup Window closes: the deadline, or everyone ready (§22) —
     Cron->>DB: seal_due_boards()
-    DB->>DB: seal_year(year), per Year past its deadline
+    DB->>DB: seal_year_now(year), per Year past its deadline or unanimously ready
+    Note right of DB: the unanimous case usually seals inside<br/>mark_board_ready() already — this is the<br/>backstop for a transaction that failed.
     DB->>DB: resolve_center_vote(year)
     Note right of DB: mode: majority of Ballots CAST.<br/>tie or zero → personal.<br/>Silence never blocks.
     alt shared won
@@ -401,6 +404,7 @@ sequenceDiagram
     end
     DB->>DB: sealed_at → every Board, Year → active
     Note right of DB: seals whether or not authoring<br/>finished. Empty Tiles cost a Swap later —<br/>except a personal Tile 12, free for 7 days (§9.5).
+    Note right of DB: sealing does NOT open play. Increments wait<br/>for years.play_opens_at — 1 Jan in the Family<br/>timezone — which an early seal precedes (§22.5).
     DB->>N: "your board is sealed"
 
     Note over Cron,DB: — Dec 31, 23:59 in Family timezone —
@@ -464,6 +468,8 @@ photographs.
 | Duplicate Increment | Upsert no-op | Invisible to the user |
 | Swap with 0 budget | `403` | "You've used all 3 Swaps this year" |
 | Edit a sealed Tile | `403` | Offer a Swap instead |
+| Mark an unfinished Board done | `403` (`PT409`) | Never offered: the control appears only on a full Board |
+| Log, or finish the Family Goal, before the Year opens | `403` (RLS, or `PT425`) | Never offered: the board says when play opens instead |
 | Expired Invitation | `410` | "This invitation has expired — ask for a new one" |
 
 **RLS denial returns zero rows, not a 403.** That is intentional: a 403 confirms the

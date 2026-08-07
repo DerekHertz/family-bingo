@@ -115,7 +115,8 @@ select write_goal(tile_of('Alice', 1), 'Read more books', 12, 'books');
 
 -- Nobody votes, so the centre falls back to personal (§8.3) and the Boards seal.
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id in (select id from years
@@ -136,10 +137,17 @@ select write_goal(tile_of('Alice', 12), 'Learn to sail', 4, 'trips');
 -- Aged so the boundary tests below are distinguishable: without this, sealed_at and
 -- now() are the same instant inside one transaction, and "refused for predating the
 -- seal" and "clamped back to now" would be indistinguishable assertions.
+--
+-- The Year is aged with the Board. Since §22 the floor under `occurred_at` is the LATER
+-- of the seal and the start of play, so a Board sealed ninety days ago inside a Year that
+-- opened a minute ago is a Board nobody could have tapped ninety days ago — and every
+-- boundary assertion below would be measuring the wrong instant.
 select set_config('role', 'postgres', true);
 update boards set sealed_at = now() - interval '90 days'
  where year_id in (select id from years
                     where family_id = (select id from families where name = 'Hertzell Family'));
+update years set play_opens_at = now() - interval '90 days'
+ where family_id = (select id from families where name = 'Hertzell Family');
 
 -- ---------------------------------------------------------------------------------
 -- §11.1, §11.4 — the acceptance test: one tap
@@ -290,7 +298,8 @@ insert into ballots (vote_id, member_id, proposal_id)
    where y.family_id = (select id from families where name = 'Okonkwo Family')
      and v.kind = 'goal';
 
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Okonkwo Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id in (select id from years

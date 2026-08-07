@@ -20,10 +20,19 @@ import { celebrate } from '../../lib/celebrate';
 import { leaveTo } from '../../lib/leave';
 import { Board, type LineCelebration } from '../../components/Board';
 import { Button } from '../../components/Button';
+import { ConfirmSheet, type Confirmation } from '../../components/ConfirmSheet';
 import { ErrorState, Loading } from '../../components/Screen';
 import { SwapSheet, type SwapCandidate } from '../../components/SwapSheet';
 import { TileSheet, type SheetTile } from '../../components/TileSheet';
-import { useBoard, useBoardHead, useTileCounts } from '../../lib/queries/boards';
+import {
+  readyFailureCopy,
+  useBoard,
+  useBoardHead,
+  useClearBoardReady,
+  useMarkBoardReady,
+  useTileCounts,
+  useYearReadiness,
+} from '../../lib/queries/boards';
 import {
   incrementFailureCopy,
   photoOutcomeCopy,
@@ -56,7 +65,8 @@ import { joinedMarkerInline, lateJoinerNote } from '../../src/domain/joining';
 import { columnOf, completedLines, lineName, rowOf } from '../../src/domain/lines';
 import { longDate } from '../../src/domain/when';
 import { AUTHORABLE_TILES, CENTER_POSITION, draftProgress, remainingCopy, targetSummary } from '../../src/domain/goal';
-import { sealCopy } from '../../src/domain/year';
+import { boardIsComplete, readiness, readinessCopy } from '../../src/domain/ready';
+import { playHasOpened, playOpensCopy, sealCopy } from '../../src/domain/year';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
 
@@ -97,6 +107,18 @@ export default function DraftingTable() {
   );
   // §4.4: "One confirm sheet, then compose." This is the sheet's subject.
   const [swapping, setSwapping] = useState<SwapCandidate | null>(null);
+  // §22.2's confirm. Held as state rather than opened imperatively — see ConfirmSheet, and
+  // the four destructive controls that did nothing at all on the web build.
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  // §22 — who else the Family is waiting for, which is what makes "done" mean something
+  // other than "done, and now what". Only while the Year is still being authored: once it
+  // seals there is nobody left to wait for.
+  const yearReadiness = useYearReadiness(
+    head.data?.year.status === 'setup' ? head.data.year.id : undefined,
+    session?.user.id,
+  );
+  const markReady = useMarkBoardReady(id ?? '');
+  const clearReady = useClearBoardReady(id ?? '');
   // §17.3 — how many taps are on this handset rather than on the server. Read here rather
   // than in the sheet because components in this codebase do no fetching of their own.
   const queued = useQueuedCount();
@@ -189,6 +211,20 @@ export default function DraftingTable() {
   const written = authorable.filter((t) => t.goal !== null);
   const firstEmpty = authorable.find((t) => t.goal === null);
   const sealed = head.data.sealedAt !== null;
+
+  // §22.5 — two questions where there used to be one.
+  //
+  // "Has this Board sealed" and "has this Year begun" were the same fact until a Family
+  // could finish early, and reading the first as the second is the mistake the whole slice
+  // exists to prevent: a Family who all mark done on 20 December seal on the 20th and start
+  // on 1 January. `tile_is_loggable()` checks both server-side; this is so the screen never
+  // offers a tap that would come back 42501 (§0.3).
+  const playOpen = playHasOpened(new Date(), new Date(head.data.year.playOpensAt));
+  const opensIn = playOpensCopy(
+    new Date(),
+    new Date(head.data.year.playOpensAt),
+    head.data.timezone,
+  );
 
   // Exactly the two conditions `write_goal()` gates on, and no third.
   //
@@ -297,12 +333,26 @@ export default function DraftingTable() {
     // Two different facts, not one flag. A single boolean told an owner looking at their
     // own frozen Board "Only this member can log progress here", which is false and
     // unhelpable. The Centre's own gate lives in `SheetTile.isCentre`.
-    const blocked: 'frozen' | 'not-yours' | null =
+    // The third one is §22.5's: a Board that sealed early is finished and correct and
+    // simply not playable yet. It is its own reason rather than a fourth meaning stuffed
+    // into 'frozen', because the two are opposites — one is a Year that has ended and one
+    // is a Year that has not started, and "nothing more can be logged" is the wrong
+    // sentence for a Member looking at a board they are about to spend a year on.
+    const blocked: 'frozen' | 'not-yours' | 'not-open-yet' | null =
       head.data.year.status === 'frozen'
         ? 'frozen'
         : !head.data.controlled
           ? 'not-yours'
-          : null;
+          : !playOpen
+            ? 'not-open-yet'
+            : null;
+
+    // Swapping is a different question from logging, and §22.5 is where they come apart.
+    // A Board sealed before its Year starts takes no Increment — there is no progress to
+    // make yet — but it is already a commitment, so changing it costs a Swap exactly as it
+    // would in March (§10.3). Refusing both would leave a Member who spotted a typo on 21
+    // December holding a board nobody could touch for a fortnight.
+    const swapBlocked = blocked !== null && blocked !== 'not-open-yet';
 
     // §4.4 — may this square be swapped at all?
     //
@@ -313,7 +363,7 @@ export default function DraftingTable() {
     // specific rewrite costs is the compose screen's question (§18.3).
     const swapAllowed =
       sheetTile !== null &&
-      blocked === null &&
+      !swapBlocked &&
       head.data.sealedAt !== null &&
       evaluateGoalRewrite(
         {
@@ -333,7 +383,7 @@ export default function DraftingTable() {
     // above minus the two that cannot apply — an empty Tile is never the shared Centre and
     // never complete — so what is left is the Year, the Board and the budget.
     const emptyFillable =
-      blocked === null &&
+      !swapBlocked &&
       head.data.sealedAt !== null &&
       evaluateGoalRewrite(
         {
@@ -438,6 +488,12 @@ export default function DraftingTable() {
             </View>
           )}
 
+          {/* Two sentences rather than one, and the second only when it is true. A Family
+              who finished early are looking at a board that has sealed months before the
+              Year it belongs to — "changing a goal now costs a swap" is still exactly
+              right, and on its own it would leave them wondering why the squares do not
+              respond. §4.5: a date, not a countdown, and nothing that reads as an
+              apology for a state they chose. */}
           <Text
             style={{
               ...styles.label,
@@ -446,7 +502,9 @@ export default function DraftingTable() {
               textAlign: 'center',
             }}
           >
-            This board has sealed. Changing a goal now costs a swap.
+            {opensIn === null
+              ? 'This board has sealed. Changing a goal now costs a swap.'
+              : `This board is set — ${opensIn}. Changing a goal now costs a swap.`}
           </Text>
 
           {/* The sealed Board's goals, readable as a list.
@@ -550,6 +608,7 @@ export default function DraftingTable() {
           recent={recent.data ?? []}
           recentPending={recent.isLoading}
           blocked={blocked}
+          opensIn={opensIn}
           failure={writeFailure}
           // The soft outcome of the last tap: it landed, and its photo did not (§16, §17.1).
           // Separate from `failure`, which is a write the server refused outright.
@@ -629,6 +688,27 @@ export default function DraftingTable() {
   }
   // Hoisted out of head.data because the narrowing above does not survive into a closure.
   const centreRoute = { yearId: head.data.year.id, familyId: head.data.familyId };
+
+  // §22.2 — a full Board is what makes the control available. `boardIsComplete` counts the
+  // squares as well as checking them, so a Tiles read that failed or paged short reads as
+  // unfinished rather than as a Board ready to seal four other people's.
+  const boardComplete = boardIsComplete(tiles);
+  const isReady = head.data.readyAt !== null;
+  // Hoisted for the same reason `centreRoute` is: the narrowing on `head.data` does not
+  // survive into the confirm sheet's closure.
+  const yearInSetup = head.data.year.status === 'setup';
+  const familyReadiness = readiness(yearReadiness.data ?? []);
+  // Whether this tap is the one that seals the Family. This Board is unready and therefore
+  // in `waitingOn` itself, so being alone in that list means nobody else is left. Derived
+  // from the count rather than by matching a display name, which two Members are entitled
+  // to share.
+  const lastOneWriting = !isReady && familyReadiness.waitingOn.length === 1;
+  const readyFailure =
+    markReady.error !== null
+      ? readyFailureCopy(markReady.error)
+      : clearReady.error !== null
+        ? readyFailureCopy(clearReady.error)
+        : null;
 
   const compose = (tileId: string) =>
     router.push({ pathname: '/board/goal', params: { boardId: id ?? '', tileId } });
@@ -796,23 +876,87 @@ export default function DraftingTable() {
           enough to reach the end of, and a pinned bar over a keyboard-adjacent screen
           costs more than it gives.
 
-          "Seal the board" is deliberately NOT a control. seal_year() refuses before the
-          Setup Window closes — an Organizer who could seal early would be taking authoring
-          time from everyone else, silently — so a button here would be a button to an
-          error. What is left is the true thing: how many squares are still empty, and
-          when the date will decide it. An unfinished Board seals with empty Tiles and that
-          is a legitimate outcome (§10.2), so this states a fact and asks for nothing. */}
-      {canWrite ? (
+          **"Seal the board" is still not a control, and this is not one.** §22 adds a
+          second door into the seal and it is unanimity, not authority: a Member says their
+          own Board is done, and the Boards seal when the last of them has. Nobody's window
+          is shortened by anyone else, and the date still arrives on schedule for a Family
+          who never finish (§10.1, §10.2). What changed is that a Family who HAVE finished
+          are no longer made to watch a countdown they have nothing left to do about.
+
+          The control appears only on a full Board, and only as a tap — never inferred from
+          the 24th Goal appearing. §6.4 makes a draft freely editable and people write all
+          24 and then reword them for three days; sealing on the last save would mean the
+          last person to type silently seals four Boards, and fixing a typo afterwards
+          costs a Swap (§18.5). */}
+      {canWrite && !boardComplete ? (
         <Button
-          label={firstEmpty === undefined ? 'All twenty-four written' : 'Write another'}
+          label="Write another"
           variant="primary"
-          disabled={firstEmpty === undefined}
           style={{ marginTop: space.xl }}
           onPress={() => {
             if (firstEmpty !== undefined) compose(firstEmpty.id);
           }}
         />
       ) : null}
+
+      {canWrite && boardComplete && !isReady ? (
+        <Button
+          label="I’m done"
+          variant="primary"
+          style={{ marginTop: space.xl }}
+          onPress={() =>
+            setConfirming({
+              title: 'Call this board done?',
+              // Three sentences would be a warning. What a Member needs is what changes
+              // and what does not, and which of the two they are doing depends on whether
+              // anyone else is still writing.
+              body: lastOneWriting
+                ? 'Everyone else is done, so every board in the family seals now — and the centre is decided on the votes cast so far.'
+                : yearInSetup
+                  ? 'You can take it back until the last person is done. When they are, every board seals.'
+                  : 'Your board seals now, and you can start logging progress today.',
+              confirmLabel: 'I’m done',
+              cancelLabel: 'Keep writing',
+              onConfirm: () => {
+                setConfirming(null);
+                markReady.mutate();
+              },
+            })
+          }
+        />
+      ) : null}
+
+      {/* Said plainly, because it is the whole of what happens next: this Member has
+          finished and the Family has not. Naming who is left is a fact about the Family
+          (§4.5) and never a nudge aimed at them (§0.3) — see `readinessCopy`. */}
+      {canWrite && isReady ? (
+        <View style={{ marginTop: space.xl }}>
+          <Text style={{ ...styles.body, color: color.ink, textAlign: 'center' }}>
+            {`Your board is done · ${readinessCopy(familyReadiness)}`}
+          </Text>
+          <Button
+            label="Actually, I’m still writing"
+            variant="text"
+            style={{ marginTop: space.md, alignItems: 'center' }}
+            onPress={() => clearReady.mutate()}
+          />
+        </View>
+      ) : null}
+
+      {/* Either mutation, one line: only one of them can be in flight from a footer that
+          shows one control at a time. */}
+      {readyFailure === null ? null : (
+        <Text
+          style={{
+            ...styles.body,
+            color: color.clayDeep,
+            marginTop: space.md,
+            textAlign: 'center',
+          }}
+        >
+          {readyFailure}
+        </Text>
+      )}
 
       <Text style={{ ...styles.label, color: color.ink3, marginTop: space.md, textAlign: 'center' }}>
         {/* True as written, and narrower than it looks: §9.5's free write after sealing
@@ -831,6 +975,8 @@ export default function DraftingTable() {
         style={{ marginTop: space.xl, alignItems: 'flex-start' }}
         onPress={() => leaveTo({ pathname: '/family/[id]', params: { id: head.data?.familyId ?? '' } })}
       />
+
+      <ConfirmSheet confirmation={confirming} onClose={() => setConfirming(null)} />
     </ScrollView>
   );
 }
