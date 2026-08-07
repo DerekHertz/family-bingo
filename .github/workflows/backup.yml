@@ -70,8 +70,21 @@ jobs:
       # `config.toml` pins `major_version = 17`, and **`pg_dump` refuses to dump a server
       # newer than itself** — it exits with "server version mismatch" and writes nothing.
       # ubuntu-latest ships the client from its own archive, which trails, so the PGDG
-      # repository is not optional here. Pinning the client to the same major version as
-      # the server is the whole of this step.
+      # repository is not optional here.
+      #
+      # **Installing postgresql-client-17 is not enough, and this is what went wrong.**
+      # `/usr/bin/pg_dump` is a *wrapper* from `postgresql-client-common`: it looks at the
+      # installed versions and dispatches to one of them, and its default is the highest
+      # version it considers "configured" — which on this runner stayed at 16, because
+      # ubuntu-latest already ships that client and the wrapper does not re-point itself
+      # when a newer one is added alongside. So the install succeeded, `pg_dump --version`
+      # printed 16.14, and every run aborted on "server version mismatch".
+      #
+      # Putting the versioned directory first on PATH is the fix. The assertion after it is
+      # the more important half: this workflow has no consumer watching it, so a silent
+      # drift back to a wrapper would mean discovering months later that there had never
+      # been a backup — which is precisely how this was found, with a production migration
+      # already queued up behind it.
       - name: postgresql-client 17
         run: |
           set -euo pipefail
@@ -82,7 +95,17 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: The pg_dump on PATH is actually 17
+        run: |
+          set -euo pipefail
           pg_dump --version
+          pg_dump --version | grep -qE '\(PostgreSQL\) 17\.' || {
+            echo "::error::pg_dump on PATH is not 17 — it would abort on server version"
+            echo "::error::mismatch and this backup would silently never exist."
+            exit 1
+          }
 
       - name: Dump and compress
         env:
