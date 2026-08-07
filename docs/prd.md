@@ -536,6 +536,39 @@ their own Year:
 - **22.6** A late joiner (§21.1) marking their Board done seals **their Board alone**, immediately. Nobody else's window is touched, the Centre was decided months ago (§21.2), and their Year is already under way — so there is nothing to wait for and a week of it to lose by waiting.
 - **22.7** Ready does **not** wait for a complete Center Vote. Ballots are changeable until the Setup Window closes (§8.1) and abstention is legitimate (§8.2) — requiring everyone to have voted would hand the quietest person in the Family exactly the veto §8.4 removes. What Ready does is bring the closing forward: **a Member's Ballot becomes final when the last Board is declared, which may be somebody else's tap and may be at any moment.** The confirm sheet must say so before the tap — to every Member, not only to whoever turns out to be last, because it is everyone else whose say can end without warning.
 
+### Slice 23 — Everyone's board
+
+**Acceptance test**
+> **Given** a Family whose Boards have sealed
+> **When** a Member taps another Member on the Family screen
+> **Then** that Board opens read-only — their Goals, their progress, their Milestones —
+> with no way to log, swap or edit anything, and the strip on its header reaches every
+> other sealed Board in the Family
+
+**What this is not.** It adds no permission. `boards_read` has been Family-wide since the
+RLS baseline — *"it has to be, because seeing everyone's Board is the whole game"* — and
+`/board/[id]` has always rendered a Board the caller does not control with every write
+affordance removed. That path has been reachable in production the whole time by tapping a
+push notification. The only thing missing was a way in that a person could find. **There is
+no migration in this slice.**
+
+**Requirements**
+
+- **23.1** A Member may open any other Member's **sealed** Board for a Year their Family shares. Read-only: no Increment, no Swap, no "We did it", no editing, and the tile sheet says whose Board it is instead of offering the controls.
+- **23.2** **Only after sealing.** During the Setup Window a Board is private to its author and their Guardian. The Family learns *that* somebody has finished — §22's readiness, already public — and never *what* they wrote. Two reasons: §4.1 says the board is not drawn until it seals, so there is nothing to look at; and §7.5 refuses to let anything judge a Goal into shape, which matters most at the one moment its author can still cave and rewrite it.
+- **23.3** Two ways in, both in **join order**: a row on the Family screen's roster, and the board header's avatar strip (FRONTEND_DESIGN §4.5). The strip appears only on a drawn Board — the drafting table has none, because a row of faces that all refuse to open is worse than no row.
+- **23.4 — No progress signal, anywhere in either surface.** Not a ring, not a count, not a fraction. §7's do-not #2 forbids ranking Members visually and names this strip when it does so. Sorting is not the only way to build a ladder: a row of faces each wearing a completion ring is an ordered comparison however it is sorted, because the reader does the sorting. Cross-Member numbers are legitimate in Wrapped, retrospectively and on unrelated axes, and [ADR-0006](adr/0006-wrapped-awards.md) turns on their **not** being live.
+- **23.5** A Member with no Board in that Year appears and says so — "no board for 2026" — rather than being hidden or dead-tapping. §7's do-not #2 rejects collapsing a strip to "+12" because that counts people; silently dropping somebody from a picture of their own Family does the same thing more thoroughly. Naming the Year is what keeps it a fact about the calendar rather than a verdict on them, the same argument §21.4's "joined July" marker makes.
+- **23.6** `pending` Members appear with the invited treatment and are never tappable. They read nothing (§3.2) and have no Board by construction.
+
+> **Reacting to what you see is deliberately not in this slice**, and may not be a slice at
+> all. §1.1 lists direct messaging under "do not build these, and do not design for them",
+> with the Feed and Increment notes named as the only communication surface; ADR-0001
+> removed fairness as a design constraint on purpose. If it is ever built, the object is an
+> event in the Feed and not a Goal on a Board: reacting to what somebody *did* is warmth,
+> and reacting to what they *intend* is a verdict, and a Board-attached mark would fire the
+> second kind in a burst every January.
+
 ---
 
 ## 8. Cross-cutting requirements

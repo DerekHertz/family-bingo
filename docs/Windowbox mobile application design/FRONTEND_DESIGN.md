@@ -443,6 +443,17 @@ The shared square is proposed and voted on before the Board seals.
 - **The board header's avatar strip scrolls horizontally past 8.** Full-bleed (negative
   margin + matching padding so avatars pass under the screen edge), no scrollbar, snap off.
   It never truncates to "+12" — that counts people (§2 of the do-nots).
+  Built in PRD §23 as `<MemberStrip>`. Three rules the component holds that this paragraph
+  did not say: it carries **faces and names only** — no ring, no count, ever, because a row
+  of avatars each wearing a completion ring is the ladder do-not #2 forbids however it is
+  ordered; it appears **only on a drawn Board**, since PRD §23.2 keeps a Board private
+  until it seals; and a Member whose Board has not sealed is **dimmed and inert rather than
+  absent**, for the same reason "+12" is refused.
+- **A roster row on the Family screen opens that Member's Board** (PRD §23.3) — the entry,
+  where the strip is the traverse. Face and name are the tap target; Remove and Let in stay
+  siblings of it rather than children. Under the name: the role, then where their Board has
+  got to — "still writing" / "board done" during the Setup Window, "no board for 2026" for
+  a Member who arrived after that Year opened. Never a count.
 
 ### 4.6 Account
 

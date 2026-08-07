@@ -20,7 +20,7 @@ import { SeatPips } from '../../components/SeatPips';
 import { useAnnounce } from '../../lib/announce';
 import { useIsDemo } from '../../lib/demo';
 import { failure } from '../../lib/failure';
-import { useMyBoards, useYearReadiness } from '../../lib/queries/boards';
+import { useFamilyBoards, useMyBoards } from '../../lib/queries/boards';
 import { useFamilies } from '../../lib/queries/families';
 import {
   SEATS,
@@ -39,6 +39,7 @@ import {
 } from '../../src/domain/year';
 import { draftProgress } from '../../src/domain/goal';
 import { type Readiness, readiness, readinessCopy } from '../../src/domain/ready';
+import { boardVisit, boardVisitCopy } from '../../src/domain/roster';
 import { joinedMarkerInline } from '../../src/domain/joining';
 import { styles } from '../../theme/fonts';
 import { color, radius, size, space, stroke } from '../../theme/tokens';
@@ -137,15 +138,14 @@ export default function FamilyRoster() {
   // `myBoards`: "waiting on Bob" is a fact about the Family, and a list narrowed to the
   // caller's own Boards can only ever say the caller is waiting on themselves. Asked only
   // while the Year is still being authored; afterwards there is nobody left to wait for.
-  const familyReadiness = useYearReadiness(
-    current?.status === 'setup' ? current.id : undefined,
-    session?.user.id,
-  );
+  const familyBoards = useFamilyBoards(current?.id, session?.user.id);
 
-  // Empty until the query resolves, or while the Year is not in setup and it never runs —
-  // which `readinessCopy` renders as "no boards yet" and `yearSays` only ever asks for
-  // during the Setup Window.
-  const readyState = readiness(familyReadiness.data ?? []);
+  // Empty until the query resolves, which `yearSays` drops rather than rendering as "no
+  // boards yet" — a Family of four should not read as a Family of none for one round trip.
+  const readyState = readiness(familyBoards.data ?? []);
+  // §23.1 — which Member's Board a row can open, keyed by Member. Every row asks, and the
+  // four answers that are not "open" each have something true to say instead.
+  const boardOf = new Map((familyBoards.data ?? []).map((b) => [b.memberId, b]));
 
   if (roster.isPending || families.isPending) return <Loading what="Loading the roster" />;
 
@@ -437,26 +437,57 @@ export default function FamilyRoster() {
       <Text style={{ ...styles.meta, color: color.ink2, marginTop: space.xxl }}>Who&rsquo;s in</Text>
 
       <View style={{ marginTop: space.md, gap: space.md }}>
-        {members.map((member) => (
+        {members.map((member) => {
+          // §23.1. The face and the name are the tap target; the Remove / Let in controls
+          // stay siblings of it rather than children, because a Pressable inside a
+          // Pressable is a tap the wrong one can swallow.
+          const visit = boardVisit(member, boardOf.get(member.id));
+          const state = boardVisitCopy(visit, current?.calendar_year ?? 0);
+          const role = member.role === 'organizer' ? 'organizer' : null;
+          const meta = [role, state].filter((part) => part !== null).join(' · ');
+          const opens = visit.kind === 'open' ? visit.boardId : null;
+
+          return (
           <View
             key={member.id}
             style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}
           >
-            <Avatar
-              name={member.display_name}
-              pending={member.status === 'pending'}
-              managed={member.is_managed}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={{ ...styles.body, color: color.ink }}>{member.display_name}</Text>
-              <Text style={{ ...styles.meta, color: color.ink2 }}>
-                {member.status === 'pending'
-                  ? 'waiting to be let in'
-                  : member.role === 'organizer'
-                    ? 'organizer'
-                    : ''}
-              </Text>
-            </View>
+            <Pressable
+              disabled={opens === null}
+              accessibilityRole={opens === null ? undefined : 'button'}
+              // Only when it does something. A row announced as a button that answers
+              // nothing is §6 A1's complaint, and it is most of this roster in December.
+              accessibilityLabel={
+                opens === null ? undefined : `${member.display_name}’s board${
+                  meta === '' ? '' : `, ${meta}`
+                }`
+              }
+              accessibilityHint={opens === null ? undefined : 'Opens their board to look at'}
+              onPress={() => {
+                if (opens !== null) router.push({ pathname: '/board/[id]', params: { id: opens } });
+              }}
+              style={({ pressed }) => ({
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: space.md,
+                minHeight: size.minTouch,
+                opacity: pressed && opens !== null ? 0.7 : 1,
+              })}
+            >
+              <Avatar
+                name={member.display_name}
+                pending={member.status === 'pending'}
+                managed={member.is_managed}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={{ ...styles.body, color: color.ink }}>{member.display_name}</Text>
+                {/* Role and state, in that order: who they are to the Family first, then
+                    where their Board has got to. §23.2 keeps the second half to what §22
+                    already made public — that somebody is finished, never what they wrote. */}
+                <Text style={{ ...styles.meta, color: color.ink2 }}>{meta}</Text>
+              </View>
+            </Pressable>
 
             {/* §3.4 — "remove a Member at any time", and the only way a full Family frees
                 a seat. Never the Organizer's own row: remove_member() refuses to leave a
@@ -538,7 +569,8 @@ export default function FamilyRoster() {
               </View>
             ) : null}
           </View>
-        ))}
+          );
+        })}
 
         {/* Invited-but-not-joined: a ring at 75% and the word. Never a badge, never a nag. */}
         {open.map((invitation) => (
