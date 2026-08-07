@@ -118,7 +118,8 @@ select open_year(family_named('Okonkwo Family'), 2027);
 select write_goal(tile_of('Bob', 0), 'Swim', 50, 'swims');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute';
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute';
 update votes set closes_at = now() - interval '1 minute';
 
 select act_as_cron();

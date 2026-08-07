@@ -136,7 +136,8 @@ select write_goal(tile_of('Alice', 0), 'Walk the dog', 3, 'walks');
 select write_goal(tile_of('Alice', 1), 'Read a book', 5, 'books');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = family_named('Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = (select id from years where family_id = family_named('Hertzell Family'));
@@ -272,7 +273,8 @@ select is((select count(*)::int from increments
 -- before the Board existed is the case §11.5 refuses, not the case §17.3 is about.
 select set_config('role', 'postgres', true);
 update boards set sealed_at = now() - interval '30 days';
-update years  set sealed_at = now() - interval '30 days';
+update years  set sealed_at = now() - interval '30 days',
+                  play_opens_at = now() - interval '30 days';
 
 select act_as('00000000-0000-4000-8000-0000000000a1');
 insert into increments (id, tile_id, member_id, occurred_at)

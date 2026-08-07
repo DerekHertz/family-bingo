@@ -162,7 +162,8 @@ select throws_ok(
 select is(swaps_used_by('Alice'), 0, 'and no budget has been touched');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = family_named('Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = (select id from years where family_id = family_named('Hertzell Family'));
@@ -319,7 +320,8 @@ select open_year(family_named('Okonkwo Family'), 2027);
 select write_goal(tile_of('Carol', 0), 'Run a marathon', 144, 'runs');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where id = (select id from years where family_id = family_named('Okonkwo Family'));
 update votes set closes_at = now() - interval '1 minute'
  where year_id = (select id from years where family_id = family_named('Okonkwo Family'));

@@ -102,8 +102,9 @@ export const hasOpenSetupWindow = (years: readonly { status: string }[]): boolea
   years.some((y) => y.status === 'setup');
 
 /**
- * Whole days between now and the Setup Window's end, counted as calendar days in the
- * Family's own timezone.
+ * Whole days between now and a deadline, counted as calendar days in the Family's own
+ * timezone. Named for the seal because that is what it was written for; §22 gave the
+ * Board a second date to count down to and the arithmetic is the same one.
  *
  * Not `(deadline - now) / 86400000`. A day is not always 86,400,000 ms — a DST transition
  * inside the window silently eats one — and dividing wall-clock instants answers "how many
@@ -137,6 +138,38 @@ export const sealCopy = (now: Date, deadline: Date, timezone = 'UTC'): string =>
   if (days === 0) return 'the board seals today';
   if (days === 1) return 'the board seals tomorrow';
   return `the board seals in ${days} days`;
+};
+
+/**
+ * Whether the Year has begun.
+ *
+ * Since §22, whether the Boards have sealed is a different question, and asking that one
+ * instead is the mistake the whole slice exists to prevent: a Family who finish in
+ * December seal in December and still start on 1 January. `play_opens_at` is
+ * the Year's own clock — midnight on 1 January in the Family's timezone — and it is what
+ * `tile_is_loggable()` checks on the server.
+ */
+export const playHasOpened = (now: Date, playOpensAt: Date): boolean =>
+  now.getTime() >= playOpensAt.getTime();
+
+/**
+ * What a sealed Board that cannot be played yet says about itself, or null when there is
+ * nothing to say because the Year is under way.
+ *
+ * Counted in calendar days in the Family's timezone for the same reason `sealCopy` is —
+ * "opens in 6 days" has to mean six sleeps, not six 24-hour blocks. §4.5: factual, never
+ * conditional. The Board is finished and correct; it is simply not January yet.
+ */
+export const playOpensCopy = (
+  now: Date,
+  playOpensAt: Date,
+  timezone = 'UTC',
+): string | null => {
+  if (playHasOpened(now, playOpensAt)) return null;
+  const days = daysUntilSeal(now, playOpensAt, timezone);
+  if (days === 0) return 'play opens today';
+  if (days === 1) return 'play opens tomorrow';
+  return `play opens in ${days} days`;
 };
 
 export { MINIMUM_SETUP_WINDOW_DAYS, setupDeadline, startOfYearInZone };

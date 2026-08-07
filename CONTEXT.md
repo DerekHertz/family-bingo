@@ -73,9 +73,17 @@ _Avoid_: Invite link, join code, referral
 
 **Setup Window**:
 The stretch between a Year being opened and Boards Sealing, during which Members write
-their Goals and the Center Vote runs. It ends on a fixed date, whether or not everyone
-has finished.
+their Goals and the Center Vote runs. It ends on a fixed date whether or not everyone has
+finished — or sooner, if every Member has said they are Ready. The date is a backstop
+against nobody finishing, not a wait imposed on a Family who have.
 _Avoid_: Draft period, onboarding, pre-season
+
+**Ready**:
+A Member's statement that their own Board is finished. Offered once all 24 authorable
+squares hold a Goal, taken back freely until it is the last one, and never inferred from
+a full Board — writing the last Goal and being done with it are different moments. When
+every Member is Ready the Boards Seal.
+_Avoid_: Submit, lock in, confirm, finalise
 
 **Center Vote**:
 The Family's decision on what kind of Center Tile this Year has — a shared Family Goal
@@ -128,8 +136,11 @@ _Avoid_: Season, round, cycle
 
 **Sealing**:
 The moment a Board stops being a draft and becomes the Member's commitment for the
-Year. Happens when the Year starts. Everything before Sealing is free editing;
-everything after costs a Swap.
+Year. Happens when the Setup Window ends — on its deadline, or as soon as every Member is
+Ready. Everything before Sealing is free editing; everything after costs a Swap.
+
+Sealing is not the start of the Year. A Family who finish in December Seal in December
+and still begin on 1 January: progress cannot be recorded until the Year itself opens.
 _Avoid_: Locking, publishing, submitting, finalising
 
 **Freeze**:

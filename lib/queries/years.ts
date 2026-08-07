@@ -38,6 +38,14 @@ export interface Year {
   status: 'setup' | 'active' | 'frozen';
   center_mode: 'shared' | 'personal' | 'undecided';
   setup_deadline: string;
+  /**
+   * When play opens — midnight on 1 January in the Family's timezone (§22.5).
+   *
+   * Not the same fact as `sealed_at`, and since §22 not the same fact as `setup_deadline`
+   * either: a Family who all mark their Boards done in December seal in December, and
+   * still start on 1 January.
+   */
+  play_opens_at: string;
   sealed_at: string | null;
   frozen_at: string | null;
 }
@@ -57,7 +65,7 @@ export function useYears(familyId: string | undefined) {
     queryFn: async (): Promise<Year[]> => {
       const { data, error } = await supabase
         .from('years')
-        .select('id, calendar_year, status, center_mode, setup_deadline, sealed_at, frozen_at')
+        .select('id, calendar_year, status, center_mode, setup_deadline, play_opens_at, sealed_at, frozen_at')
         .eq('family_id', familyId ?? '')
         .order('calendar_year', { ascending: false });
       if (error !== null) throw error;

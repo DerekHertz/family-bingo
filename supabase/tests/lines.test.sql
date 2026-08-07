@@ -195,7 +195,8 @@ select author_positions('Bob',
   array[0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24], 1);
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
@@ -399,7 +400,8 @@ insert into ballots (vote_id, member_id, proposal_id)
   select v.id, member_of('Chidi'), '00000000-0000-4000-8000-0000000000d1'
     from votes v where v.year_id = year_of('Okonkwo Family') and v.kind = 'goal';
 
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where id = year_of('Okonkwo Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Okonkwo Family');

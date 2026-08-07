@@ -396,10 +396,11 @@ function TheYear() {
     <Section>
       <Head>One year, and it starts once</Head>
       <Body>
-        Everyone writes twenty-four goals in December. The board seals on 1 January and the
-        positions are dealt then, so nobody can put the easy one in a corner. After the
-        seal, changing a goal costs one of three Swaps for the whole year — and the family
-        sees every one.
+        Everyone writes twenty-four goals in December. The board seals once everyone says
+        they are done — or on 1 January, if somebody never does — and the positions are
+        dealt then, so nobody can put the easy one in a corner. Play starts on 1 January
+        either way. After the seal, changing a goal costs one of three Swaps for the whole
+        year — and the family sees every one.
       </Body>
       <Body>
         Progress is only ever counted from the log. There is no cached number to drift, no

@@ -172,7 +172,8 @@ select cast_ballot(
   member_of('Alice'), 'shared');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
@@ -350,7 +351,8 @@ select write_goal(tile_of('Carol', 5), 'Swim the Serpentine', 4, 'swims');
 select write_goal(tile_of('Chidi', 3), 'Learn ten chords', 10, 'chords');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where id = year_of('Okonkwo Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Okonkwo Family');

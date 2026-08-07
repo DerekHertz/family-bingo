@@ -21,8 +21,13 @@ An annual goal-setting game for families. Each person fills a 5×5 board with pe
 goals for the year and works to complete them, while their family watches, cheers, and
 gets notified as squares fall.
 
-**The core loop:** author 24 goals in December → seal on January 1 → log progress all
-year → complete Tiles → hit Bingo → Blackout.
+**The core loop:** author 24 goals in December → seal when the Family is finished, or on
+the deadline → play from 1 January → log progress all year → complete Tiles → hit Bingo →
+Blackout.
+
+Sealing and the start of the Year are two different moments (§22.5). They coincide for a
+Family who never declare themselves done, which is why this sentence read "seal on January
+1" until slice 22.
 
 **What makes it not a habit tracker:** the Family is a real participant. It votes on the
 Center Tile, sees every Increment in a shared Feed, gets notified on Milestones, and
@@ -177,7 +182,8 @@ can seal.*
 **Requirements**
 
 - **5.1** Only the Organizer opens a Year. One Year per Family per calendar year.
-- **5.2** Opening a Year starts the **Setup Window**, which ends at `YYYY-01-01T00:00:00` in the Family's timezone. Minimum window: **7 days**. If opened later than 7 days before Jan 1, the deadline is `now + 7 days`.
+- **5.2** Opening a Year starts the **Setup Window**, whose **deadline** is `YYYY-01-01T00:00:00` in the Family's timezone. Minimum: **7 days** — if opened later than 7 days before Jan 1, the deadline is `now + 7 days`. The seven days are a floor under the *deadline*, not a minimum length for the window: a Family may finish sooner and seal sooner (§22.1), and nobody's authoring time is shortened by that, because it takes every one of them saying so.
+- **5.2a** That same `YYYY-01-01T00:00:00` is when **play opens**, and it is a separate fact from the deadline — the two coincide only when the Year was opened more than seven days out. Since §22 they can also come apart in the other direction, because a Family may seal early. Stored as `years.play_opens_at`.
 - **5.3** Board creation is idempotent — 25 Tiles at positions 0–24, position 12 is the Center Tile.
 - **5.4** Positions are **row-major, 0-indexed**: position `p` is row `p / 5`, column `p % 5`. This is load-bearing for line detection (§6.3); do not change it.
 
@@ -239,7 +245,7 @@ can seal.*
 - **8.1** Each active Member casts at most one mode Ballot: `shared` or `personal`. Ballots are changeable until the deadline.
 - **8.2** Resolution is a **majority of Ballots cast**. Non-voters are abstentions.
 - **8.3** A tie, or zero Ballots cast, resolves to **`personal`** — the fallback requiring no further coordination.
-- **8.4 — Never blockable by inaction.** No quorum, no unanimity, no waiting on a non-voter. In any family of 5+, at least one person is a lurker; their silence must not freeze four other people's Boards.
+- **8.4 — Never blockable by inaction.** No quorum, no unanimity, no waiting on a non-voter. In any family of 5+, at least one person is a lurker; their silence must not freeze four other people's Boards. §22.1 adds unanimity as a way to finish *early* and does not weaken this: silence there costs the Family a shortcut, never an outcome — the deadline still arrives on schedule and seals exactly as it did before.
 
 ### Slice 9 — Center Vote, goal
 
@@ -266,7 +272,7 @@ can seal.*
 
 **Requirements**
 
-- **10.1** A `pg_cron` job seals Boards at the Setup Window deadline.
+- **10.1** A `pg_cron` job seals Boards at the Setup Window deadline. Since §22 that deadline is a backstop rather than the only door — a Family who have all marked their Boards done seal when the last of them does — but it remains the only *clock*, and no role may seal early on its own authority.
 - **10.2** Sealing happens **whether or not** authoring is complete. An unfinished Board seals with empty Tiles; those Tiles can be filled using Swaps (§7.4 of Phase 3).
 - **10.3** After sealing, Goal text and Target are immutable except through a Swap.
 - **10.4** Sealing is idempotent and safe to re-run.
@@ -291,7 +297,7 @@ can seal.*
 - **11.2** Every Increment carries a **client-generated UUID** as its primary key. The insert is idempotent on that UUID — this is what makes the offline queue (§Slice 17) safe.
 - **11.3** Increments are **append-only**. No edits. A mistake is corrected by deleting the Increment, which is the only mutation permitted.
 - **11.4** Progress is `COUNT(increments)` for the Goal. **Do not denormalize a counter** — a cached count and an append-only log will drift, and the log is the source of truth.
-- **11.5** Increments cannot be logged before `sealed_at` or after the Year's `frozen_at`. No backdating.
+- **11.5** Increments cannot be logged before the Board's `sealed_at`, before the Year's `play_opens_at` (§22.5), or after its `frozen_at`. No backdating: `occurred_at` is floored at the later of the seal and the start of play.
 
 ### Slice 12 — Complete a Tile
 
@@ -493,11 +499,42 @@ outcome, and this screen is the main defense against it.
 
 **Requirements**
 
-- **21.1** A Member joining mid-Year gets a personal Setup Window of 7 days from approval.
+- **21.1** A Member joining mid-Year gets a personal Setup Window of 7 days from approval, or until they mark the Board done — whichever comes first (§22.6).
 - **21.2** They inherit the Family's already-resolved Center Tile. **The Center Vote is not reopened** — doing so would alter a Tile on every already-sealed Board.
 - **21.3** Sharpening receives the remaining fraction of the year (§7.7) so proposed targets are proportionate.
 - **21.4** Their Board shows a "joined July" marker so the Feed makes sense.
 - **21.5** **No proration, no special-casing.** This works precisely because §13.5 removed ranking — there is no standing to be behind in.
+
+### Slice 22 — Ready, and the early Seal
+
+**Acceptance test**
+> **Given** a Family in an open Setup Window whose Members have all written their 24 Goals
+> **When** the last of them marks their Board done
+> **Then** every Board in that Family seals immediately, the Center Vote resolves on the
+> Ballots cast, and play still does not open until the Year begins
+
+**The problem.** §10.1 seals on a date, and the date is the right backstop: it stops one
+person's silence holding four other people at the starting line (§8.4). What it never
+covered is the opposite case — a Family who are all finished are not waiting on a
+decision, they are waiting on a calendar. In two shapes that costs them real days of
+their own Year:
+
+- A Year opened after 25 December has a deadline of `now + 7 days` (§5.2), so a Family
+  who open on the 28th and finish on the 30th cannot play until 4 January.
+- A Member approved in July gets a personal window of seven days (§21.1). They finish
+  their Board in an hour and sit out a week of a Year everybody else is playing.
+
+**Requirements**
+
+- **22.1** The Setup Window deadline becomes a **backstop rather than the only door.** The second door is unanimity. Nothing else opens it: an Organizer with neither the date nor a unanimous Family is still refused (§10.1), because sealing early on their own authority would take authoring time from everyone else, silently and with no appeal.
+- **22.2** **Ready is declared, never inferred.** A Board whose 24 authorable squares all hold a Goal may be marked done by the Member who owns it (or their Guardian, §4.2). A full Board makes the control *available*; the tap is what makes it true. Inferring it from the 24th Goal appearing would mean the last person to type silently seals four Boards — and §6.4 makes a draft freely editable precisely because people write all 24 and then reword them.
+- **22.3** When **every** Board in a Year has been marked done — and still holds a Goal on every square — all of them seal at once, exactly as they would at the deadline: the Center Vote resolves first (api.md §7), positions are dealt (FRONTEND_DESIGN §4.1), and the Year becomes `active`. A Member approved during the Setup Window is a Member the Family is now waiting for.
+- **22.3a** The declaration is the Member's and the seal is the Family's, so a seal that fails does **not** undo the declaration: `ready_at` stands, a warning is logged, and the sweep retries within five minutes. A Family can therefore be briefly unanimous and unsealed. Nothing else may be true in that window — no Board is playable and no Goal is immutable until the seal actually lands.
+- **22.4** Ready is **revocable** until the Boards seal — which is normally the moment it is the last one, and is later than that in §22.3a's retry window. After the seal it is not, which is the same door every other edit meets (§10.3).
+- **22.4a** **Emptying a square withdraws the declaration.** §6.4 keeps a draft freely editable after the tap, so a Member who goes back to reword a square has stopped being done whether or not they thought of it that way. Without this the declaration outlives the Board it described and the next Member's tap seals this one with a permanent empty square (§18.5 prices getting it back at a Swap). Rewriting a Goal in place does not withdraw it — the Board is still what its owner declared.
+- **22.5 — Sealing closes authoring; it does not start the Year.** Play opens at `YYYY-01-01T00:00:00` in the Family's timezone whatever date the Boards sealed on. Increments, the Family Goal's completion (§12.3) and the free write of a personal Centre (§9.5) all resolve against **the later of `sealed_at` and `play_opens_at`** — not against either alone. Both orderings occur: a Family who seal early have the Year as the later instant, and §21.1's late joiner, whose Board seals in July, has their own seal. A Year opened *during* its own calendar year has `play_opens_at` in the past, so play opens the moment the Boards seal.
+- **22.6** A late joiner (§21.1) marking their Board done seals **their Board alone**, immediately. Nobody else's window is touched, the Centre was decided months ago (§21.2), and their Year is already under way — so there is nothing to wait for and a week of it to lose by waiting.
+- **22.7** Ready does **not** wait for a complete Center Vote. Ballots are changeable until the Setup Window closes (§8.1) and abstention is legitimate (§8.2) — requiring everyone to have voted would hand the quietest person in the Family exactly the veto §8.4 removes. What Ready does is bring the closing forward: **a Member's Ballot becomes final when the last Board is declared, which may be somebody else's tap and may be at any moment.** The confirm sheet must say so before the tap — to every Member, not only to whoever turns out to be last, because it is everyone else whose say can end without warning.
 
 ---
 

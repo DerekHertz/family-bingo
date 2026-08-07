@@ -53,9 +53,9 @@ export const joinedMarkerInline = (joinedLateAt: string, timeZone: string): stri
  *
  * It says two things, because they are the two facts that would otherwise look like bugs:
  *
- *   - **Their deadline is not the Family's.** Everyone else's Board sealed on 1 January;
- *     theirs is its own window (§21.1). Without this the screen shows a date nobody else
- *     has and no reason for it.
+ *   - **Their deadline is not the Family's.** Everyone else's Board sealed when the Family
+ *     finished, or on 1 January; theirs is its own window (§21.1). Without this the screen
+ *     shows a date nobody else has and no reason for it.
  *   - **The Centre is already decided** (§21.2). The Centre Vote is not reopened — doing so
  *     would alter a Tile on every already-sealed Board — so the middle square arrives
  *     filled in and un-votable, which looks broken until it is explained.

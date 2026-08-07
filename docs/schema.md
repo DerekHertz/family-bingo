@@ -183,6 +183,7 @@ erDiagram
         text status "setup|active|frozen"
         text center_mode "shared|personal|undecided"
         timestamptz setup_deadline
+        timestamptz play_opens_at "1 Jan in the Family zone"
         timestamptz sealed_at
         timestamptz frozen_at
     }
@@ -198,6 +199,7 @@ erDiagram
         uuid member_id FK
         uuid year_id FK
         timestamptz sealed_at
+        timestamptz ready_at "the Member says it is done"
         int swaps_used
         timestamptz joined_late_at
         timestamptz personal_setup_deadline
@@ -461,23 +463,31 @@ does and change only what is yours (or your Managed Members').
 The real `increments` insert policy carries two more conditions the sketch above leaves
 out. The Tile must belong to the Board of the Member being credited — without that, a
 Guardian could log against someone else's Tile while attributing it to their own child.
-And `tile_is_loggable()` must hold: the Board is sealed, the Year is not frozen, and the
-Tile holds a personal Goal. That last clause rules out both the empty Tile and the
-shared Center Tile, which have no Target between them — see PRD §12.1 and §12.3.
+And `tile_is_loggable()` must hold: the Board is sealed, the Year has **begun** and is not
+frozen, and the Tile holds a personal Goal. That last clause rules out both the empty Tile
+and the shared Center Tile, which have no Target between them — see PRD §12.1 and §12.3.
+
+**Sealed and playable are two questions, not one** (PRD §22.5). They were the same fact
+while the only way to seal was the deadline; a Family who mark every Board done can now
+seal in December, and `years.play_opens_at` — midnight on 1 January in the Family's
+timezone — is what says when their Year actually starts.
 
 **Increment timestamps are not the client's to choose.** `created_at` is overwritten
 with the server clock on insert, because the Feed is ordered by it. `occurred_at` stays
 client-settable — the offline queue replays taps days after they happened (PRD §17.3),
-which is why the column exists at all — but it is bounded to `[sealed_at, now()]`, and
-the two ends are not treated alike:
+which is why the column exists at all — but it is bounded below by the later of the seal
+and the start of play, and above by `now()`, and the two ends are not treated alike:
 
 | Claim | Response | Why |
 |---|---|---|
 | `occurred_at` in the future | Pulled back to `now()`, tap kept | A device clock running fast. Benign, and nothing the Member could act on if told — while refusing it loses a real tap the offline queue will retry forever (§17.2) |
-| `occurred_at` before the seal | Refused, `PT403` | No queue can hold a tap from before the Board existed, so this is a client bug or the backdating §11.5 names. Wrapped aggregates by month and hands out "biggest month" and "most consistent" (§20.4) — an unbounded `occurred_at` writes those Awards |
+| `occurred_at` before the Board could be played | Refused, `PT403` | No queue can hold a tap from before the Board existed, so this is a client bug or the backdating §11.5 names. Wrapped aggregates by month and hands out "biggest month" and "most consistent" (§20.4) — an unbounded `occurred_at` writes those Awards |
 
-The lower bound is `least(sealed_at, now())` rather than `sealed_at` outright, so that a
-Board somehow stamped ahead of the clock cannot refuse every possible tap.
+The lower bound is `least(greatest(sealed_at, play_opens_at), now())` rather than the seal
+outright. `greatest` is §22.5 — an early-sealed Board's floor is the day its Year starts,
+or a client with an honest clock could log 27 December against a Year that begins on the
+1st. `least(…, now())` is the older half: a Board somehow stamped ahead of the clock must
+not refuse every possible tap.
 
 ### 4.3 Storage
 
@@ -552,7 +562,7 @@ position by position, and that is the only thing holding them together.
 stateDiagram-v2
     direction LR
     [*] --> setup : Organizer opens Year
-    setup --> active : deadline passes, Boards seal
+    setup --> active : deadline passes OR every Board is ready
     active --> frozen : Dec 31 passes
     frozen --> [*] : browsable forever
     note right of setup
@@ -560,8 +570,10 @@ stateDiagram-v2
         Center Vote runs.
     end note
     note right of active
-        Increments logged.
         Changes cost a Swap.
+        Increments logged — but not
+        before play_opens_at, which
+        an early seal precedes.
     end note
 ```
 

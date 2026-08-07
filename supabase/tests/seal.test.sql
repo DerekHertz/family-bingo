@@ -100,7 +100,8 @@ select is((select count(*) from boards where sealed_at is not null)::int, 0,
 -- refuses while either Vote is still open (§8.1). Moving only the Year's deadline would
 -- leave seal_year() failing inside the sweep's exception handler, silently.
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where id = year_of('Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
@@ -240,9 +241,15 @@ select is((select count(distinct sealed_at) from boards
 -- on a sealed Board, which §18.5 prices at a Swap like any other.
 --
 -- Aged after §10.4 above, which asserts every Board still carries the same stamp.
+--
+-- The Year is aged with the Board: since §22 the window runs from the later of the seal
+-- and the start of play, so that a Family who seal in December still get their seven days
+-- inside the Year rather than over Christmas.
 select set_config('role', 'postgres', true);
 update boards set sealed_at = now() - interval '8 days'
  where member_id = member_of('Bob');
+update years set play_opens_at = now() - interval '8 days'
+ where id = year_of('Hertzell Family');
 
 select act_as('00000000-0000-4000-8000-0000000000b2');
 select throws_ok(
@@ -283,7 +290,8 @@ insert into ballots (vote_id, member_id, proposal_id)
    where y.family_id = (select id from families where name = 'Okonkwo Family 2028')
      and v.kind = 'goal';
 
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = (select id from families where name = 'Okonkwo Family 2028');
 update votes set closes_at = now() - interval '1 minute'
  where year_id in (select id from years

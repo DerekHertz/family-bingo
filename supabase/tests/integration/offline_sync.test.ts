@@ -89,8 +89,13 @@ beforeAll(async () => {
       insert into members (family_id, account_id, display_name, role, status)
       select f.id, '${accountId}', 'Alice', 'organizer', 'active' from f returning id, family_id),
     y as (
-      insert into years (family_id, calendar_year, status, center_mode, setup_deadline, sealed_at)
-      select f.id, 2027, 'active', 'personal', now(), now() from f returning id),
+      -- play_opens_at explicitly, because a Year under way is two instants in the past
+      -- since §22 rather than one: the Boards have sealed AND the Year has started. Left
+      -- to its trigger this would default to 1 January 2027 and tile_is_loggable() would
+      -- refuse every tap below — correctly, for a Year that has not begun.
+      insert into years (family_id, calendar_year, status, center_mode, setup_deadline,
+                         play_opens_at, sealed_at)
+      select f.id, 2027, 'active', 'personal', now(), now(), now() from f returning id),
     b as (
       insert into boards (year_id, member_id, sealed_at)
       select y.id, m.id, now() from y, m returning id),

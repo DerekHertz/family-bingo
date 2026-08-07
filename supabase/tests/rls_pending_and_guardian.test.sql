@@ -33,16 +33,21 @@ insert into members (id, family_id, account_id, guardian_account_id, display_nam
   ('00000000-0000-4000-8000-0000000000e3', '00000000-0000-4000-8000-0000000000f2',
    '00000000-0000-4000-8000-0000000000a2', null, 'Bob', 'organizer', 'active');
 
-insert into years (id, family_id, calendar_year, status, center_mode, setup_deadline) values
+-- A Year genuinely under way, which since §22 means two instants in the past rather than
+-- one: the Boards have sealed AND play has opened. The dates used to sit in 2027 and be
+-- read as "sealed, therefore playable"; `tile_is_loggable()` now asks the second question
+-- too, and a Year that starts next January answers no however sealed its Boards are.
+insert into years (id, family_id, calendar_year, status, center_mode, setup_deadline,
+                   play_opens_at) values
   ('00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-0000000000f1',
-   2027, 'active', 'personal', '2027-01-01T05:00:00Z');
+   2026, 'active', 'personal', '2026-01-01T05:00:00Z', '2026-01-01T05:00:00Z');
 
 -- Alice's Board and Theo's Board.
 insert into boards (id, member_id, year_id, sealed_at) values
   ('00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000e1',
-   '00000000-0000-4000-8000-0000000000d1', '2027-01-01T05:00:00Z'),
+   '00000000-0000-4000-8000-0000000000d1', '2026-01-01T05:00:00Z'),
   ('00000000-0000-4000-8000-0000000000b2', '00000000-0000-4000-8000-0000000000e2',
-   '00000000-0000-4000-8000-0000000000d1', '2027-01-01T05:00:00Z');
+   '00000000-0000-4000-8000-0000000000d1', '2026-01-01T05:00:00Z');
 
 insert into tiles (board_id, position)
   select '00000000-0000-4000-8000-0000000000b1', p from generate_series(0, 24) p;

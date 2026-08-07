@@ -27,6 +27,13 @@ import { supabase } from '../supabase';
  * failure with "have another go in a moment".
  */
 export const familyGoalFailureCopy = (thrown: unknown): string => {
+  // §22.5 — the Boards have sealed and the Year has not started. Its own SQLSTATE and its
+  // own sentence: migration 40 minted `PT425` precisely so this would not be a fourth
+  // meaning of `PT403`, and leaving it to fall through to "have another go in a moment"
+  // would have wasted that and told a Member to retry until January. Reachable as a race
+  // — a device clock a few minutes fast at 23:58 on 31 December, or a stale head — since
+  // the screen otherwise refuses the tap itself.
+  if (failedWith(thrown, 'PT425')) return 'This year hasn’t started yet.';
   // The Year has not sealed, or has no Family Goal at all.
   if (failedWith(thrown, 'PT403')) return 'This one isn’t ready to be marked done yet.';
   // A frozen Year, a Member the caller does not control, or the wrong Family.

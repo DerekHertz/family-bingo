@@ -155,7 +155,8 @@ select act_as('00000000-0000-4000-8000-0000000000a4');
 select write_goal(tile_of('Dele', 0), 'Draw', 1, 'drawings', 'drawing', 'creative');
 
 select set_config('role', 'postgres', true);
-update years set setup_deadline = now() - interval '1 minute'
+update years set setup_deadline = now() - interval '1 minute',
+                 play_opens_at  = now() - interval '1 minute'
  where family_id = family_named('Hertzell Family');
 update votes set closes_at = now() - interval '1 minute'
  where year_id = year_of('Hertzell Family');
@@ -170,7 +171,8 @@ select is(seal_due_boards(), 4, 'four Boards seal — the Year the acceptance te
 -- below by sealed_at, and everything above happened at now()).
 select set_config('role', 'postgres', true);
 update boards set sealed_at = now() - interval '300 days';
-update years  set sealed_at = now() - interval '300 days';
+update years  set sealed_at = now() - interval '300 days',
+                  play_opens_at = now() - interval '300 days';
 delete from notifications;
 
 -- ---------------------------------------------------------------------------------

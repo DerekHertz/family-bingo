@@ -12,6 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CENTER_POSITION } from '../../src/domain/goal';
 import { isControlledBy, isManaged } from '../../src/domain/member';
+import type { ReadinessBoard } from '../../src/domain/ready';
 import { failure } from '../failure';
 import { supabase } from '../supabase';
 
@@ -90,6 +91,8 @@ export interface BoardSummary {
   memberName: string;
   isManaged: boolean;
   sealedAt: string | null;
+  /** §22 — when this Member said the Board was done, or null while they are still writing. */
+  readyAt: string | null;
   written: number;
   /**
    * §21.4's marker, on the row as well as on the Board itself.
@@ -159,6 +162,8 @@ export interface BoardHead {
    * Board is legitimately controlled and legitimately not the caller's own.
    */
   controlled: boolean;
+  /** §22 — when this Member said the Board was done. Null while they are still writing. */
+  readyAt: string | null;
   /** §21.1 — set on a Board dealt to a Member approved mid-Year. */
   joinedLateAt: string | null;
   /** §21.1 — that Member's own 7-day window, which is not the Year's. */
@@ -169,6 +174,12 @@ export interface BoardHead {
     status: 'setup' | 'active' | 'frozen';
     centerMode: 'shared' | 'personal' | 'undecided';
     setupDeadline: string;
+    /**
+     * When the Year begins (§22.5). A Board can now seal before this — that is the whole
+     * point of Ready — so the screen has to ask both "has it sealed" and "has it started"
+     * rather than treating the first as the second.
+     */
+    playOpensAt: string;
   };
   familyId: string;
   familyName: string;
@@ -197,7 +208,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         // One string literal, not a concatenation: supabase-js infers the row type by
         // parsing this at the type level, and `'a' + 'b'` widens to `string`, which turns
         // every field access below into an error against GenericStringError.
-        .select('id, sealed_at, joined_late_at, personal_setup_deadline, member_id, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, family:family_id (id, name, timezone))')
+        .select('id, sealed_at, ready_at, joined_late_at, personal_setup_deadline, member_id, member:member_id (display_name, account_id, guardian_account_id, status), year:year_id (id, calendar_year, status, center_mode, setup_deadline, play_opens_at, family:family_id (id, name, timezone))')
         .eq('id', boardId ?? '')
         .maybeSingle();
       if (error !== null) throw error;
@@ -215,6 +226,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         status: 'setup' | 'active' | 'frozen';
         center_mode: 'shared' | 'personal' | 'undecided';
         setup_deadline: string;
+        play_opens_at: string;
         family: { id: string; name: string; timezone: string } | null;
       } | null;
       if (member === null || year === null || year.family === null) return null;
@@ -228,6 +240,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
         // `controlled_member_ids()`, client-side — and one function now rather than the
         // three hand-written copies this rule was spread across (see src/domain/member.ts).
         controlled: isControlledBy(member, accountId),
+        readyAt: data.ready_at as string | null,
         joinedLateAt: data.joined_late_at as string | null,
         personalSetupDeadline: data.personal_setup_deadline as string | null,
         year: {
@@ -236,6 +249,7 @@ export function useBoardHead(boardId: string | undefined, accountId: string | un
           status: year.status,
           centerMode: year.center_mode,
           setupDeadline: year.setup_deadline,
+          playOpensAt: year.play_opens_at,
         },
         familyId: year.family.id,
         familyName: year.family.name,
@@ -266,7 +280,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
         // render one or two rows. Deliberate: narrowing it would mean first fetching which
         // Members the caller controls, and a second round trip costs more than the rows.
         // RLS permits every one of them — nothing here is a leak, only weight.
-        .select('id, member_id, sealed_at, joined_late_at, created_at, member:member_id (id, display_name, account_id, guardian_account_id, status), tiles (position, goal_id)')
+        .select('id, member_id, sealed_at, ready_at, joined_late_at, created_at, member:member_id (id, display_name, account_id, guardian_account_id, status), tiles (position, goal_id)')
         .eq('year_id', yearId ?? '')
         .order('created_at', { ascending: true });
       if (error !== null) throw error;
@@ -292,6 +306,7 @@ export function useMyBoards(yearId: string | undefined, accountId: string | unde
             memberName: member.display_name,
             isManaged: isManaged(member),
             sealedAt: row.sealed_at as string | null,
+            readyAt: row.ready_at as string | null,
             joinedLateAt: row.joined_late_at as string | null,
             // The Centre is never authored here (§6.5), so counting it would put the
             // drafting table at "1 of 24" before a word had been written.
@@ -455,6 +470,144 @@ export function useWriteGoal(boardId: string) {
       // The count on the Family screen's Board rows moves with every write. A prefix match
       // rather than the exact key, because the Year and Account are not in scope here.
       void queryClient.invalidateQueries({ queryKey: ['boards'] });
+    },
+  });
+}
+
+/**
+ * Why `mark_board_ready()` would not take this, phrased for the Member who tapped it.
+ *
+ * Three raises, three SQLSTATEs, and that is deliberate on the migration's side (41): a
+ * sealed Board, an incomplete Board and somebody else's Board are three different things
+ * to be told, and one code covering all three is how `writeGoalFailureCopy`'s centre
+ * branch became unreachable. Matched on the code, never on message text.
+ *
+ * All three should be unreachable from the screen — the control is offered only on a full,
+ * unsealed Board the caller controls — so every sentence here describes a race rather than
+ * a mistake, and none of them blames anybody for it.
+ */
+export const readyFailureCopy = (thrown: unknown): string => {
+  const { code, message } = failure(thrown);
+  // The Family finished while this screen was open — which is the good outcome, said
+  // plainly rather than as an error about a tap that turned out to be unnecessary.
+  if (code === 'PT403') return 'This board has already sealed.';
+  if (code === 'PT409') return 'Every square needs a goal before the board is done.';
+  if (code === '42501' && /frozen/i.test(message)) return 'This year has finished.';
+  // 'no such Board' shares the ownership code, and "isn't yours" is the wrong sentence for
+  // a Board that is not there at all — which is what a deleted Member or a stale deep link
+  // looks like.
+  if (code === '42501' && /no such Board/i.test(message)) {
+    return 'That board isn’t there any more.';
+  }
+  if (code === '42501') return 'That board isn’t yours to finish.';
+  return 'That didn’t save. Have another go in a moment.';
+};
+
+/**
+ * §22.2 — this Member says their Board is done.
+ *
+ * The RPC does two things and only one of them is about this Board: it records the
+ * declaration, and if that was the last one in the Year it seals every Board in the
+ * Family. So the invalidation is deliberately wide. A narrow one would leave four other
+ * Boards on screen as drafts, a Year still reading `setup`, and a Family screen still
+ * counting down to a deadline that had stopped mattering.
+ *
+ * Argument names are checked against `20260801000041_ready_and_the_early_seal.sql`. A
+ * wrong name here fails at runtime, not at compile time — `lib/rpc-signatures.test.ts` is
+ * what catches it, and only because the function name is written as a literal below.
+ */
+export function useMarkBoardReady(boardId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const { error } = await supabase.rpc('mark_board_ready', { board_id: boardId });
+      if (error !== null) throw error;
+    },
+    onSuccess: () => {
+      // **Every** Board's Tiles, not just this one's. Sealing runs `deal_positions()` over
+      // every Board in the Year, and that permutes `goal_id` BETWEEN Tiles — so a Guardian
+      // who marks their own Board ready as the last one and then opens the child's Board
+      // inside `staleTime` would see the child's goals drawn on the wrong squares, with
+      // `renderTiles` and `completedLines` computed from those positions.
+      void queryClient.invalidateQueries({ queryKey: ['board'] });
+      void queryClient.invalidateQueries({ queryKey: ['board-head'] });
+      void queryClient.invalidateQueries({ queryKey: ['boards'] });
+      void queryClient.invalidateQueries({ queryKey: ['readiness'] });
+      // The Centre resolves inside the same seal, and both Votes go to `resolved`. The
+      // Centre screen's own fallback cannot notice: it compares `closes_at` to now, which
+      // is exactly the check an EARLY resolution defeats — the date is still weeks away.
+      void queryClient.invalidateQueries({ queryKey: ['centre'] });
+      // The Year's own status moves from `setup` to `active` on the last declaration,
+      // and it is the Family screen's whole headline.
+      void queryClient.invalidateQueries({ queryKey: ['years'] });
+    },
+  });
+}
+
+/** §22.4 — and takes it back, which stays possible until it was the last one. */
+export function useClearBoardReady(boardId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const { error } = await supabase.rpc('clear_board_ready', { board_id: boardId });
+      if (error !== null) throw error;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: boardPrefix(boardId) });
+      void queryClient.invalidateQueries({ queryKey: ['board-head'] });
+      void queryClient.invalidateQueries({ queryKey: ['boards'] });
+      void queryClient.invalidateQueries({ queryKey: ['readiness'] });
+    },
+  });
+}
+
+/**
+ * Where the whole Family has got to (§22.3).
+ *
+ * Every Board in the Year, not just the ones the caller may author on — which is exactly
+ * the opposite of `useMyBoards`, and for the opposite reason. "Waiting on Bob" is a fact
+ * about the Family, and a list narrowed to the caller's own Boards can only ever say the
+ * caller is waiting on themselves. `boards_read` is Family-wide, so RLS already draws the
+ * boundary this needs and no filtering is wanted here.
+ *
+ * Pending Members are excluded because they have no Board at all (§3.2) — the join simply
+ * never produces them — and a Member whose row is unreadable is dropped rather than
+ * counted as an unnamed straggler.
+ */
+export const readinessKey = (yearId: string, accountId: string) =>
+  ['readiness', yearId, accountId] as const;
+
+export function useYearReadiness(yearId: string | undefined, accountId: string | undefined) {
+  return useQuery({
+    queryKey: readinessKey(yearId ?? 'none', accountId ?? 'anonymous'),
+    enabled: yearId !== undefined && accountId !== undefined,
+    queryFn: async (): Promise<ReadinessBoard[]> => {
+      const { data, error } = await supabase
+        .from('boards')
+        .select('ready_at, sealed_at, created_at, member:member_id (display_name, account_id, guardian_account_id, status)')
+        .eq('year_id', yearId ?? '')
+        .order('created_at', { ascending: true });
+      if (error !== null) throw error;
+
+      return (data ?? []).flatMap((row) => {
+        const member = row.member as unknown as {
+          display_name: string;
+          account_id: string | null;
+          guardian_account_id: string | null;
+          status: string;
+        } | null;
+        if (member === null || member.status !== 'active') return [];
+        return [
+          {
+            displayName: member.display_name,
+            readyAt: row.ready_at as string | null,
+            sealedAt: row.sealed_at as string | null,
+            // Exactly `controlled_member_ids()`, and used only so the Family screen
+            // cannot read "waiting on Derek" to Derek.
+            isSelf: isControlledBy(member, accountId),
+          },
+        ];
+      });
     },
   });
 }
