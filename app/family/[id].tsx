@@ -57,7 +57,12 @@ const yearSays = (
   ready: Readiness,
 ): string =>
   year.status === 'setup'
-    ? `${sealCopy(new Date(), new Date(year.setup_deadline))} · ${readinessCopy(ready)}`
+    ? // The readiness half is dropped until there is something to say — a query still in
+      // flight has no Boards in it, and "no boards yet" against a Family who have four is
+      // a sentence that is only true of the network.
+      ready.total === 0
+      ? sealCopy(new Date(), new Date(year.setup_deadline))
+      : `${sealCopy(new Date(), new Date(year.setup_deadline))} · ${readinessCopy(ready)}`
     : year.status === 'active'
       ? 'under way'
       : 'finished';

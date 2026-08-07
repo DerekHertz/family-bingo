@@ -892,6 +892,9 @@ export default function DraftingTable() {
         <Button
           label="Write another"
           variant="primary"
+          // `boardComplete` fails shut on a Tiles list that never fully arrived, and this
+          // is the other half of the same caution: there is no square to open either.
+          disabled={firstEmpty === undefined}
           style={{ marginTop: space.xl }}
           onPress={() => {
             if (firstEmpty !== undefined) compose(firstEmpty.id);
@@ -932,7 +935,13 @@ export default function DraftingTable() {
       {canWrite && isReady ? (
         <View style={{ marginTop: space.xl }}>
           <Text style={{ ...styles.body, color: color.ink, textAlign: 'center' }}>
-            {`Your board is done · ${readinessCopy(familyReadiness)}`}
+            {/* The second clause only where there is a Family to be waiting for. A late
+                joiner seals alone the moment they tap (§22.6), so on their Board the
+                readiness query never runs and "no boards yet" would be a sentence about
+                nothing. */}
+            {yearInSetup && familyReadiness.total > 0
+              ? `Your board is done · ${readinessCopy(familyReadiness)}`
+              : 'Your board is done.'}
           </Text>
           <Button
             label="Actually, I’m still writing"
