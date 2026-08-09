@@ -44,18 +44,29 @@ jobs:
   reachable:
     runs-on: ubuntu-latest
     steps:
-      # `GET /rest/v1/` with the apikey header: PostgREST's own root document. Chosen
-      # because `anon` has no SELECT grant on a single table in this schema — every table is
-      # behind RLS and behind grants that start at `authenticated` — so there is no row this
-      # job could read, and inventing one would mean widening the production surface for a
-      # health check. The root answers the API's OpenAPI description and needs no grant at
-      # all, so a 200 means the gateway is up, PostgREST is up, and PostgREST is holding a
-      # schema cache it could only have got from a running database.
+      # `GET /rest/v1/families?select=id&limit=1` with the apikey header, asserting on the
+      # refusal it comes back with rather than on a success. `anon` is granted nothing in
+      # this schema — every table is behind RLS and behind grants that start at
+      # `authenticated` (migration `20260801000007_grants.sql`) — so a refusal is the only
+      # honest answer available, and it happens to be the better proof. `42501` is a
+      # PostgreSQL error code, not a gateway one: to produce it the request had to clear the
+      # API gateway, reach PostgREST, resolve `public.families` in a schema cache PostgREST
+      # could only have built from a running database, and then be planned and rejected by
+      # that database. A paused project cannot manufacture it. Inventing a readable row, or
+      # a health-check RPC, would mean widening the production surface for a keep-alive.
       #
-      # Verified 200 against the local stack. Note that the local Kong lets this through
-      # with no apikey at all while the hosted gateway does not, so the header is not
-      # decoration — without it the hosted project answers 401 and this job would fail every
-      # other day for a reason that has nothing to do with the project being awake.
+      # This replaced `GET /rest/v1/`, PostgREST's root document, which needed no grant and
+      # was the obvious choice until Supabase restricted it to `service_role`. The hosted
+      # gateway now answers every anon key with
+      #   401 {"message":"Invalid API key","hint":"Only the `service_role` API key can be
+      #        used for this endpoint."}
+      # which is what this job failed on while the project was awake the entire time — the
+      # exact false alarm the assertions were supposed to be worth having. Reaching for the
+      # service role key would have fixed it by putting a full-power credential in CI to
+      # find out whether a database is switched on; the trade is not close.
+      #
+      # 200 is accepted as well, so that granting `anon` a SELECT on `families` some day
+      # would change what this job proves without breaking it.
       - name: The Supabase API answers
         env:
           SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
@@ -67,6 +78,11 @@ jobs:
             exit 1
           fi
 
+          # curl does not write `--output` at all when it never gets a response, so without
+          # this the failure dump below can print a body left over from an earlier attempt
+          # and describe the wrong outage.
+          rm -f response.txt
+
           # `--retry 2` covers a dropped connection or a 5xx from the edge, so a blip does
           # not page anybody. It does **not** paper over a paused project: a pause answers
           # an error for days, not for seconds, and still fails after the retries.
@@ -74,14 +90,25 @@ jobs:
                         --retry 2 --retry-delay 5 --max-time 30 \
                         --output response.txt --write-out '%{http_code}' \
                         --header "apikey: ${SUPABASE_ANON_KEY}" \
-                        "${SUPABASE_URL%/}/rest/v1/") || status=000
+                        "${SUPABASE_URL%/}/rest/v1/families?select=id&limit=1") || status=000
 
-          echo "GET /rest/v1/ -> ${status}"
-          if [ "$status" != "200" ]; then
-            echo "::error::Supabase answered ${status}. A paused free-tier project looks like this; restore it from the dashboard."
-            head -c 500 response.txt || true
-            exit 1
+          echo "GET /rest/v1/families -> ${status}"
+
+          # The expected answer: the database itself refused the read.
+          if [ "$status" = "401" ] && grep -q '"42501"' response.txt; then
+            echo "permission denied for table families (42501) — the database planned the query and said no. Awake."
+            exit 0
           fi
+
+          # Only reachable if `anon` has been granted a SELECT since this was written.
+          if [ "$status" = "200" ]; then
+            echo "::notice::anon can now read families, so this check got a 200 instead of a 42501. Still awake."
+            exit 0
+          fi
+
+          echo "::error::Supabase answered ${status} without a 42501. A paused free-tier project looks like this — restore it from the dashboard. A 404 (PGRST205) instead means the families table was renamed and this check needs a new target; a 401 with 'Invalid API key' means the anon key or the endpoint's rules changed, not that the project is down."
+          head -c 500 response.txt || true
+          exit 1
 
       # `if: always()` so a Supabase failure never hides a site failure. Two things are
       # being checked and the answer "one of them is down" is much less useful than knowing
