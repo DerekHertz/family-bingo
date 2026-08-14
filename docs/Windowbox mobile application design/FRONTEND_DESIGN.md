@@ -246,8 +246,13 @@ Accessibility label order: **position, goal, progress, state** — see §6.
 
 `display: grid`, 5 columns, `gap: 7` (iOS) / `8` (Android), horizontal padding `20` /
 `16`. Yields 66.8pt at 402pt and 70dp at 412dp; 61.4pt at the 375pt floor (iPhone SE).
-**Never scrolls, never shrinks, never paginates.** If content below it doesn't fit, the
-content scrolls under a pinned board — not the other way round.
+**Never scrolls, never shrinks, never paginates.** It is drawn whole or not at all.
+
+On a sealed Board it can be swapped out for the goals list below it with the Board/List
+switcher (a `radiogroup` of two pills under the Member strip, `ink3` for the selected cue —
+moss and clay are already spoken for). The grid crowding the goals list into a sliver of
+unscrolled space was worse than the cost of a second view, so the reader picks which one has
+the screen instead of both sharing it.
 
 Line state renders as a 12-segment pip row beneath the board (5 rows, 5 columns, 2
 diagonals, in the constant order of §13.1). Completed segments are `moss`; the rest
@@ -320,7 +325,7 @@ straight into opening the next Year (§20.6).
 |---|---|
 | **Sign in** | Centred 5×5 of `paperSunk`/`mossTint` tiles as the mark. Wordmark in Shippori 38pt. Three passwordless buttons, 52pt, 10pt apart: Apple (`ink` filled), Google (`paperRaised` outlined), magic link (text only). Footer: "No passwords. Not now, not later — there's nothing to forget." |
 | **Home (no Family)** | Two 52pt options — Create a Family / Join a Family — and nothing else. This is Slice 2's landing state. |
-| **Board** | Family switcher chip (14pt/500 `ink2` + chevron) top-left, account avatar top-right. Member strip: 44pt avatars, active gets a 1.5pt `moss` ring with a 2pt paper gap. Title `display`, meta line `label` in `ink2`. Board. Milestone card (`paperRaised`, `radius.card`). Line pips. Tab bar. |
+| **Board** | Family switcher chip (14pt/500 `ink2` + chevron) top-left, account avatar top-right. Member strip: 44pt avatars, active gets a 1.5pt `moss` ring with a 2pt paper gap. Title `display`, meta line `label` in `ink2`. On a sealed Board, a Board/List switcher below the strip governs the grid vs. the goals list — see §3. Board. Milestone card (`paperRaised`, `radius.card`). Line pips. Tab bar. |
 | **Feed** | `display` title, `Family · Year` in `label`. Rows per §3. Paginated, newest first, one Family, one Year (§14.1). |
 | **Wrapped** | Horizontal pager, one card per screen, no chrome except the rail. Generated once at freeze and materialised (§20.2) — the client reads a single row and renders instantly. |
 | **Authoring** | The drafting table and the compose screen — §4.1. |
