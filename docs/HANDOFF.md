@@ -305,7 +305,7 @@ and the documents should be corrected so the next reader does not undo it.
 
 ## Deploying
 
-See [`../README.md`](../README.md) → "Deploying to a Supabase project". The two Vault
+See [`deploy.md`](deploy.md) → "Deploying to a Supabase project". The two Vault
 secrets and the Edge Function secret are already set on the live project; a new project
 needs them again, and `notification_preferences` is backfilled by its own migration.
 
