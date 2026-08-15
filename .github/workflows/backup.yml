@@ -40,11 +40,11 @@
 #     encrypted with a key held by the platform, so the ciphertext in a dump is not
 #     recoverable into a different project.
 #   - The five `pg_cron` schedules, the Auth provider configuration, and the Database
-#     Webhook — all of which `supabase db push` and the README's "Deploying to a Supabase
-#     project" recreate.
+#     Webhook — all of which `supabase db push` and docs/deploy.md's "Deploying to a
+#     Supabase project" recreate.
 #
 # **Restoring is therefore not `psql < dump.sql`.** It is: create a project, run the four
-# steps in the README, `supabase db push` to build the schema from `supabase/migrations`, and
+# steps in docs/deploy.md, `supabase db push` to build the schema from `supabase/migrations`, and
 # then load *only* the data out of this file into the schema that produces. Loading the
 # whole dump into an empty Supabase project instead fights with the extensions, roles and
 # internal tables the platform put there first. Worth rehearsing once, on a throwaway

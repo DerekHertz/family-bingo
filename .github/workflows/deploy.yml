@@ -9,7 +9,7 @@
 # | `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create Token → the **"Edit Cloudflare Workers"** template, or a custom token with `Account · Cloudflare Pages · Edit`. Scope it to the one account. |
 # | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → the right-hand sidebar, or the hex string in the dashboard URL after `/accounts/`. |
 # | `EXPO_PUBLIC_SUPABASE_URL` | Supabase dashboard → Project Settings → Data API → Project URL (`https://<ref>.supabase.co`). Same value as the local `.env`. |
-# | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API Keys → the **`anon` `eyJ...` JWT**, not a `sb_publishable_...` key. README, "Testing with two accounts", explains why the publishable key comes back 401. |
+# | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API Keys → the **`anon` `eyJ...` JWT**, not a `sb_publishable_...` key. docs/deploy.md, "Testing with two accounts", explains why the publishable key comes back 401. |
 #
 # And one **variable** (same page, Variables tab), because it is not a secret and reads
 # better in a log than a masked blob:
