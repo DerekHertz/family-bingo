@@ -153,6 +153,11 @@ export default function DraftingTable() {
   // §5's Line animation. Held here rather than derived, because it is an *event* — it
   // plays once and then the board is at rest, however many times the screen re-renders.
   const [lineCelebration, setLineCelebration] = useState<LineCelebration | null>(null);
+  // Which of the two sealed-board representations is on screen. Per-visit, not remembered —
+  // the app persists no UI preference anywhere, and always opening on the grid is the
+  // familiar shape. Declared here rather than inside the sealed branch so a `MemberStrip`
+  // tap (`router.replace` on the same route, no remount) leaves it as the reader left it.
+  const [view, setView] = useState<'board' | 'list'>('board');
 
   useEffect(() => {
     const current = milestones.data;
@@ -423,9 +428,12 @@ export default function DraftingTable() {
             : null;
 
     return (
-      // The Board is pinned and whatever sits under it scrolls (§3): it never scrolls,
-      // never shrinks, never paginates. Header and board are outside the ScrollView; only
-      // the footer is inside it, which is what gives an SE somewhere to put the overflow.
+      // The Board never scrolls, shrinks, or paginates (§3) — it is drawn whole or not at
+      // all. On a screen this tall it also crowds out the goals list beneath it down to a
+      // sliver with no cue that it scrolls, so the reader picks which of the two is on
+      // screen with the switcher below the strip. Header and strip are outside the
+      // ScrollView either way; only the footer is inside it, which is what gives an SE
+      // somewhere to put the overflow.
       <View style={{ flex: 1, backgroundColor: color.paper, paddingTop: size.screenTop }}>
         <View style={{ paddingHorizontal: space.xl }}>
           <Text accessibilityRole="header" style={{ ...styles.display, color: color.ink }}>
@@ -483,39 +491,89 @@ export default function DraftingTable() {
           </View>
         )}
 
-        <View style={{ marginTop: space.lg }}>
-          <Board
-            tiles={boardTiles}
-            centreMode={head.data.year.centerMode}
-            completedLines={lines}
-            celebrate={lineCelebration}
-            onCelebrationDone={() => setLineCelebration(null)}
-            // §3: the square opens the sheet and never logs directly — a mis-tap on a
-            // 67pt target in a pocket must not write a row.
-            onPressTile={(t) => {
-              // A Tile with a Goal opens the sheet. An **empty** one on a sealed Board
-              // goes straight to the Swap confirm: it has no progress to show and takes no
-              // Increments, so a tile sheet there would be a sheet about nothing — but
-              // §10.2 is explicit that "an unfinished Board seals with empty Tiles" and
-              // that "those Tiles can be filled using Swaps", and §18.5 says the same.
-              // Swallowing the tap left those squares inert for the whole Year and put
-              // Blackout out of reach by construction.
-              if (t.goal !== null) {
-                setOpenTileId(t.id);
-                return;
-              }
-              if (emptyFillable) {
-                setSwapping({
-                  tileId: t.id,
-                  position: t.position,
-                  text: null,
-                  target: 1,
-                  count: 0,
-                });
-              }
-            }}
-          />
+        {/* Governs the board vs. the "All goals" list below — placed after the strip, not
+            before it, so it reads as choosing what's under it rather than a mode for the
+            strip itself. `ink3` for the selected cue, per `MemberStrip`'s own "which thing
+            you're looking at" mark: moss is the growth ladder and clay is the Family, and
+            neither belongs to a screen-layout choice. */}
+        <View
+          accessibilityRole="radiogroup"
+          accessibilityLabel="How to show this board"
+          style={{
+            flexDirection: 'row',
+            gap: space.sm,
+            marginTop: space.lg,
+            paddingHorizontal: space.xl,
+          }}
+        >
+          {(
+            [
+              ['board', 'Board', 'Show the board'],
+              ['list', 'List', 'Show the goals as a list'],
+            ] as const
+          ).map(([mode, label, accessibilityLabel]) => {
+            const chosen = view === mode;
+            return (
+              <Pressable
+                key={mode}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: chosen }}
+                accessibilityLabel={accessibilityLabel}
+                onPress={() => setView(mode)}
+                style={({ pressed }) => ({
+                  minHeight: size.minTouch,
+                  paddingHorizontal: space.md,
+                  justifyContent: 'center',
+                  borderRadius: radius.pill,
+                  borderWidth: stroke.selected,
+                  borderColor: chosen ? color.ink3 : color.hairline,
+                  backgroundColor: chosen ? color.paperSunk : color.paperRaised,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ ...styles.label, color: chosen ? color.ink : color.ink2 }}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
+
+        {view !== 'board' ? null : (
+          <View style={{ marginTop: space.lg }}>
+            <Board
+              tiles={boardTiles}
+              centreMode={head.data.year.centerMode}
+              completedLines={lines}
+              celebrate={lineCelebration}
+              onCelebrationDone={() => setLineCelebration(null)}
+              // §3: the square opens the sheet and never logs directly — a mis-tap on a
+              // 67pt target in a pocket must not write a row.
+              onPressTile={(t) => {
+                // A Tile with a Goal opens the sheet. An **empty** one on a sealed Board
+                // goes straight to the Swap confirm: it has no progress to show and takes
+                // no Increments, so a tile sheet there would be a sheet about nothing — but
+                // §10.2 is explicit that "an unfinished Board seals with empty Tiles" and
+                // that "those Tiles can be filled using Swaps", and §18.5 says the same.
+                // Swallowing the tap left those squares inert for the whole Year and put
+                // Blackout out of reach by construction.
+                if (t.goal !== null) {
+                  setOpenTileId(t.id);
+                  return;
+                }
+                if (emptyFillable) {
+                  setSwapping({
+                    tileId: t.id,
+                    position: t.position,
+                    text: null,
+                    target: 1,
+                    count: 0,
+                  });
+                }
+              }}
+            />
+          </View>
+        )}
 
         <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}>
           {/* §4's Milestone card, and §13.4's whole argument in one component: a Bingo is
@@ -566,77 +624,84 @@ export default function DraftingTable() {
               : `This board is set — ${opensIn}. Changing a goal now costs a swap.`}
           </Text>
 
-          {/* The sealed Board's goals, readable as a list.
-              §4.1 takes the list away at seal — "the board isn't drawn until it seals" —
-              and nothing put one back, so from January the only way to read your own
-              twenty-four sentences was to tap twenty-four squares one at a time. The board
-              stays pinned above and this scrolls under it, which is exactly what §3's
-              "content scrolls under a pinned board" is for.
+          {view !== 'list' ? null : (
+            <>
+              {/* The sealed Board's goals, readable as a list.
+                  §4.1 takes the list away at seal — "the board isn't drawn until it seals" —
+                  and nothing put one back, so from January the only way to read your own
+                  twenty-four sentences was to tap twenty-four squares one at a time. Since
+                  the switcher above traded the board out for exactly this, the list gets the
+                  screen's full height rather than sharing it with the grid.
 
-              Each row carries where the Goal sits, because the list and the grid are the
-              same twenty-four things and a list that does not say which square it means
-              cannot be matched back to one. Position order, not write order: this list
-              exists to be read *against the board*. */}
-          <View style={{ marginTop: space.xl, paddingHorizontal: space.xl }}>
-            <Text style={{ ...styles.meta, color: color.ink3 }}>All goals</Text>
-            {boardTiles
-              .filter((t) => t.goal !== null)
-              .map((t) => {
-                const done = isTileComplete(t.count, t.goal?.target ?? 1);
-                // §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal
-                // has no Target to count toward — it is marked done — so "0/1" would be a
-                // number invented to fill the column.
-                const isCentre = t.isCentre;
-                return (
-                  <Pressable
-                    key={t.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Row ${rowOf(t.position) + 1}, column ${
-                      columnOf(t.position) + 1
-                    }. ${t.goal?.text ?? ''}. ${
-                      isCentre
-                        ? `The centre.${done ? ' Done.' : ''}`
-                        : `${countSummary(t.count, t.goal?.target ?? 1)}.${
-                            done ? ' Complete.' : ''
-                          }`
-                    }`}
-                    onPress={() => setOpenTileId(t.id)}
-                    style={({ pressed }) => ({
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: space.md,
-                      paddingVertical: space.md,
-                      minHeight: size.minTouch,
-                      borderTopWidth: 1,
-                      borderTopColor: color.hairline,
-                      opacity: pressed ? 0.7 : 1,
-                    })}
-                  >
-                    {/* Mono, like the drafting table's index and for the same reason: a
-                        column of coordinates read down a list has to align. */}
-                    <Text style={{ ...styles.index, color: color.ink3 }}>
-                      {`R${rowOf(t.position) + 1}C${columnOf(t.position) + 1}`}
-                    </Text>
-                    <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
-                      {t.goal?.text}
-                    </Text>
-                    <Text
-                      style={{
-                        ...styles.label,
-                        // `moss` only once it is actually done — a count part-way there is
-                        // not growth to be celebrated, it is a fact (§4.1). Never larger
-                        // than `label`: §3 keeps the one big number in the sheet's ring.
-                        color: done ? color.moss : isCentre ? color.clayDeep : color.ink2,
-                      }}
-                    >
-                      {/* `countCompact`, so the column and the label above it cannot
-                          disagree about which number comes first. */}
-                      {isCentre ? 'The centre' : countCompact(t.count, t.goal?.target ?? 1)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-          </View>
+                  Each row carries where the Goal sits, because the list and the grid are the
+                  same twenty-four things and a list that does not say which square it means
+                  cannot be matched back to one. Position order, not write order: this list
+                  exists to be read *against the board*. */}
+              <View style={{ marginTop: space.xl, paddingHorizontal: space.xl }}>
+                <Text style={{ ...styles.meta, color: color.ink3 }}>All goals</Text>
+                {boardTiles
+                  .filter((t) => t.goal !== null)
+                  .map((t) => {
+                    const done = isTileComplete(t.count, t.goal?.target ?? 1);
+                    // §4.3: the Centre shows "no counts, no ordering" (§13.5). A Family Goal
+                    // has no Target to count toward — it is marked done — so "0/1" would be
+                    // a number invented to fill the column.
+                    const isCentre = t.isCentre;
+                    return (
+                      <Pressable
+                        key={t.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Row ${rowOf(t.position) + 1}, column ${
+                          columnOf(t.position) + 1
+                        }. ${t.goal?.text ?? ''}. ${
+                          isCentre
+                            ? `The centre.${done ? ' Done.' : ''}`
+                            : `${countSummary(t.count, t.goal?.target ?? 1)}.${
+                                done ? ' Complete.' : ''
+                              }`
+                        }`}
+                        onPress={() => setOpenTileId(t.id)}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: space.md,
+                          paddingVertical: space.md,
+                          minHeight: size.minTouch,
+                          borderTopWidth: 1,
+                          borderTopColor: color.hairline,
+                          opacity: pressed ? 0.7 : 1,
+                        })}
+                      >
+                        {/* Mono, like the drafting table's index and for the same reason: a
+                            column of coordinates read down a list has to align. */}
+                        <Text style={{ ...styles.index, color: color.ink3 }}>
+                          {`R${rowOf(t.position) + 1}C${columnOf(t.position) + 1}`}
+                        </Text>
+                        <Text style={{ ...styles.body, color: color.ink, flex: 1 }}>
+                          {t.goal?.text}
+                        </Text>
+                        <Text
+                          style={{
+                            ...styles.label,
+                            // `moss` only once it is actually done — a count part-way there
+                            // is not growth to be celebrated, it is a fact (§4.1). Never
+                            // larger than `label`: §3 keeps the one big number in the
+                            // sheet's ring.
+                            color: done ? color.moss : isCentre ? color.clayDeep : color.ink2,
+                          }}
+                        >
+                          {/* `countCompact`, so the column and the label above it cannot
+                              disagree about which number comes first. */}
+                          {isCentre
+                            ? 'The centre'
+                            : countCompact(t.count, t.goal?.target ?? 1)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+              </View>
+            </>
+          )}
 
           <Button
             label="Back"
